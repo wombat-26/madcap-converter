@@ -116,15 +116,38 @@ export class MadCapConverter implements DocumentConverter {
     
     variableElements.forEach(element => {
       const variableName = element.getAttribute('data-mc-variable') || 
-                          element.className.match(/mc-variable\.(\w+)/)?.[1];
+                          this.extractVariableName(element.className);
       
-      if (variableName) {
-        const span = document.createElement('span');
-        span.textContent = element.textContent || `{${variableName}}`;
-        span.setAttribute('data-variable', variableName);
-        element.parentNode?.replaceChild(span, element);
+      // For MadCap variables, we want to keep the actual text content, not the variable name
+      // The variable has already been resolved by MadCap to its actual value
+      const textContent = element.textContent?.trim();
+      
+      
+      if (textContent && textContent !== '') {
+        // Replace the variable element with plain text
+        const textNode = document.createTextNode(textContent);
+        element.parentNode?.replaceChild(textNode, element);
+      } else if (variableName) {
+        // Fallback if no text content - show variable reference
+        const textNode = document.createTextNode(`{${variableName}}`);
+        element.parentNode?.replaceChild(textNode, element);
+      } else {
+        // If we can't process the variable, keep the original element but remove mc-variable class
+        element.className = element.className.replace(/mc-variable[^\\s]*\\s*/g, '').trim();
       }
     });
+  }
+
+  private extractVariableName(className: string): string | undefined {
+    // Handle both formats: "mc-variable.VariableName" and "mc-variable General.VariableName variable"
+    const dotMatch = className.match(/mc-variable\.(\w+)/)?.[1];
+    if (dotMatch) return dotMatch;
+    
+    // Handle space-separated format like "mc-variable General.ProductName variable"
+    const spaceMatch = className.match(/mc-variable\s+([^.\s]+)\.([^.\s]+)/);
+    if (spaceMatch) return `${spaceMatch[1]}.${spaceMatch[2]}`;
+    
+    return undefined;
   }
 
   private extractHeadingLevel(className: string): number | null {
