@@ -59,7 +59,8 @@ export class BatchService {
           inputType: this.determineInputType(extname(inputPath).toLowerCase().slice(1)),
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
-          outputDir: dirname(outputPath)
+          outputDir: dirname(outputPath),
+          rewriteLinks: true  // Enable link rewriting for batch conversions
         };
 
         const conversionResult = await this.documentService.convertFile(

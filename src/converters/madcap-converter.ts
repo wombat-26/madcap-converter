@@ -13,6 +13,7 @@ export class MadCapConverter implements DocumentConverter {
   async convert(input: string, options: ConversionOptions): Promise<ConversionResult> {
     const processedHtml = this.preprocessMadCapContent(input);
     
+    // Pass through all options including rewriteLinks
     const result = await this.htmlConverter.convert(processedHtml, options);
     
     return {

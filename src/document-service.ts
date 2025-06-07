@@ -33,7 +33,8 @@ export class DocumentService {
       inputType,
       preserveFormatting: options.preserveFormatting ?? true,
       extractImages: options.extractImages ?? false,
-      outputDir: options.outputDir || dirname(outputPath)
+      outputDir: options.outputDir || dirname(outputPath),
+      rewriteLinks: options.rewriteLinks
     };
 
     let input: string | Buffer;

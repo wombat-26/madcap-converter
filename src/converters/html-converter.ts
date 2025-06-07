@@ -29,6 +29,11 @@ export class HTMLConverter implements DocumentConverter {
     const dom = new JSDOM(input);
     const document = dom.window.document;
     
+    // Rewrite links to converted file extensions for batch processing
+    if (options.rewriteLinks) {
+      this.rewriteDocumentLinks(document, options.format);
+    }
+    
     const title = document.querySelector('title')?.textContent || 
                   document.querySelector('h1')?.textContent || 
                   'Untitled Document';
@@ -45,7 +50,7 @@ export class HTMLConverter implements DocumentConverter {
     let content: string;
     
     if (options.format === 'markdown') {
-      content = this.turndownService.turndown(input);
+      content = this.turndownService.turndown(document.documentElement.outerHTML);
     } else {
       content = this.convertToAsciiDoc(document);
     }
@@ -115,5 +120,37 @@ export class HTMLConverter implements DocumentConverter {
       case 'html': return children;
       default: return children;
     }
+  }
+
+  private rewriteDocumentLinks(document: Document, format: 'markdown' | 'asciidoc'): void {
+    const links = document.querySelectorAll('a[href]');
+    const targetExtension = format === 'asciidoc' ? '.adoc' : '.md';
+    
+    links.forEach(link => {
+      const href = link.getAttribute('href');
+      if (href && this.isDocumentLink(href)) {
+        const newHref = this.convertLinkExtension(href, targetExtension);
+        link.setAttribute('href', newHref);
+      }
+    });
+  }
+
+  private isDocumentLink(href: string): boolean {
+    // Check if it's a relative link to a document file
+    if (href.startsWith('http') || href.startsWith('mailto:') || href.startsWith('#')) {
+      return false;
+    }
+    
+    // Check for supported document extensions
+    const documentExtensions = ['.html', '.htm', '.docx', '.doc', '.xml'];
+    return documentExtensions.some(ext => href.toLowerCase().includes(ext));
+  }
+
+  private convertLinkExtension(href: string, targetExtension: string): string {
+    // Replace document extensions with target extension
+    return href
+      .replace(/\.html?(?=(\?|#|$))/i, targetExtension)
+      .replace(/\.docx?(?=(\?|#|$))/i, targetExtension)
+      .replace(/\.xml(?=(\?|#|$))/i, targetExtension);
   }
 }

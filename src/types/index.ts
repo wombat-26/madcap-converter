@@ -4,6 +4,7 @@ export interface ConversionOptions {
   preserveFormatting?: boolean;
   extractImages?: boolean;
   outputDir?: string;
+  rewriteLinks?: boolean;
 }
 
 export interface ConversionResult {
