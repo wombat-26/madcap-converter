@@ -1,0 +1,33 @@
+{
+  "name": "document-converter",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "./build/index.js",
+  "bin": {
+    "document-converter": "./build/index.js"
+  },
+  "scripts": {
+    "build": "tsc && chmod +x build/index.js",
+    "start": "node build/index.js",
+    "dev": "npm run build && npm start",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "asciidoctor": "^3.0.4",
+    "jsdom": "^26.1.0",
+    "mammoth": "^1.9.1",
+    "turndown": "^7.2.0",
+    "zod": "^3.25.56"
+  },
+  "devDependencies": {
+    "@types/jsdom": "^21.1.7",
+    "@types/node": "^22.15.30",
+    "@types/turndown": "^5.0.5",
+    "typescript": "^5.8.3"
+  }
+}
