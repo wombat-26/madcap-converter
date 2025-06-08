@@ -1,0 +1,54 @@
+﻿<!--?xml version="1.0" encoding="utf-8"?-->
+
+    
+    
+        <h1 class="zendesk-heading">Adding Calculated Costs</h1>
+        <p>Sometimes the amount to be entered is not fixed for Sheila, for example because she has to enter a yearly amount month by month or she has to calculate a total amount from several parts. Sheila doesn't have to do her calculation with a calculator first; she can do her calculations directly as she enters them.</p>
+        <details class="zendesk-collapsible"><summary><strong>Calculator Capabilities</strong></summary><div class="collapsible-content">
+                <div class="snippet-content"><p>You can add, subtract, multiply and divide in the cells and insert parentheses. This is possible for direct entries in the grid as well as for entries of amounts in another currency (see <a href="../Doku/05-3-4 SettMultCurrVal.htm">Setting a Multi-Currency Value</a>).</p>
+        <p>It is important that you start the input with an equal sign for a calculation. For example, if you want to add the amounts 456.99, 856.45 and 89.74, the correct entry is:</p><pre xml:space="preserve" class="zendesk-code">=456.99+856.45+89.74</pre>
+        <p>Without the equal sign the input is not understood and cannot be calculated.</p>
+        <p>If you enter an incomplete calculation or have an error in the formula syntax the cell will be outlined in red, and the calculation will not be complete. The box will be outlined in green after you have entered a valid calculation.</p>
+        <div class="warning">
+            <p><span class="warningInDiv">Attention</span>
+            </p>
+            <p>Uptempo does not record the formula, so once the calculation is complete there is no way to see the original equation.</p>
+        </div>
+        <p>The result of a calculation is always displayed rounded to two decimal places. </p></div></div></details>
+        <details class="zendesk-collapsible"><summary><strong>Example: Adding Calculated Costs</strong></summary><div class="collapsible-content">
+                <div class="snippet-content"><div class="example">
+            <p>You need to enter the sum of the following amounts in a cell: 260.56, 378.89 and one third of the amount 951.23.</p>
+            <p>You click on the cell and enter:</p>
+            <p>= 260.56+378.89+951.23/3</p>
+            <p>When you press Enter, the result 956.33 is displayed.</p>
+        </div></div></div></details>
+        <details class="zendesk-collapsible"><summary><strong>Example: Adding Recurrent Costs</strong></summary><div class="collapsible-content">
+                <div class="snippet-content"><p>You have an annual amount of 10,000, but it is drawn down equally each month. </p>
+        <ol class="zendesk-list">
+            <li>
+                <p>On the <i>Investments</i> tab, locate the marketing investment you would like to add recurrent costs for.</p>
+            </li>
+            <li>
+                <p>Click on the cell and enter:<br>=10000/12</p>
+            </li>
+            <li>
+                <p>Copy the entry by using the keyboard shortcut key Control/Command and C.</p>
+            </li>
+            <li>
+                <p>Click the corresponding cell of the next month.<br></p>
+            </li>
+            <p>The entry in the previous cell is calculated.</p>
+            <li>
+                <p>Paste the entry by right-clicking in the second cell and selecting Paste.</p>
+            </li>
+            <p><span class="noteInDiv">Note: </span>Using the keyboard shortcut key Control/Command and V also allows you to paste the amount.</p>
+            <li>
+                <p>Repeat steps 4 and 5 for every month.</p>
+            </li>
+        </ol>
+        <p>You have entered the recurrent costs.</p></div></div></details>
+        <p madcap:conditions="Target Presentation.Online Help">
+            <object madcap:html5video="true" src="../../IntActVideo/AddCalculatedCosts.mp4" madcap:param_controls="true" madcap:param_muted="true" madcap:param_loop="false" madcap:param_autoplay="false">
+            </object>
+        </p>
+    

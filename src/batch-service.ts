@@ -1,7 +1,8 @@
-import { readdir, stat, copyFile, mkdir } from 'fs/promises';
+import { readdir, stat, copyFile, mkdir, readFile } from 'fs/promises';
 import { join, relative, extname, dirname, basename } from 'path';
 import { DocumentService } from './document-service.js';
-import { ConversionOptions, ConversionResult } from './types/index.js';
+import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from './types/index.js';
+import { JSDOM } from 'jsdom';
 
 export interface BatchConversionOptions extends Partial<ConversionOptions> {
   recursive?: boolean;
@@ -48,7 +49,7 @@ export class BatchService {
     for (const inputPath of files) {
       try {
         const relativePath = relative(inputDir, inputPath);
-        const outputPath = this.generateOutputPath(relativePath, outputDir, options.format || 'markdown');
+        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath);
         
         if (options.preserveStructure) {
           await this.ensureDirectoryExists(dirname(outputPath));
@@ -60,7 +61,8 @@ export class BatchService {
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
           outputDir: dirname(outputPath),
-          rewriteLinks: true  // Enable link rewriting for batch conversions
+          rewriteLinks: true,  // Enable link rewriting for batch conversions
+          zendeskOptions: options.zendeskOptions
         };
 
         const conversionResult = await this.documentService.convertFile(
@@ -69,13 +71,20 @@ export class BatchService {
           conversionOptions
         );
 
-        if (options.copyImages && conversionResult.metadata?.images) {
-          await this.copyReferencedImages(
-            inputPath,
-            outputPath,
-            conversionResult.metadata.images,
-            options
-          );
+        if (options.copyImages) {
+          if (conversionResult.metadata?.images) {
+            await this.copyReferencedImages(
+              inputPath,
+              outputPath,
+              conversionResult.metadata.images,
+              options
+            );
+          }
+          
+          // For Zendesk conversions, also copy all image directories
+          if (options.format === 'zendesk') {
+            await this.copyImageDirectories(inputDir, outputDir);
+          }
         }
 
         result.results.push({
@@ -149,16 +158,83 @@ export class BatchService {
     return true;
   }
 
-  private generateOutputPath(relativePath: string, outputDir: string, format: string): string {
+  private async generateOutputPath(relativePath: string, outputDir: string, format: string, inputPath?: string): Promise<string> {
     const parsedPath = {
       dir: dirname(relativePath),
       name: basename(relativePath, extname(relativePath))
     };
     
-    const extension = format === 'asciidoc' ? '.adoc' : '.md';
-    const outputFileName = `${parsedPath.name}${extension}`;
+    let extension: string;
+    switch (format) {
+      case 'asciidoc':
+        extension = '.adoc';
+        break;
+      case 'zendesk':
+        extension = '.html';
+        break;
+      case 'markdown':
+      default:
+        extension = '.md';
+        break;
+    }
+    
+    let outputFileName: string;
+    
+    // For Zendesk format, use H1 text as filename
+    if (format === 'zendesk' && inputPath) {
+      const h1Text = await this.extractH1Text(inputPath);
+      if (h1Text) {
+        // Convert H1 text to filename: lowercase, replace spaces with underscores, remove special chars
+        const cleanFileName = h1Text
+          .toLowerCase()
+          .replace(/[^\w\s-]/g, '') // Remove special characters except word chars, spaces, hyphens
+          .replace(/\s+/g, '_') // Replace spaces with underscores
+          .replace(/-+/g, '_') // Replace hyphens with underscores
+          .replace(/_+/g, '_') // Collapse multiple underscores
+          .replace(/^_+|_+$/g, ''); // Trim leading/trailing underscores
+        
+        if (cleanFileName) {
+          outputFileName = `${cleanFileName}${extension}`;
+        } else {
+          outputFileName = `${parsedPath.name}${extension}`;
+        }
+      } else {
+        outputFileName = `${parsedPath.name}${extension}`;
+      }
+    } else {
+      outputFileName = `${parsedPath.name}${extension}`;
+    }
     
     return join(outputDir, parsedPath.dir, outputFileName);
+  }
+
+  private async extractH1Text(filePath: string): Promise<string | null> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      
+      // Use regex for faster H1 extraction instead of full DOM parsing
+      const h1Match = content.match(/<h1[^>]*>([^<]+)<\/h1>/i);
+      if (h1Match && h1Match[1]?.trim()) {
+        return h1Match[1].trim();
+      }
+      
+      // Fallback: look for title element
+      const titleMatch = content.match(/<title[^>]*>([^<]+)<\/title>/i);
+      if (titleMatch && titleMatch[1]?.trim()) {
+        return titleMatch[1].trim();
+      }
+      
+      // Fallback: look for MadCap heading patterns
+      const madcapMatch = content.match(/data-mc-heading-level="1"[^>]*>([^<]+)</i);
+      if (madcapMatch && madcapMatch[1]?.trim()) {
+        return madcapMatch[1].trim();
+      }
+      
+      return null;
+    } catch (error) {
+      console.warn(`Could not extract H1 text from ${filePath}:`, error);
+      return null;
+    }
   }
 
   private async copyReferencedImages(
@@ -183,6 +259,63 @@ export class BatchService {
         await copyFile(sourceImagePath, targetImagePath);
       } catch (error) {
         console.warn(`Failed to copy image ${imagePath}:`, error);
+      }
+    }
+  }
+
+  private async copyImageDirectories(
+    sourceRootDir: string,
+    targetRootDir: string
+  ): Promise<void> {
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp']);
+    
+    try {
+      // Find common image directories in MadCap Flare projects
+      const imageDirCandidates = [
+        'Images',
+        'Resources/Images', 
+        'Resources/Multimedia',
+        'Content/Images',
+        'Content/Resources/Images'
+      ];
+      
+      for (const imageDir of imageDirCandidates) {
+        const sourceImageDir = join(sourceRootDir, imageDir);
+        const targetImageDir = join(targetRootDir, imageDir);
+        
+        try {
+          await this.copyDirectoryRecursive(sourceImageDir, targetImageDir, imageExtensions);
+        } catch (error) {
+          // Directory might not exist, continue with next candidate
+          continue;
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to copy image directories:', error);
+    }
+  }
+
+  private async copyDirectoryRecursive(
+    sourceDir: string,
+    targetDir: string,
+    allowedExtensions?: Set<string>
+  ): Promise<void> {
+    await this.ensureDirectoryExists(targetDir);
+    
+    const entries = await readdir(sourceDir);
+    
+    for (const entry of entries) {
+      const sourcePath = join(sourceDir, entry);
+      const targetPath = join(targetDir, entry);
+      
+      const stats = await stat(sourcePath);
+      
+      if (stats.isDirectory()) {
+        await this.copyDirectoryRecursive(sourcePath, targetPath, allowedExtensions);
+      } else if (stats.isFile()) {
+        if (!allowedExtensions || allowedExtensions.has(extname(entry).toLowerCase())) {
+          await copyFile(sourcePath, targetPath);
+        }
       }
     }
   }

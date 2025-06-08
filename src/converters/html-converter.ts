@@ -79,7 +79,7 @@ export class HTMLConverter implements DocumentConverter {
     const document = dom.window.document;
     
     // Rewrite links to converted file extensions for batch processing
-    if (options.rewriteLinks) {
+    if (options.rewriteLinks && (options.format === 'markdown' || options.format === 'asciidoc')) {
       this.rewriteDocumentLinks(document, options.format);
     }
     

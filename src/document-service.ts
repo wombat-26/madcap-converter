@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { extname, dirname, basename } from 'path';
-import { HTMLConverter, WordConverter, MadCapConverter } from './converters/index.js';
+import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter } from './converters/index.js';
 import { ConversionOptions, ConversionResult, DocumentConverter } from './types/index.js';
 
 export class DocumentService {
@@ -13,7 +13,8 @@ export class DocumentService {
       ['docx', new WordConverter()],
       ['doc', new WordConverter()],
       ['madcap', new MadCapConverter()],
-      ['xml', new MadCapConverter()]
+      ['xml', new MadCapConverter()],
+      ['zendesk', new ZendeskConverter()]
     ]);
   }
 
@@ -35,9 +36,15 @@ export class DocumentService {
     } else {
       input = await readFile(inputPath, 'utf8');
       
-      // Check if HTML/HTM files contain MadCap content
+      // Check if HTML/HTM files contain MadCap content or if target is Zendesk
       if ((extension === 'html' || extension === 'htm') && typeof input === 'string') {
-        if (this.containsMadCapContent(input)) {
+        if (format === 'zendesk') {
+          // Use Zendesk converter for Zendesk format
+          converter = this.converters.get('zendesk')!;
+          if (this.containsMadCapContent(input)) {
+            inputType = 'madcap';
+          }
+        } else if (this.containsMadCapContent(input)) {
           inputType = 'madcap';
           converter = this.converters.get('xml')!; // Use MadCap converter
         }
@@ -51,7 +58,8 @@ export class DocumentService {
       extractImages: options.extractImages ?? false,
       outputDir: options.outputDir || dirname(outputPath),
       rewriteLinks: options.rewriteLinks,
-      inputPath: inputPath
+      inputPath: inputPath,
+      zendeskOptions: options.zendeskOptions
     };
 
     const result = await converter.convert(input, conversionOptions);
@@ -63,12 +71,24 @@ export class DocumentService {
   }
 
   async convertString(content: string, options: ConversionOptions): Promise<ConversionResult> {
-    const converter = this.getConverterForInputType(options.inputType);
+    let converter = this.getConverterForInputType(options.inputType);
+    
+    // Override converter selection for Zendesk format
+    if (options.format === 'zendesk') {
+      converter = this.converters.get('zendesk')!;
+    }
+    
     return await converter.convert(content, options);
   }
 
   async convertBuffer(buffer: Buffer, options: ConversionOptions): Promise<ConversionResult> {
-    const converter = this.getConverterForInputType(options.inputType);
+    let converter = this.getConverterForInputType(options.inputType);
+    
+    // Override converter selection for Zendesk format
+    if (options.format === 'zendesk') {
+      converter = this.converters.get('zendesk')!;
+    }
+    
     return await converter.convert(buffer, options);
   }
 

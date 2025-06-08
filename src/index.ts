@@ -11,18 +11,28 @@ import { ConversionOptions } from './types/index.js';
 const ConvertDocumentSchema = {
   input: z.string().describe('Input content (HTML, file path, or base64 encoded content)'),
   inputType: z.enum(['html', 'word', 'madcap']).describe('Type of input document'),
-  format: z.enum(['markdown', 'asciidoc']).describe('Output format'),
+  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
-  outputPath: z.string().optional().describe('Output file path (if not provided, returns content only)')
+  outputPath: z.string().optional().describe('Output file path (if not provided, returns content only)'),
+  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
+  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
 };
 
 const ConvertFileSchema = {
   inputPath: z.string().describe('Path to the input file'),
   outputPath: z.string().describe('Path for the output file'),
-  format: z.enum(['markdown', 'asciidoc']).describe('Output format'),
+  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
-  extractImages: z.boolean().optional().describe('Whether to extract and reference images')
+  extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
+  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
+  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
 };
 
 const GetSupportedFormatsSchema = {};
@@ -30,14 +40,19 @@ const GetSupportedFormatsSchema = {};
 const ConvertFolderSchema = {
   inputDir: z.string().describe('Path to input directory containing documents'),
   outputDir: z.string().describe('Path to output directory for converted documents'),
-  format: z.enum(['markdown', 'asciidoc']).describe('Output format'),
+  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   recursive: z.boolean().optional().describe('Process subdirectories recursively (default: true)'),
   preserveStructure: z.boolean().optional().describe('Preserve directory structure (default: true)'),
   copyImages: z.boolean().optional().describe('Copy referenced images (default: true)'),
   preserveFormatting: z.boolean().optional().describe('Preserve formatting (default: true)'),
   extractImages: z.boolean().optional().describe('Extract images from documents (default: true)'),
   includePatterns: z.array(z.string()).optional().describe('File patterns to include'),
-  excludePatterns: z.array(z.string()).optional().describe('File patterns to exclude')
+  excludePatterns: z.array(z.string()).optional().describe('File patterns to exclude'),
+  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
+  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
 };
 
 const AnalyzeFolderSchema = {
@@ -57,7 +72,7 @@ const GenerateMasterDocSchema = {
   format: z.enum(['markdown', 'asciidoc']).optional().describe('Output format (default: asciidoc)')
 };
 
-class DocumentConverterServer {
+class MadCapConverterServer {
   private server: McpServer;
   private documentService: DocumentService;
   private batchService: BatchService;
@@ -69,7 +84,7 @@ class DocumentConverterServer {
     this.tocService = new TocService();
     
     this.server = new McpServer({
-      name: 'document-converter',
+      name: 'madcap-converter',
       version: '1.0.0',
     });
 
@@ -82,7 +97,16 @@ class DocumentConverterServer {
         inputType: args.inputType,
         format: args.format,
         preserveFormatting: args.preserveFormatting ?? true,
-        extractImages: args.extractImages ?? false
+        extractImages: args.extractImages ?? false,
+        zendeskOptions: args.format === 'zendesk' ? {
+          sectionId: args.sectionId,
+          locale: args.locale || 'en-us',
+          userSegmentId: args.userSegmentId,
+          permissionGroupId: args.permissionGroupId,
+          generateTags: args.generateTags ?? true,
+          maxTags: 10,
+          sanitizeHtml: true
+        } : undefined
       };
 
       let result;
@@ -125,7 +149,16 @@ class DocumentConverterServer {
         {
           format: args.format,
           preserveFormatting: args.preserveFormatting,
-          extractImages: args.extractImages
+          extractImages: args.extractImages,
+          zendeskOptions: args.format === 'zendesk' ? {
+            sectionId: args.sectionId,
+            locale: args.locale || 'en-us',
+            userSegmentId: args.userSegmentId,
+            permissionGroupId: args.permissionGroupId,
+            generateTags: args.generateTags ?? true,
+            maxTags: 10,
+            sanitizeHtml: true
+          } : undefined
         }
       );
 
@@ -146,7 +179,7 @@ class DocumentConverterServer {
         content: [
           {
             type: 'text',
-            text: `Supported input formats: ${formats.join(', ')}\n\nSupported output formats: markdown, asciidoc`
+            text: `Supported input formats: ${formats.join(', ')}\n\nSupported output formats: markdown, asciidoc, zendesk`
           }
         ]
       };
@@ -161,7 +194,17 @@ class DocumentConverterServer {
         preserveFormatting: args.preserveFormatting ?? true,
         extractImages: args.extractImages ?? true,
         includePatterns: args.includePatterns,
-        excludePatterns: args.excludePatterns
+        excludePatterns: args.excludePatterns,
+        zendeskOptions: args.format === 'zendesk' ? {
+          sectionId: args.sectionId,
+          locale: args.locale || 'en-us',
+          userSegmentId: args.userSegmentId,
+          permissionGroupId: args.permissionGroupId,
+          generateTags: args.generateTags ?? true,
+          maxTags: 10,
+          sanitizeHtml: true,
+          ignoreVideos: true  // Ignore videos as requested
+        } : undefined
       };
 
       const result = await this.batchService.convertFolder(
@@ -300,6 +343,6 @@ ${stats.structure.slice(0, 20).map(f => `  - ${f}`).join('\n')}${stats.structure
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  const server = new DocumentConverterServer();
+  const server = new MadCapConverterServer();
   server.run().catch(console.error);
 }

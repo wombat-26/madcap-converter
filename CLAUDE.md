@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **Model Context Protocol (MCP) server** that converts HTML, Word documents, and MadCap Flare output to Markdown or AsciiDoc format. The application provides both single-file conversion and batch folder processing capabilities through MCP tools that integrate with Claude Desktop and other MCP clients.
+This is a **MadCap Converter** - a Model Context Protocol (MCP) server that specializes in converting MadCap Flare output to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. The application provides both single-file conversion and batch folder processing capabilities through MCP tools that integrate with Claude Desktop and other MCP clients.
 
 ## Key Development Commands
 
@@ -108,9 +108,9 @@ To integrate with Claude Desktop, users add this configuration:
 ```json
 {
   "mcpServers": {
-    "document-converter": {
+    "madcap-converter": {
       "command": "node",
-      "args": ["/absolute/path/to/document-converter/build/index.js"]
+      "args": ["/absolute/path/to/madcap-converter/build/index.js"]
     }
   }
 }

@@ -1,0 +1,48 @@
+﻿<!--?xml version="1.0" encoding="utf-8"?-->
+
+    
+    
+        <div class="topic-hero">
+            <h1>Welcome to our Online Help General.VersionNumber</h1>
+        </div>
+        <div class="home-layout">
+            <div class="home-section">
+                <h1>New and Changed
+				</h1>
+                <p>Each version contains new features and improvements. An overview of new and changed features of the General.ProductName</p>
+            </div>
+            <div class="home-section">
+                <h1>Quick Access Menu</h1>
+                <div class="quick-links">
+                    <div>
+                        <p><a href="01 Aufbau/Doku/02 Structure.htm"><img src="Resources/Images/Aufbau.png" class="StartPage" alt=""></a>
+                        </p>
+                        <p><a href="01 Aufbau/Doku/02 Structure.htm">Structure</a>
+                        </p>
+                    </div>
+                    <div>
+                        <p><a href="02 Planung/Doku/03-0 Planning.htm"><img src="Resources/Images/Grundlagen.png" class="StartPage" alt=""></a>
+                        </p>
+                        <p><a href="02 Planung/Doku/03-0 Planning.htm">Planning</a>
+                        </p>
+                    </div>
+                    <div>
+                        <p><a href="03 Management/06-0 Management.htm"><img src="Resources/Images/Review-anlegen.png" class="StartPage" alt=""></a>
+                        </p>
+                        <p><a href="03 Management/06-0 Management.htm">Management</a>
+                        </p>
+                    </div>
+                    <div>
+                        <p><a href="04 Messung Reporting/11-0 Analyzing.htm"><img src="Resources/Images/Widgets.png" class="StartPage" alt=""></a>
+                        </p>
+                        <p><a href="04 Messung Reporting/11-0 Analyzing.htm">Analyzing</a>
+                        </p>
+                    </div>
+                </div>
+            </div>
+            <div class="home-section">
+                <h1 style="font-family: 'Epilogue SemiBold';">Uptempo Knowledge Base</h1>
+                <p>This help provides information only on General.ProductName</p>
+            </div>
+        </div>
+    

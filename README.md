@@ -1,6 +1,6 @@
-# Document Converter MCP Server
+# MadCap Converter MCP Server
 
-> **A powerful Model Context Protocol (MCP) server that seamlessly converts HTML, Word documents, and MadCap Flare output to Markdown or AsciiDoc format.**
+> **A specialized Model Context Protocol (MCP) server that expertly converts MadCap Flare output to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML.**
 
 Transform your documents with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like image extraction, cross-reference processing, variable resolution, and comprehensive batch operations.
 
@@ -46,8 +46,8 @@ Transform your documents with intelligent conversion that preserves structure, f
 
 ```bash
 # Clone the repository
-git clone https://github.com/eckardtm/document-converter.git
-cd document-converter
+git clone https://github.com/eckardtm/madcap-converter.git
+cd madcap-converter
 
 # Install dependencies
 npm install
@@ -79,9 +79,9 @@ echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | node build/i
 ```json
 {
   "mcpServers": {
-    "document-converter": {
+    "madcap-converter": {
       "command": "node",
-      "args": ["/absolute/path/to/document-converter/build/index.js"],
+      "args": ["/absolute/path/to/madcap-converter/build/index.js"],
       "env": {
         "NODE_ENV": "production"
       }
@@ -363,7 +363,7 @@ When `rewriteLinks: true`:
 ### Project Architecture
 
 ```
-document-converter/
+madcap-converter/
 ├── src/
 │   ├── types/
 │   │   └── index.ts              # TypeScript interfaces
@@ -371,6 +371,7 @@ document-converter/
 │   │   ├── html-converter.ts     # HTML processing engine
 │   │   ├── word-converter.ts     # Word document handling
 │   │   ├── madcap-converter.ts   # MadCap specialization
+│   │   ├── zendesk-converter.ts  # Zendesk specialization
 │   │   └── index.ts             # Converter exports
 │   ├── document-service.ts       # Service coordination layer
 │   ├── batch-service.ts          # Folder processing service
@@ -518,9 +519,9 @@ This project is licensed under the ISC License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/eckardtm/document-converter/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/eckardtm/document-converter/discussions)
-- **Documentation**: [Wiki](https://github.com/eckardtm/document-converter/wiki)
+- **Issues**: [GitHub Issues](https://github.com/eckardtm/madcap-converter/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/eckardtm/madcap-converter/discussions)
+- **Documentation**: [Wiki](https://github.com/eckardtm/madcap-converter/wiki)
 
 ---
 

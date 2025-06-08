@@ -9,7 +9,7 @@ export class MadCapConverter implements DocumentConverter {
   private htmlConverter: HTMLConverter;
   private variableCache: Map<string, Map<string, string>> = new Map();
   private loadedSnippets: Set<string> = new Set(); // Prevent circular snippet loading
-  private currentTargetFormat: 'markdown' | 'asciidoc' = 'markdown';
+  private currentTargetFormat: 'markdown' | 'asciidoc' | 'zendesk' = 'markdown';
 
   constructor() {
     this.htmlConverter = new HTMLConverter();
@@ -47,7 +47,7 @@ export class MadCapConverter implements DocumentConverter {
     };
   }
 
-  private async preprocessMadCapContent(html: string, basePath?: string, targetFormat?: 'markdown' | 'asciidoc'): Promise<string> {
+  private async preprocessMadCapContent(html: string, basePath?: string, targetFormat?: 'markdown' | 'asciidoc' | 'zendesk'): Promise<string> {
     // Remove Microsoft properties from HTML string first
     let cleanedHtml = this.removeMicrosoftPropertiesFromString(html);
     
@@ -194,7 +194,7 @@ export class MadCapConverter implements DocumentConverter {
     });
   }
 
-  private convertCrossReferences(document: Document, targetFormat?: 'markdown' | 'asciidoc'): void {
+  private convertCrossReferences(document: Document, targetFormat?: 'markdown' | 'asciidoc' | 'zendesk'): void {
     // Handle MadCap:xref elements
     const madcapXrefs = Array.from(document.querySelectorAll('*')).filter(el => 
       el.tagName === 'MadCap:xref' ||
@@ -217,6 +217,9 @@ export class MadCapConverter implements DocumentConverter {
           convertedHref = href.replace(/\.htm(#.*)?$/, '.adoc$1');
         } else if (targetFormat === 'markdown') {
           convertedHref = href.replace(/\.htm(#.*)?$/, '.md$1');
+        } else if (targetFormat === 'zendesk') {
+          // For Zendesk, keep original .htm or convert to internal links
+          convertedHref = href;
         }
         // For other formats or missing format, keep original extension
         
@@ -585,7 +588,7 @@ export class MadCapConverter implements DocumentConverter {
     return fixed;
   }
 
-  private processCrossReferencesInHtml(html: string, targetFormat: 'markdown' | 'asciidoc'): string {
+  private processCrossReferencesInHtml(html: string, targetFormat: 'markdown' | 'asciidoc' | 'zendesk'): string {
     // Process MadCap:xref elements using regex to convert them to standard links
     return html.replace(/<MadCap:xref\s+href="([^"]+)"[^>]*>(.*?)<\/MadCap:xref>/g, (match, href, linkText) => {
       // Convert file extension based on target format
@@ -594,6 +597,9 @@ export class MadCapConverter implements DocumentConverter {
         convertedHref = href.replace(/\.htm(#.*)?$/, '.adoc$1');
       } else if (targetFormat === 'markdown') {
         convertedHref = href.replace(/\.htm(#.*)?$/, '.md$1');
+      } else if (targetFormat === 'zendesk') {
+        // For Zendesk, keep original .htm or convert to internal links
+        convertedHref = href;
       }
       
       return `<a href="${convertedHref}">${linkText}</a>`;
