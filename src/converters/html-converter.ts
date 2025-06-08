@@ -169,6 +169,9 @@ export class HTMLConverter implements DocumentConverter {
     // Remove spaces before punctuation
     result = this.removeSpacesBeforePunctuation(result);
     
+    // Ensure headers always start on new lines
+    result = result.replace(/([^\n])\s*(==+\s+)/g, '$1\n\n$2');
+    
     return result;
   }
 

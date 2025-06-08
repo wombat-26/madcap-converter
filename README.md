@@ -2,7 +2,7 @@
 
 > **A powerful Model Context Protocol (MCP) server that seamlessly converts HTML, Word documents, and MadCap Flare output to Markdown or AsciiDoc format.**
 
-Transform your documents with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like image extraction, conditional text processing, and metadata generation.
+Transform your documents with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like image extraction, cross-reference processing, variable resolution, and comprehensive batch operations.
 
 ---
 
@@ -11,11 +11,11 @@ Transform your documents with intelligent conversion that preserves structure, f
 ### Multi-Format Input Support
 - **HTML Documents** (.html, .htm) - Full HTML5 support with semantic preservation
 - **Microsoft Word** (.docx, .doc) - Complete document structure with styles and images
-- **MadCap Flare Output** - Specialized processing for technical documentation
+- **MadCap Flare Output** - Specialized processing for technical documentation with full MadCap element support
 
 ### Dual Output Formats
 - **Markdown** - GitHub-flavored Markdown with tables, code blocks, and task lists
-- **AsciiDoc** - Professional documentation format with advanced features
+- **AsciiDoc** - Professional documentation format with advanced features and proper syntax validation
 
 ### MCP Integration
 - **Claude Desktop Compatible** - Seamless integration with AI workflows
@@ -25,10 +25,13 @@ Transform your documents with intelligent conversion that preserves structure, f
 ### Advanced Processing Capabilities
 - 🔧 **Structure Preservation** - Maintains heading hierarchy and document flow
 - 🖼️ **Image Handling** - Extracts and references images with configurable output
-- 🔗 **Cross-Reference Processing** - Converts links and references intelligently
+- 🔗 **Cross-Reference Processing** - Converts MadCap xrefs and links intelligently with proper extension mapping
 - 📊 **Metadata Extraction** - Title, word count, warnings, and document statistics
-- ⚙️ **MadCap Specialization** - Handles conditional text, variables, and snippets
-- 🎨 **Formatting Options** - Configurable formatting preservation
+- ⚙️ **MadCap Specialization** - Handles conditional text, variables, snippets, dropDowns, and cross-references
+- 🎨 **Formatting Options** - Configurable formatting preservation with Microsoft properties cleanup
+- 📁 **Batch Processing** - Folder conversion with structure preservation and link rewriting
+- 🔄 **Variable Resolution** - Loads and resolves MadCap variables from .flvar files
+- 📋 **TOC Extraction** - Generates master documents from MadCap .fltoc files
 
 ---
 
@@ -43,7 +46,7 @@ Transform your documents with intelligent conversion that preserves structure, f
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-username/document-converter.git
+git clone https://github.com/eckardtm/document-converter.git
 cd document-converter
 
 # Install dependencies
@@ -120,20 +123,8 @@ Convert content directly from string input.
 | `extractImages` | boolean | ❌ | Extract and reference images (default: false) |
 | `outputPath` | string | ❌ | Save to file (returns content only if omitted) |
 
-**Example Response:**
-```json
-{
-  "content": [
-    {
-      "type": "text",
-      "text": "# Document Title\n\nConverted content...\n\nMetadata:\n{\n  \"title\": \"Document Title\",\n  \"wordCount\": 42,\n  \"images\": [\"image1.png\"]\n}"
-    }
-  ]
-}
-```
-
 #### `convert_file`
-Convert documents from file system paths.
+Convert documents from file system paths with advanced MadCap processing.
 
 **Parameters:**
 | Parameter | Type | Required | Description |
@@ -143,6 +134,40 @@ Convert documents from file system paths.
 | `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
 | `preserveFormatting` | boolean | ❌ | Preserve original formatting (default: true) |
 | `extractImages` | boolean | ❌ | Extract images to files (default: false) |
+
+#### `convert_folder`
+Batch convert entire folder structures with link rewriting and structure preservation.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `inputDir` | string | ✅ | Source directory path |
+| `outputDir` | string | ✅ | Destination directory path |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
+| `includePattern` | string | ❌ | File pattern to include (default: all supported) |
+| `excludePattern` | string | ❌ | File pattern to exclude |
+| `preserveStructure` | boolean | ❌ | Maintain folder hierarchy (default: true) |
+| `extractImages` | boolean | ❌ | Extract images to files (default: false) |
+| `rewriteLinks` | boolean | ❌ | Convert .htm links to output format (default: true) |
+
+#### `analyze_folder`
+Analyze folder structure and conversion readiness.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `inputDir` | string | ✅ | Directory to analyze |
+
+#### `extract_toc`
+Extract table of contents from MadCap .fltoc files and generate master documents.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `fltocPath` | string | ✅ | Path to .fltoc file |
+| `contentBasePath` | string | ✅ | Base path for content files |
+| `outputPath` | string | ✅ | Path for generated master document |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
 
 #### `get_supported_formats`
 Returns list of supported input and output formats.
@@ -166,32 +191,22 @@ Please convert this HTML to Markdown:
 </ul>
 ```
 
-**Direct MCP Call:**
-```json
-{
-  "jsonrpc": "2.0",
-  "id": 1,
-  "method": "tools/call",
-  "params": {
-    "name": "convert_document",
-    "arguments": {
-      "input": "<h1>Getting Started</h1><p>This is a <strong>sample</strong> document with <em>formatting</em>.</p><ul><li>Item one</li><li>Item two</li></ul>",
-      "inputType": "html",
-      "format": "markdown"
-    }
-  }
-}
+### MadCap Flare Folder Conversion
+
+**Claude Desktop:**
+```
+Convert the entire MadCap Flare Content folder to AsciiDoc format:
+Input: /Volumes/Envoy Pro/Flare/Spend EN/Content
+Output: /Volumes/Envoy Pro/target
+Format: asciidoc
 ```
 
-**Result:**
-```markdown
-# Getting Started
-
-This is a **sample** document with _formatting_.
-
-- Item one
-- Item two
-```
+This will:
+- Convert all .htm files to .adoc
+- Rewrite internal links (.htm → .adoc)
+- Process MadCap variables, snippets, and cross-references
+- Maintain folder structure
+- Extract and copy images
 
 ### Word Document Processing
 
@@ -208,27 +223,18 @@ This is a **sample** document with _formatting_.
 }
 ```
 
-### MadCap Flare Conversion
+### TOC Extraction from MadCap
 
 ```json
 {
-  "name": "convert_document",
+  "name": "extract_toc",
   "arguments": {
-    "input": "<html><body><h1 class=\"mc-heading-1\">User Guide</h1><p data-mc-conditions=\"Web.Admin\">Admin content</p><span data-mc-variable=\"General.ProductName\">MyApp</span></body></html>",
-    "inputType": "madcap",
+    "fltocPath": "/Volumes/Envoy Pro/Flare/Spend EN/Project/TOCs/Main.fltoc",
+    "contentBasePath": "/Volumes/Envoy Pro/Flare/Spend EN/Content",
+    "outputPath": "/Volumes/Envoy Pro/target/master.adoc",
     "format": "asciidoc"
   }
 }
-```
-
-**AsciiDoc Output:**
-```asciidoc
-= User Guide
-
-<!-- Conditional: Web.Admin -->
-Admin content
-
-MyApp
 ```
 
 ---
@@ -239,55 +245,89 @@ MyApp
 
 The converter provides sophisticated handling for MadCap Flare's unique elements:
 
-#### Conditional Text Processing
+#### Variable Resolution
+Automatically loads and resolves variables from `.flvar` files:
 ```html
 <!-- Input -->
-<p data-mc-conditions="Web.Admin,Print.Manager">Conditional content</p>
+<MadCap:variable name="General.ProductName" />
 
 <!-- Conversion Result -->
-<!-- Conditional: Web.Admin,Print.Manager -->
-Conditional content
+Spend (resolved from General.flvar)
 ```
 
-#### Variable Substitution
+#### Cross-Reference Processing
+Converts MadCap cross-references with proper extension mapping:
 ```html
 <!-- Input -->
-<span data-mc-variable="General.CompanyName">ACME Corp</span>
+<MadCap:xref href="installation.htm">Installing the Software</MadCap:xref>
 
-<!-- Conversion Result -->
-ACME Corp (preserves variable reference)
-```
+<!-- Markdown Result -->
+[Installing the Software](installation.md)
 
-#### Cross-Reference Handling
-```html
-<!-- Input -->
-<a data-mc-xref="#section1">See Section 1</a>
-
-<!-- Conversion Result -->
-[See Section 1](#section1)
+<!-- AsciiDoc Result -->
+link:installation.adoc[Installing the Software]
 ```
 
 #### Snippet Integration
+Loads and processes snippet content:
 ```html
 <!-- Input -->
-<div data-mc-snippet="shared/header.html">Header content</div>
+<MadCap:snippetBlock src="Snippets/CommonWarning.flsnp" />
 
-<!-- Conversion Result -->
-<!-- Snippet: shared/header.html -->
-Header content
+<!-- Result -->
+Content from snippet is loaded and processed inline
 ```
+
+#### DropDown Section Conversion
+Converts MadCap dropDowns to proper sections:
+```html
+<!-- Input -->
+<MadCap:dropDown>
+    <MadCap:dropDownHead>
+        <MadCap:dropDownHotspot>Advanced Settings</MadCap:dropDownHotspot>
+    </MadCap:dropDownHead>
+    <MadCap:dropDownBody>
+        <p>Configuration details...</p>
+    </MadCap:dropDownBody>
+</MadCap:dropDown>
+
+<!-- AsciiDoc Result -->
+== Advanced Settings
+
+Configuration details...
+```
+
+#### Microsoft Properties Cleanup
+Automatically removes Microsoft Office metadata and contamination:
+- Strips `<head>` sections completely
+- Removes `<!--[if gte mso 9]><xml>` blocks
+- Cleans namespace declarations
+- Eliminates custom document properties
 
 #### Style Conversion Mapping
 | MadCap Class | Markdown | AsciiDoc |
 |--------------|----------|----------|
 | `mc-heading-1` | `# Title` | `= Title` |
-| `mc-note` | `> **Note:** Content` | `NOTE: Content` |
-| `mc-warning` | `> **Warning:** Content` | `WARNING: Content` |
+| `mc-note` | `> **📝 NOTE:** Content` | `NOTE: Content` |
+| `mc-warning` | `> **⚠️ WARNING:** Content` | `WARNING: Content` |
 | `mc-procedure` | Numbered list | Numbered list |
 
-### Image Processing
+### Batch Processing Features
 
-#### Image Extraction Options
+#### Link Rewriting
+When `rewriteLinks: true`:
+- Internal `.htm` links → `.md` or `.adoc`
+- External links preserved
+- Fragment identifiers maintained
+- Relative paths resolved correctly
+
+#### Structure Preservation
+- Maintains folder hierarchy
+- Copies related assets
+- Preserves relative relationships
+- Handles nested directories
+
+#### Image Processing
 ```json
 {
   "extractImages": true,
@@ -296,40 +336,25 @@ Header content
 ```
 
 **Results in:**
-- Images saved to specified directory
-- Markdown/AsciiDoc references updated
+- Images extracted to dedicated folder
+- References updated in converted documents
 - Base64 images converted to files
 - Metadata includes image inventory
 
-#### Image Reference Formats
+### AsciiDoc Quality Improvements
 
-**Markdown:**
-```markdown
-![Alt text](images/diagram.png)
-```
+#### Syntax Validation
+- Ensures single document title
+- Proper heading hierarchy
+- Correct NOTE/WARNING syntax
+- Valid table formatting
+- Proper link/image syntax
 
-**AsciiDoc:**
-```asciidoc
-image::images/diagram.png[Alt text]
-```
-
-### Metadata Extraction
-
-Every conversion provides rich metadata:
-
-```json
-{
-  "metadata": {
-    "title": "Document Title",
-    "wordCount": 1250,
-    "images": ["image1.png", "chart.svg"],
-    "warnings": [
-      "Document contains conditional text that may need manual review",
-      "Found variables that may need manual substitution"
-    ]
-  }
-}
-```
+#### Formatting Fixes
+- Removes leading spaces that break AsciiDoc
+- Ensures proper line breaks between sections
+- Handles complex nested structures
+- Fixes malformed list elements
 
 ---
 
@@ -348,8 +373,11 @@ document-converter/
 │   │   ├── madcap-converter.ts   # MadCap specialization
 │   │   └── index.ts             # Converter exports
 │   ├── document-service.ts       # Service coordination layer
+│   ├── batch-service.ts          # Folder processing service
+│   ├── toc-service.ts           # TOC extraction service
 │   └── index.ts                 # MCP server implementation
 ├── build/                        # Compiled JavaScript
+├── CLAUDE.md                     # Claude Code guidance
 ├── package.json
 ├── tsconfig.json
 └── README.md
@@ -367,29 +395,6 @@ npm test           # Run test suite (when available)
 # Quality checks
 npm run lint       # Code linting
 npm run typecheck  # TypeScript validation
-```
-
-### Adding New Converters
-
-1. **Create converter class** implementing `DocumentConverter` interface:
-```typescript
-export class MyConverter implements DocumentConverter {
-  supportedInputTypes = ['myformat'];
-  
-  async convert(input: string | Buffer, options: ConversionOptions): Promise<ConversionResult> {
-    // Implementation
-  }
-}
-```
-
-2. **Register in DocumentService:**
-```typescript
-this.converters.set('myformat', new MyConverter());
-```
-
-3. **Add to schema validation:**
-```typescript
-inputType: z.enum(['html', 'word', 'madcap', 'myformat'])
 ```
 
 ### Testing the Server
@@ -429,28 +434,17 @@ npm install
 3. **Restart Claude** - Configuration changes require restart
 4. **Check logs** - Look for error messages in Claude's developer console
 
+#### MadCap Conversion Issues
+- **Variable resolution fails**: Check Project/VariableSets folder exists
+- **Snippets not loading**: Verify snippet paths are relative to source file
+- **Cross-references broken**: Ensure target files exist in output
+- **Microsoft contamination**: Automatic cleanup should handle this
+
 #### Conversion Errors
 - **Word documents**: Ensure file is valid .docx/.doc format
 - **Large files**: Consider breaking into smaller chunks
 - **Special characters**: Check encoding (UTF-8 recommended)
 - **Images**: Verify image paths and permissions for extraction
-
-### Performance Optimization
-
-#### Large Document Handling
-```typescript
-// For large documents, consider streaming
-const options: ConversionOptions = {
-  preserveFormatting: false,  // Faster processing
-  extractImages: false,       // Skip image processing
-  // ... other options
-};
-```
-
-#### Memory Management
-- Word documents are loaded entirely into memory
-- Consider file size limits for production use
-- Monitor Node.js heap usage for large conversions
 
 ---
 
@@ -483,6 +477,7 @@ const options: ConversionOptions = {
 | Simple HTML | 50KB | <100ms | ~30MB |
 | Complex Word Doc | 5MB | ~2s | ~150MB |
 | MadCap Project | 20MB | ~8s | ~400MB |
+| Folder Conversion | 100 files | ~30s | ~200MB |
 
 ---
 
@@ -523,9 +518,9 @@ This project is licensed under the ISC License - see the [LICENSE](LICENSE) file
 
 ## 📞 Support
 
-- **Issues**: [GitHub Issues](https://github.com/your-username/document-converter/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-username/document-converter/discussions)
-- **Documentation**: [Wiki](https://github.com/your-username/document-converter/wiki)
+- **Issues**: [GitHub Issues](https://github.com/eckardtm/document-converter/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/eckardtm/document-converter/discussions)
+- **Documentation**: [Wiki](https://github.com/eckardtm/document-converter/wiki)
 
 ---
 
