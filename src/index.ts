@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { DocumentService } from './document-service.js';
 import { BatchService } from './batch-service.js';
+import { TocService } from './toc-service.js';
 import { ConversionOptions } from './types/index.js';
 
 const ConvertDocumentSchema = {
@@ -43,14 +44,29 @@ const AnalyzeFolderSchema = {
   inputDir: z.string().describe('Path to directory to analyze')
 };
 
+const ParseTocSchema = {
+  fltocPath: z.string().describe('Path to MadCap .fltoc file'),
+  contentBasePath: z.string().describe('Base path to Content folder'),
+  outputPath: z.string().optional().describe('Output path for master.adoc file')
+};
+
+const GenerateMasterDocSchema = {
+  fltocPath: z.string().describe('Path to MadCap .fltoc file'),
+  contentBasePath: z.string().describe('Base path to Content folder'),
+  outputPath: z.string().describe('Output path for master document'),
+  format: z.enum(['markdown', 'asciidoc']).optional().describe('Output format (default: asciidoc)')
+};
+
 class DocumentConverterServer {
   private server: McpServer;
   private documentService: DocumentService;
   private batchService: BatchService;
+  private tocService: TocService;
 
   constructor() {
     this.documentService = new DocumentService();
     this.batchService = new BatchService();
+    this.tocService = new TocService();
     
     this.server = new McpServer({
       name: 'document-converter',
@@ -211,6 +227,69 @@ ${stats.structure.slice(0, 20).map(f => `  - ${f}`).join('\n')}${stats.structure
         ]
       };
     });
+
+    this.server.tool('parse_toc', ParseTocSchema, async (args) => {
+      const report = await this.tocService.generateTocReport(args.fltocPath, args.contentBasePath);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: report
+          }
+        ]
+      };
+    });
+
+    this.server.tool('generate_master_doc', GenerateMasterDocSchema, async (args) => {
+      const tocStructure = await this.tocService.parseFlareToc(args.fltocPath, args.contentBasePath);
+      const format = args.format || 'asciidoc';
+      const outputFormat = format === 'asciidoc' ? 'adoc' : 'md';
+      const masterContent = this.tocService.generateMasterAdoc(tocStructure, outputFormat);
+      
+      // Write to file
+      const fs = await import('fs/promises');
+      await fs.writeFile(args.outputPath, masterContent, 'utf8');
+      
+      const extension = format === 'asciidoc' ? 'adoc' : 'md';
+      const summary = `📚 Master Document Generated!
+
+📄 **File:** ${args.outputPath}
+📝 **Format:** ${format}
+🔗 **TOC Source:** ${args.fltocPath}
+📁 **Content Base:** ${args.contentBasePath}
+
+📊 **Structure:**
+- Total entries: ${this.countTocEntries(tocStructure.entries)}
+- Format: ${extension}
+- Document type: book
+
+✅ **Ready to use:** Include this master file in your documentation build process.
+
+💡 **Next steps:**
+1. Ensure all referenced files have been converted to ${extension}
+2. Adjust include paths if needed
+3. Build with AsciiDoctor (for .adoc) or your Markdown processor`;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: summary
+          }
+        ]
+      };
+    });
+  }
+
+  private countTocEntries(entries: any[]): number {
+    let count = entries.length;
+    entries.forEach((entry: any) => {
+      if (entry.children) {
+        count += this.countTocEntries(entry.children);
+      }
+    });
+    return count;
   }
 
 

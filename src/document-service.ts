@@ -19,23 +19,14 @@ export class DocumentService {
 
   async convertFile(inputPath: string, outputPath: string, options: Partial<ConversionOptions> = {}): Promise<ConversionResult> {
     const extension = extname(inputPath).toLowerCase().slice(1);
-    const converter = this.converters.get(extension);
+    let converter = this.converters.get(extension);
 
     if (!converter) {
       throw new Error(`Unsupported file type: ${extension}. Supported types: ${Array.from(this.converters.keys()).join(', ')}`);
     }
 
-    const inputType = this.determineInputType(extension);
+    let inputType = this.determineInputType(extension);
     const format = options.format || 'markdown';
-
-    const conversionOptions: ConversionOptions = {
-      format,
-      inputType,
-      preserveFormatting: options.preserveFormatting ?? true,
-      extractImages: options.extractImages ?? false,
-      outputDir: options.outputDir || dirname(outputPath),
-      rewriteLinks: options.rewriteLinks
-    };
 
     let input: string | Buffer;
     
@@ -43,7 +34,25 @@ export class DocumentService {
       input = await readFile(inputPath);
     } else {
       input = await readFile(inputPath, 'utf8');
+      
+      // Check if HTML/HTM files contain MadCap content
+      if ((extension === 'html' || extension === 'htm') && typeof input === 'string') {
+        if (this.containsMadCapContent(input)) {
+          inputType = 'madcap';
+          converter = this.converters.get('xml')!; // Use MadCap converter
+        }
+      }
     }
+
+    const conversionOptions: ConversionOptions = {
+      format,
+      inputType,
+      preserveFormatting: options.preserveFormatting ?? true,
+      extractImages: options.extractImages ?? false,
+      outputDir: options.outputDir || dirname(outputPath),
+      rewriteLinks: options.rewriteLinks,
+      inputPath: inputPath
+    };
 
     const result = await converter.convert(input, conversionOptions);
 
@@ -93,6 +102,15 @@ export class DocumentService {
       default:
         throw new Error(`Unsupported input type: ${inputType}`);
     }
+  }
+
+  private containsMadCapContent(html: string): boolean {
+    return html.includes('MadCap:') || 
+           html.includes('madcap:') || 
+           html.includes('xmlns:MadCap') ||
+           html.includes('data-mc-') ||
+           html.includes('mc-variable') ||
+           html.includes('mc-');
   }
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {

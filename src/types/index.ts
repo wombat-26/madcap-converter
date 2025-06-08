@@ -5,6 +5,7 @@ export interface ConversionOptions {
   extractImages?: boolean;
   outputDir?: string;
   rewriteLinks?: boolean;
+  inputPath?: string; // Source file path for snippet resolution
 }
 
 export interface ConversionResult {
