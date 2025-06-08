@@ -1,6 +1,6 @@
 # MadCap Converter MCP Server
 
-> **A specialized Model Context Protocol (MCP) server that expertly converts MadCap Flare output to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML.**
+> **A specialized Model Context Protocol (MCP) server that expertly converts MadCap Flare source (Content folder) to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. Do not use with generated HTML output folders.**
 
 Transform your documents with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like image extraction, cross-reference processing, variable resolution, and comprehensive batch operations.
 
