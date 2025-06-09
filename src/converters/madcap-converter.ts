@@ -19,6 +19,11 @@ export class MadCapConverter implements DocumentConverter {
     // Reset snippet loading cache for each conversion
     this.loadedSnippets.clear();
     
+    // Check if content should be skipped due to MadCap conditions
+    if (this.shouldSkipMadCapContent(input)) {
+      throw new Error('Content contains MadCap conditions that should not be converted (Black, Red, Gray, deprecated, paused, halted, discontinued, print-only, etc.)');
+    }
+    
     // Set current target format for cross-reference processing
     this.currentTargetFormat = options.format;
     
@@ -50,6 +55,9 @@ export class MadCapConverter implements DocumentConverter {
   private async preprocessMadCapContent(html: string, basePath?: string, targetFormat?: 'markdown' | 'asciidoc' | 'zendesk'): Promise<string> {
     // Remove Microsoft properties from HTML string first
     let cleanedHtml = this.removeMicrosoftPropertiesFromString(html);
+    
+    // Normalize self-closing MadCap variable tags
+    cleanedHtml = this.normalizeMadCapVariables(cleanedHtml);
     
     // Try to parse as XML to handle MadCap namespaces properly
     const dom = new JSDOM(cleanedHtml, { 
@@ -90,6 +98,15 @@ export class MadCapConverter implements DocumentConverter {
     cleanedHtml = cleanedHtml.replace(/\n\s*\n/g, '\n');
     
     return cleanedHtml;
+  }
+
+  private normalizeMadCapVariables(html: string): string {
+    // Convert self-closing MadCap:variable tags to regular opening/closing tags
+    // <MadCap:variable name="..." /> -> <MadCap:variable name="..."></MadCap:variable>
+    return html.replace(
+      /<MadCap:variable([^>]*?)\s*\/>/gi,
+      '<MadCap:variable$1></MadCap:variable>'
+    );
   }
 
   private convertDropDowns(document: Document): void {
@@ -413,7 +430,7 @@ export class MadCapConverter implements DocumentConverter {
       el.tagName.toLowerCase() === 'madcap:variable'
     );
     
-    allMadcapVars.forEach(element => {
+    allMadcapVars.forEach((element, index) => {
       const variableName = element.getAttribute('name');
       
       if (variableName) {
@@ -540,12 +557,49 @@ export class MadCapConverter implements DocumentConverter {
     
     // Fallback for common variables if not loaded
     const fallbackVariables: { [key: string]: string } = {
-      'ProductName': 'Spend',
+      // General variables
+      'ProductName': 'Uptempo',
       'CompanyShort': 'Uptempo',
-      'CompanyName': 'Uptempo GmbH'
+      'CompanyName': 'Uptempo GmbH',
+      'VersionNumber': 'October 2024',
+      
+      // Administration screen commands
+      'admin.permission.admin_manage-user.name': 'Manage Users',
+      'admin.uptempo.user.new_account.label': 'New User',
+      'admin.uptempo.user_modal.tabs.account.label': 'Account',
+      'admin.user.first_name': 'First Name',
+      'admin.request_login.last_name': 'Last Name',
+      'commons.add_user_login': 'Login',
+      'admin.login.password': 'Password',
+      'admin.uptempo.user_modal.form.department.label': 'Department',
+      'admin.user_administration.organizational_unit': 'organizational units',
+      'admin.uptempo.user_modal.tabs.membership.label': 'Membership',
+      'admin.uptempo.user_modal.cards.storage_group.label': 'Storage Group',
+      'admin.uptempo.user_modal.change_storage_group.btn': 'Change Storage Group',
+      'admin.uptempo.user_drawer.assign_team.btn': 'Assign Team',
+      'admin.uptempo.user_drawer.permissions.label': 'Permissions',
+      'admin.uptempo.user_modal.assign_role.btn': 'Assign Role',
+      'admin.dmc.mpm.form.role': 'role',
+      'admin.dmc.mpm.roles.type.admin': 'Administrator',
+      'admin.user_configuration.title': 'User Configuration',
+      'admin.uptempo.user_page.start_module.label': 'Start Module',
+      'admin.uptempo.rights.create.confirm.btn': 'Create User'
     };
     
-    return fallbackVariables[variableName] || null;
+    // First try the simple variable name
+    if (fallbackVariables[variableName]) {
+      return fallbackVariables[variableName];
+    }
+    
+    // For Administration_ScreenCommands variables, try removing the prefix
+    if (variableRef.startsWith('Administration_ScreenCommands.')) {
+      const adminVar = variableRef.substring('Administration_ScreenCommands.'.length);
+      if (fallbackVariables[adminVar]) {
+        return fallbackVariables[adminVar];
+      }
+    }
+    
+    return null;
   }
 
   private processVariablesInHtml(html: string): string {
@@ -604,5 +658,84 @@ export class MadCapConverter implements DocumentConverter {
       
       return `<a href="${convertedHref}">${linkText}</a>`;
     });
+  }
+
+  private shouldSkipMadCapContent(html: string): boolean {
+    return this.checkSkipConditions(html);
+  }
+
+  private checkSkipConditions(content: string): boolean {
+    // Regex patterns for deprecation and exclusion conditions
+    const skipPatterns = [
+      // Color-based conditions (case insensitive)
+      /\b(Black|Red|Gray|Grey)\b/i,
+      
+      // Deprecation patterns (various forms)
+      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
+      
+      // Status patterns
+      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
+      
+      // Print-only patterns
+      /\b(print[\s\-_]?only|printonly)\b/i,
+      
+      // Development status
+      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
+      
+      // Hidden/internal patterns
+      /\b(hidden|internal|private|draft)\b/i
+    ];
+    
+    // Check for madcap:conditions attributes
+    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
+    const matches = content.matchAll(conditionPattern);
+    
+    for (const match of matches) {
+      const conditions = match[1];
+      // Check if any skip pattern matches the conditions
+      if (skipPatterns.some(pattern => pattern.test(conditions))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  // Public method for batch service to check if file should be skipped
+  public static shouldSkipFile(content: string): boolean {
+    // Regex patterns for deprecation and exclusion conditions
+    const skipPatterns = [
+      // Color-based conditions (case insensitive)
+      /\b(Black|Red|Gray|Grey)\b/i,
+      
+      // Deprecation patterns (various forms)
+      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
+      
+      // Status patterns
+      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
+      
+      // Print-only patterns
+      /\b(print[\s\-_]?only|printonly)\b/i,
+      
+      // Development status
+      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
+      
+      // Hidden/internal patterns
+      /\b(hidden|internal|private|draft)\b/i
+    ];
+    
+    // Check for madcap:conditions attributes
+    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
+    const matches = content.matchAll(conditionPattern);
+    
+    for (const match of matches) {
+      const conditions = match[1];
+      // Check if any skip pattern matches the conditions
+      if (skipPatterns.some(pattern => pattern.test(conditions))) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 }

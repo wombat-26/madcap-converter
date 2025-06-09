@@ -18,10 +18,14 @@ export interface ZendeskConversionOptions {
   maxTags?: number; // Default 10 (Zendesk limit)
   sanitizeHtml?: boolean; // Remove unsafe HTML tags
   ignoreVideos?: boolean; // Skip video processing
+  inlineStyles?: boolean; // Apply inline CSS styles (default: true)
+  generateStylesheet?: boolean; // Generate separate CSS file (default: false)
+  cssOutputPath?: string; // Path for CSS file when generateStylesheet is true
 }
 
 export interface ConversionResult {
   content: string;
+  stylesheet?: string; // Generated CSS content when generateStylesheet is true
   metadata?: {
     title?: string;
     wordCount: number;

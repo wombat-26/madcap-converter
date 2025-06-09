@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { DocumentConverter, ConversionOptions, ConversionResult, ZendeskArticleMetadata } from '../types/index.js';
 import { MadCapConverter } from './madcap-converter.js';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import { resolve, dirname } from 'path';
 
 export class ZendeskConverter implements DocumentConverter {
@@ -11,11 +11,15 @@ export class ZendeskConverter implements DocumentConverter {
   private variableCache: Map<string, Map<string, string>> = new Map();
   private snippetCache: Map<string, string> = new Map(); // Cache loaded snippets
   
+  // File content cache shared with MadCapConverter
+  private static readonly MAX_CACHE_SIZE = 500;
+  private static fileContentCache = new Map<string, { content: string; mtime: number }>();
+  
   // Safe HTML tags allowed by Zendesk
   private readonly SAFE_HTML_TAGS = [
     'p', 'br', 'strong', 'em', 'u', 'ol', 'ul', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'blockquote', 'pre', 'code', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
-    'div', 'span', 'hr', 'sub', 'sup', 'small', 'del', 'ins', 'svg', 'path', 'g', 'circle',
+    'div', 'span', 'hr', 'sub', 'sup', 'small', 'del', 'ins', 'kbd', 'svg', 'path', 'g', 'circle',
     'rect', 'line', 'polygon', 'polyline', 'ellipse', 'defs', 'use'
   ];
 
@@ -31,6 +35,11 @@ export class ZendeskConverter implements DocumentConverter {
   async convert(input: string, options: ConversionOptions): Promise<ConversionResult> {
     if (options.format !== 'zendesk') {
       throw new Error('ZendeskConverter only supports zendesk format');
+    }
+
+    // Check if content should be skipped due to MadCap conditions
+    if (this.shouldSkipMadCapContent(input)) {
+      throw new Error('Content contains MadCap conditions that should not be converted (black, deprecated, paused, halted, discontinued, print only)');
     }
 
     // First preprocess with MadCap converter if it's MadCap content
@@ -71,7 +80,8 @@ export class ZendeskConverter implements DocumentConverter {
       draft: true // Default to draft
     };
 
-    return {
+    // Generate stylesheet if requested
+    const result: ConversionResult = {
       content: sanitizedBody,
       metadata: {
         title,
@@ -80,6 +90,13 @@ export class ZendeskConverter implements DocumentConverter {
         warnings: this.getZendeskWarnings(input, sanitizedBody, options)
       }
     };
+
+    // Add stylesheet if external CSS is requested
+    if (options.zendeskOptions?.generateStylesheet) {
+      result.stylesheet = this.generateZendeskStylesheet();
+    }
+
+    return result;
   }
 
   private containsMadCapContent(html: string): boolean {
@@ -89,6 +106,128 @@ export class ZendeskConverter implements DocumentConverter {
            html.includes('data-mc-') ||
            html.includes('mc-variable') ||
            html.includes('mc-');
+  }
+
+  private shouldSkipMadCapContent(html: string): boolean {
+    return this.checkSkipConditions(html);
+  }
+
+  private checkSkipConditions(content: string): boolean {
+    // Regex patterns for deprecation and exclusion conditions
+    const skipPatterns = [
+      // Color-based conditions (case insensitive)
+      /\b(Black|Red|Gray|Grey)\b/i,
+      
+      // Deprecation patterns (various forms)
+      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
+      
+      // Status patterns
+      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
+      
+      // Print-only patterns
+      /\b(print[\s\-_]?only|printonly)\b/i,
+      
+      // Development status
+      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
+      
+      // Hidden/internal patterns
+      /\b(hidden|internal|private|draft)\b/i
+    ];
+    
+    // Check for madcap:conditions attributes
+    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
+    const matches = content.matchAll(conditionPattern);
+    
+    for (const match of matches) {
+      const conditions = match[1];
+      // Check if any skip pattern matches the conditions
+      if (skipPatterns.some(pattern => pattern.test(conditions))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  // Public method for batch service to check if file should be skipped
+  public static shouldSkipFile(content: string): boolean {
+    // Regex patterns for deprecation and exclusion conditions
+    const skipPatterns = [
+      // Color-based conditions (case insensitive)
+      /\b(Black|Red|Gray|Grey)\b/i,
+      
+      // Deprecation patterns (various forms)
+      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
+      
+      // Status patterns
+      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
+      
+      // Print-only patterns
+      /\b(print[\s\-_]?only|printonly)\b/i,
+      
+      // Development status
+      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
+      
+      // Hidden/internal patterns
+      /\b(hidden|internal|private|draft)\b/i
+    ];
+    
+    // Check for madcap:conditions attributes
+    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
+    const matches = content.matchAll(conditionPattern);
+    
+    for (const match of matches) {
+      const conditions = match[1];
+      // Check if any skip pattern matches the conditions
+      if (skipPatterns.some(pattern => pattern.test(conditions))) {
+        return true;
+      }
+    }
+    
+    return false;
+  }
+
+  private removeSkipConditionElements(document: Document): void {
+    // Regex patterns for deprecation and exclusion conditions
+    const skipPatterns = [
+      // Color-based conditions (case insensitive)
+      /\b(Black|Red|Gray|Grey)\b/i,
+      
+      // Deprecation patterns (various forms)
+      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
+      
+      // Status patterns
+      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
+      
+      // Print-only patterns
+      /\b(print[\s\-_]?only|printonly)\b/i,
+      
+      // Development status
+      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
+      
+      // Hidden/internal patterns
+      /\b(hidden|internal|private|draft)\b/i
+    ];
+    
+    // Find elements with madcap:conditions attributes
+    const conditionalElements = document.querySelectorAll('[madcap\\:conditions], [data-mc-conditions]');
+    
+    conditionalElements.forEach(element => {
+      const madcapConditions = element.getAttribute('madcap:conditions') || '';
+      const dataMcConditions = element.getAttribute('data-mc-conditions') || '';
+      const allConditions = madcapConditions + ' ' + dataMcConditions;
+      
+      // Check if any skip patterns match the conditions
+      const shouldSkip = skipPatterns.some(pattern => pattern.test(allConditions));
+      
+      if (shouldSkip) {
+        // Add a comment indicating the removed content
+        const comment = document.createComment(
+          ` Removed content with MadCap conditions: ${madcapConditions || dataMcConditions} `
+        );
+        element.parentNode?.replaceChild(comment, element);
+      }
+    });
   }
 
   private async preprocessMadCapForZendesk(html: string, inputPath?: string): Promise<string> {
@@ -109,6 +248,9 @@ export class ZendeskConverter implements DocumentConverter {
     // Parse as HTML once
     const dom = new JSDOM(cleanedHtml, { contentType: 'text/html' });
     const document = dom.window.document;
+    
+    // Remove elements with skip conditions before processing
+    this.removeSkipConditionElements(document);
     
     // Batch process all MadCap elements in one pass to minimize DOM traversals
     await this.processMadCapElementsBatch(document, inputPath);
@@ -138,9 +280,14 @@ export class ZendeskConverter implements DocumentConverter {
         dropDowns.push(element);
       } else if (tagName === 'madcap:xref') {
         xrefs.push(element);
-      } else if (tagName === 'madcap:variable' || element.hasAttribute('data-mc-variable') || element.className.includes('mc-variable')) {
+      } else if (tagName === 'madcap:variable' || tagName === 'MadCap:variable' || tagName === 'MADCAP:VARIABLE' || tagName.toLowerCase() === 'madcap:variable' || element.hasAttribute('data-mc-variable') || (element.hasAttribute('name') && (tagName.includes('variable') || element.className.includes('mc-variable')))) {
         variables.push(element);
       }
+    }
+    
+    // Debug: log variable elements found
+    if (variables.length > 0) {
+      // Found ${variables.length} variable elements to process
     }
     
     // Process each type efficiently
@@ -149,6 +296,9 @@ export class ZendeskConverter implements DocumentConverter {
     this.processDropDowns(dropDowns);
     this.processXrefs(xrefs);
     this.processVariables(variables);
+    
+    // Fallback: Process any remaining madcap:variable elements that weren't caught
+    this.processRemainingVariables(document);
     
     // Clean up remaining MadCap elements
     this.convertMadCapElements(document);
@@ -166,7 +316,27 @@ export class ZendeskConverter implements DocumentConverter {
     cleanedHtml = cleanedHtml.replace(/<style[\s\S]*?<\/style>/gi, '');
     cleanedHtml = cleanedHtml.replace(/<script[\s\S]*?<\/script>/gi, '');
     
+    // Convert self-closing MadCap variable tags to regular tags
+    cleanedHtml = this.normalizeMadCapVariables(cleanedHtml);
+    
     return cleanedHtml;
+  }
+
+  private normalizeMadCapVariables(html: string): string {
+    // Convert self-closing MadCap:variable tags to regular opening/closing tags
+    // <MadCap:variable name="..." /> -> <MadCap:variable name="..."></MadCap:variable>
+    let result = html.replace(
+      /<MadCap:variable([^>]*?)\s*\/>/gi,
+      '<MadCap:variable$1></MadCap:variable>'
+    );
+    
+    // Also handle lowercase variations
+    result = result.replace(
+      /<madcap:variable([^>]*?)\s*\/>/gi,
+      '<madcap:variable$1></madcap:variable>'
+    );
+    
+    return result;
   }
 
   // Legacy method - now handled by processVariables in batch
@@ -370,13 +540,13 @@ export class ZendeskConverter implements DocumentConverter {
 
   private processVariables(variables: Element[]): void {
     variables.forEach(element => {
-      const variableName = element.getAttribute('data-mc-variable') || 
-                          element.getAttribute('name') ||
+      const variableName = element.getAttribute('name') ||
+                          element.getAttribute('data-mc-variable') || 
                           this.extractVariableName(element.className);
       
       // First try to get the text content (already resolved by MadCap)
       const textContent = element.textContent?.trim();
-      if (textContent && textContent !== '' && !textContent.includes('.')) {
+      if (textContent && textContent !== '' && !textContent.includes('.') && textContent.length > 0) {
         // Use resolved content if it doesn't look like a variable reference
         const textNode = element.ownerDocument.createTextNode(textContent);
         element.parentNode?.replaceChild(textNode, element);
@@ -386,13 +556,35 @@ export class ZendeskConverter implements DocumentConverter {
         const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
         element.parentNode?.replaceChild(textNode, element);
       } else {
-        // Keep original text content
-        const textNode = element.ownerDocument.createTextNode(textContent || '');
+        // If no variable name found, create placeholder
+        const placeholder = `{Variable: ${element.outerHTML.substring(0, 50)}...}`;
+        const textNode = element.ownerDocument.createTextNode(placeholder);
         element.parentNode?.replaceChild(textNode, element);
       }
     });
   }
 
+  private processRemainingVariables(document: Document): void {
+    // Use CSS selector to find any remaining variable elements that weren't caught
+    // This handles namespace issues with JSDOM
+    const remainingVariables = document.querySelectorAll('madcap\\:variable, MadCap\\:variable, MADCAP\\:VARIABLE');
+    
+    remainingVariables.forEach(element => {
+      const variableName = element.getAttribute('name');
+      
+      if (variableName) {
+        // Try to resolve the variable
+        const resolvedValue = this.resolveVariable(variableName);
+        const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
+        element.parentNode?.replaceChild(textNode, element);
+      } else {
+        // If no variable name found, create placeholder
+        const placeholder = `{Variable: ${element.outerHTML.substring(0, 50)}...}`;
+        const textNode = element.ownerDocument.createTextNode(placeholder);
+        element.parentNode?.replaceChild(textNode, element);
+      }
+    });
+  }
 
   private extractTitle(document: Document): string {
     // Try to find title from various sources
@@ -458,8 +650,8 @@ export class ZendeskConverter implements DocumentConverter {
     // Clean up and optimize HTML structure
     this.optimizeHtmlStructure(document, options!);
     
-    // Enhance styling for Zendesk
-    this.enhanceForZendeskStyling(document);
+    // Enhance styling for Zendesk (with configurable CSS approach)
+    this.enhanceForZendeskStylingWithOptions(document, options!);
 
     return document.body?.innerHTML || document.documentElement.innerHTML;
   }
@@ -562,6 +754,27 @@ export class ZendeskConverter implements DocumentConverter {
     // Remove empty elements
     const emptyElements = document.querySelectorAll('p:empty, div:empty, span:empty');
     emptyElements.forEach(el => el.remove());
+    
+    // Clean up empty paragraphs in notes/blockquotes after initial cleanup (including whitespace-only)
+    const parasInNotes = document.querySelectorAll('blockquote p');
+    parasInNotes.forEach(el => {
+      if (!el.textContent?.trim()) {
+        el.remove();
+      }
+    });
+
+    // Clean up nested blockquotes (from MadCap note conversions)
+    const nestedBlockquotes = document.querySelectorAll('blockquote blockquote');
+    nestedBlockquotes.forEach(innerBlockquote => {
+      const outerBlockquote = innerBlockquote.parentElement;
+      if (outerBlockquote && outerBlockquote.tagName.toLowerCase() === 'blockquote') {
+        // If the outer blockquote only contains this inner blockquote, replace outer with inner
+        const outerChildren = Array.from(outerBlockquote.children);
+        if (outerChildren.length === 1 && outerChildren[0] === innerBlockquote) {
+          outerBlockquote.parentNode?.replaceChild(innerBlockquote, outerBlockquote);
+        }
+      }
+    });
 
     // Clean up nested paragraphs
     const nestedPs = document.querySelectorAll('p p');
@@ -711,6 +924,9 @@ export class ZendeskConverter implements DocumentConverter {
         }
       }
     });
+
+    // Convert keyboard shortcuts to <kbd> elements
+    this.convertKeyboardShortcuts(document);
   }
 
   private convertVideoReferences(document: Document): void {
@@ -898,6 +1114,11 @@ export class ZendeskConverter implements DocumentConverter {
       warnings.push('Relative links detected - verify all links work in Zendesk environment');
     }
 
+    // Check if content had skip conditions that were removed
+    if (sanitizedHtml.includes('<!-- Removed content with MadCap conditions:')) {
+      warnings.push('Some content was excluded due to MadCap conditions (black, deprecated, paused, halted, discontinued, print only)');
+    }
+
     return warnings;
   }
 
@@ -968,6 +1189,162 @@ export class ZendeskConverter implements DocumentConverter {
         img.classList.add('zendesk-png-icon');
       }
     });
+
+    // Style keyboard elements
+    const kbdElements = document.querySelectorAll('kbd');
+    kbdElements.forEach(kbd => {
+      if (!kbd.classList.contains('zendesk-key')) {
+        kbd.classList.add('zendesk-key');
+      }
+    });
+  }
+
+  // Add Zendesk-specific styling enhancements with configurable CSS approach
+  private enhanceForZendeskStylingWithOptions(document: Document, options: ConversionOptions): void {
+    const useInlineStyles = options.zendeskOptions?.inlineStyles !== false; // Default: true
+    
+    // Style code blocks
+    const codeBlocks = document.querySelectorAll('pre, code');
+    codeBlocks.forEach(block => {
+      block.classList.add('zendesk-code');
+      if (useInlineStyles) {
+        block.setAttribute('style', 
+          'background-color: #f8f9fa; ' +
+          'border: 1px solid #e9ecef; ' +
+          'border-radius: 4px; ' +
+          'padding: 0.25em 0.5em; ' +
+          'font-family: Monaco, Menlo, Ubuntu Mono, monospace; ' +
+          'font-size: 0.9em;'
+        );
+      }
+    });
+
+    // Style blockquotes (notes/warnings)
+    const blockquotes = document.querySelectorAll('blockquote');
+    blockquotes.forEach(quote => {
+      quote.classList.add('zendesk-callout');
+      if (useInlineStyles) {
+        quote.setAttribute('style', 
+          'padding: 1em; ' +
+          'margin: 1em 0; ' +
+          'border-left: 4px solid #007acc; ' +
+          'border-radius: 4px; ' +
+          'background-color: #f8f9fa;'
+        );
+      }
+    });
+
+    // Style tables
+    const tables = document.querySelectorAll('table');
+    tables.forEach(table => {
+      table.classList.add('zendesk-table');
+      if (useInlineStyles) {
+        table.setAttribute('style', 
+          'width: 100%; ' +
+          'border-collapse: collapse; ' +
+          'margin: 1em 0;'
+        );
+        
+        // Style table cells
+        const cells = table.querySelectorAll('th, td');
+        cells.forEach(cell => {
+          cell.setAttribute('style', 
+            'padding: 0.75em; ' +
+            'border: 1px solid #dee2e6; ' +
+            'text-align: left;'
+          );
+        });
+        
+        // Style headers
+        const headers = table.querySelectorAll('th');
+        headers.forEach(header => {
+          header.setAttribute('style', 
+            header.getAttribute('style') + ' ' +
+            'background-color: #f8f9fa; ' +
+            'font-weight: 600;'
+          );
+        });
+      }
+      
+      // Ensure table has proper structure
+      if (!table.querySelector('thead') && table.querySelector('tr')) {
+        const firstRow = table.querySelector('tr');
+        if (firstRow) {
+          const thead = document.createElement('thead');
+          thead.appendChild(firstRow.cloneNode(true));
+          table.insertBefore(thead, firstRow);
+        }
+      }
+    });
+
+    // Style lists
+    const lists = document.querySelectorAll('ul, ol');
+    lists.forEach(list => {
+      list.classList.add('zendesk-list');
+      if (useInlineStyles) {
+        list.setAttribute('style', 'margin: 0.5em 0; padding-left: 1.5em;');
+      }
+    });
+
+    // Add spacing classes to improve readability
+    const headings = document.querySelectorAll('h1, h2, h3, h4, h5, h6');
+    headings.forEach(heading => {
+      heading.classList.add('zendesk-heading');
+      if (useInlineStyles) {
+        heading.setAttribute('style', 
+          'margin-top: 1.5em; ' +
+          'margin-bottom: 0.5em; ' +
+          'font-weight: 600;'
+        );
+      }
+    });
+
+    // Style icon elements and containers
+    const icons = document.querySelectorAll('.icon, [class*="icon"]');
+    icons.forEach(icon => {
+      icon.classList.add('zendesk-icon');
+    });
+
+    // Style SVG elements
+    const svgs = document.querySelectorAll('svg');
+    svgs.forEach(svg => {
+      if (!svg.classList.contains('zendesk-svg-icon') && 
+          !svg.classList.contains('zendesk-svg-button-icon') && 
+          !svg.classList.contains('zendesk-svg-default')) {
+        svg.classList.add('zendesk-svg');
+      }
+    });
+
+    // Style PNG icon images
+    const pngIcons = document.querySelectorAll('img.zendesk-png-icon, img.zendesk-png-button-icon');
+    pngIcons.forEach(img => {
+      if (!img.classList.contains('zendesk-png-icon') && 
+          !img.classList.contains('zendesk-png-button-icon')) {
+        img.classList.add('zendesk-png-icon');
+      }
+    });
+
+    // Style keyboard elements
+    const kbdElements = document.querySelectorAll('kbd');
+    kbdElements.forEach(kbd => {
+      if (!kbd.classList.contains('zendesk-key')) {
+        kbd.classList.add('zendesk-key');
+      }
+      if (useInlineStyles) {
+        kbd.setAttribute('style', 
+          'background-color: #f5f5f5; ' +
+          'border: 1px solid #ccc; ' +
+          'border-radius: 3px; ' +
+          'box-shadow: 0 1px 0 rgba(0,0,0,0.1); ' +
+          'padding: 2px 6px; ' +
+          'font-family: Monaco, Menlo, Ubuntu Mono, monospace; ' +
+          'font-size: 0.85em; ' +
+          'display: inline-block; ' +
+          'margin: 0 1px; ' +
+          'vertical-align: baseline;'
+        );
+      }
+    });
   }
 
   // Variable resolution methods adapted from MadCapConverter
@@ -997,23 +1374,54 @@ export class ZendeskConverter implements DocumentConverter {
         return;
       }
 
-      const variableSetPath = resolve(projectPath, 'General.flvar');
-      const variableContent = await readFile(variableSetPath, 'utf8');
-      
-      const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
-      const document = dom.window.document;
-      
       const variables = new Map<string, string>();
       
-      const variableElements = document.querySelectorAll('Variable');
-      variableElements.forEach(element => {
-        const name = element.getAttribute('Name');
-        const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+      // Dynamically find all .flvar files in the project directory
+      try {
+        const { readdir } = await import('fs/promises');
+        const files = await readdir(projectPath);
+        const flvarFiles = files.filter(file => file.endsWith('.flvar'));
         
-        if (name && value) {
-          variables.set(name, value);
-        }
-      });
+        // Load variable files in parallel
+        const variablePromises = flvarFiles.map(async (fileName) => {
+          try {
+            const variableSetPath = resolve(projectPath, fileName);
+            const variableContent = await this.readFileWithCache(variableSetPath);
+            
+            const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
+            const document = dom.window.document;
+            
+            const fileVariables = new Map<string, string>();
+            const variableElements = document.querySelectorAll('Variable');
+            variableElements.forEach(element => {
+              const name = element.getAttribute('Name');
+              const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+              
+              if (name && value) {
+                fileVariables.set(name, value);
+              }
+            });
+            
+            // Variables loaded from ${fileName}
+            return fileVariables;
+          } catch (error) {
+            console.warn(`Could not load variable set ${fileName}:`, error);
+            return new Map<string, string>();
+          }
+        });
+        
+        // Await all variable file loads and merge results
+        const variableMaps = await Promise.all(variablePromises);
+        variableMaps.forEach(fileVariables => {
+          for (const [name, value] of fileVariables) {
+            variables.set(name, value);
+          }
+        });
+        
+        // Total variables loaded: ${variables.size} from ${flvarFiles.length} .flvar files
+      } catch (error) {
+        console.warn('Could not read project directory for .flvar files:', error);
+      }
       
       this.variableCache.set(projectPath, variables);
     } catch (error) {
@@ -1039,13 +1447,49 @@ export class ZendeskConverter implements DocumentConverter {
     
     // Fallback for common variables
     const fallbackVariables: { [key: string]: string } = {
-      'ProductName': 'Spend',
+      // General variables
+      'ProductName': 'Uptempo',
       'CompanyShort': 'Uptempo',
       'CompanyName': 'Uptempo GmbH',
-      'VersionNumber': 'October 2024'
+      'VersionNumber': 'October 2024',
+      
+      // Administration screen commands
+      'admin.permission.admin_manage-user.name': 'Manage Users',
+      'admin.uptempo.user.new_account.label': 'New User',
+      'admin.uptempo.user_modal.tabs.account.label': 'Account',
+      'admin.user.first_name': 'First Name',
+      'admin.request_login.last_name': 'Last Name',
+      'commons.add_user_login': 'Login',
+      'admin.login.password': 'Password',
+      'admin.uptempo.user_modal.form.department.label': 'Department',
+      'admin.user_administration.organizational_unit': 'organizational units',
+      'admin.uptempo.user_modal.tabs.membership.label': 'Membership',
+      'admin.uptempo.user_modal.cards.storage_group.label': 'Storage Group',
+      'admin.uptempo.user_modal.change_storage_group.btn': 'Change Storage Group',
+      'admin.uptempo.user_drawer.assign_team.btn': 'Assign Team',
+      'admin.uptempo.user_drawer.permissions.label': 'Permissions',
+      'admin.uptempo.user_modal.assign_role.btn': 'Assign Role',
+      'admin.dmc.mpm.form.role': 'role',
+      'admin.dmc.mpm.roles.type.admin': 'Administrator',
+      'admin.user_configuration.title': 'User Configuration',
+      'admin.uptempo.user_page.start_module.label': 'Start Module',
+      'admin.uptempo.rights.create.confirm.btn': 'Create User'
     };
     
-    return fallbackVariables[variableName] || null;
+    // First try the simple variable name
+    if (fallbackVariables[variableName]) {
+      return fallbackVariables[variableName];
+    }
+    
+    // For Administration_ScreenCommands variables, try removing the prefix
+    if (variableRef.startsWith('Administration_ScreenCommands.')) {
+      const adminVar = variableRef.substring('Administration_ScreenCommands.'.length);
+      if (fallbackVariables[adminVar]) {
+        return fallbackVariables[adminVar];
+      }
+    }
+    
+    return null;
   }
 
   private extractVariableName(className: string): string | undefined {
@@ -1119,5 +1563,365 @@ export class ZendeskConverter implements DocumentConverter {
       });
       node.textContent = text;
     });
+  }
+
+  private convertKeyboardShortcuts(document: Document): void {
+    // Convert existing keyboard/key styling to <kbd> elements
+    
+    // 1. Convert elements with keyboard-related classes
+    const keyElements = document.querySelectorAll(
+      '.key, .keyboard, .kbd, .keystroke, .shortcut, .hotkey, ' +
+      '[class*="key-"], [class*="keyboard-"], [class*="kbd-"], ' +
+      '.mc-key, .mc-keyboard, .mc-shortcut'
+    );
+    
+    keyElements.forEach(element => {
+      const kbd = document.createElement('kbd');
+      kbd.className = 'zendesk-key';
+      kbd.innerHTML = element.innerHTML;
+      
+      // Copy any important attributes (but not class)
+      const title = element.getAttribute('title');
+      if (title) kbd.setAttribute('title', title);
+      
+      element.parentNode?.replaceChild(kbd, element);
+    });
+
+    // 2. Convert text patterns that look like keyboard shortcuts
+    const textNodes = document.createTreeWalker(
+      document.body || document.documentElement,
+      4, // NodeFilter.SHOW_TEXT
+      node => {
+        // Skip text nodes that are already inside kbd, code, or pre elements
+        const parent = (node as Text).parentElement;
+        if (parent && ['kbd', 'code', 'pre', 'script', 'style'].includes(parent.tagName.toLowerCase())) {
+          return 3; // NodeFilter.FILTER_REJECT
+        }
+        return 1; // NodeFilter.FILTER_ACCEPT
+      }
+    );
+
+    // Patterns for common keyboard shortcuts
+    const keyboardPatterns = [
+      // Ctrl/Cmd combinations: Ctrl+C, Cmd+V, Ctrl+Alt+Del
+      /\b(Ctrl|Cmd|Alt|Shift|Meta|Win|Super|⌘|⌥|⇧|⌃)\s*\+\s*([A-Za-z0-9]+(?:\s*\+\s*[A-Za-z0-9]+)*)\b/g,
+      // Function keys: F1, F12, etc.
+      /\bF([1-9]|1[0-2])\b/g,
+      // Special keys in caps: ENTER, TAB, ESC, DELETE, etc.
+      /\b(ENTER|RETURN|TAB|ESC|ESCAPE|DELETE|DEL|BACKSPACE|SPACE|HOME|END|PAGEUP|PAGEDOWN|INSERT|INS)\b/g,
+      // Arrow keys
+      /\b(UP|DOWN|LEFT|RIGHT)\s+(ARROW|KEY)\b/gi,
+      // Common single keys when emphasized: "Press A", "Type X"
+      /\b(Press|Type|Hit)\s+([A-Za-z0-9])\b/g
+    ];
+
+    let node: Node | null;
+    const nodesToProcess: { node: Text, matches: Array<{ match: RegExpMatchArray, pattern: number }> }[] = [];
+
+    while (node = textNodes.nextNode()) {
+      const textNode = node as Text;
+      const allMatches: Array<{ match: RegExpMatchArray, pattern: number }> = [];
+      
+      keyboardPatterns.forEach((pattern, patternIndex) => {
+        const matches = Array.from(textNode.textContent?.matchAll(pattern) || []);
+        matches.forEach(match => {
+          allMatches.push({ match, pattern: patternIndex });
+        });
+      });
+
+      if (allMatches.length > 0) {
+        // Sort matches by position to process them correctly
+        allMatches.sort((a, b) => (a.match.index || 0) - (b.match.index || 0));
+        nodesToProcess.push({ node: textNode, matches: allMatches });
+      }
+    }
+
+    // Process keyboard shortcut matches (in reverse order to avoid affecting positions)
+    nodesToProcess.reverse().forEach(({ node, matches }) => {
+      let text = node.textContent!;
+      let htmlFragments: string[] = [];
+      let lastIndex = 0;
+
+      matches.reverse().forEach(({ match, pattern }) => {
+        if (match.index !== undefined) {
+          const matchText = match[0];
+          const beforeText = text.substring(lastIndex, match.index);
+          
+          let kbdHtml = '';
+          if (pattern === 0) {
+            // Ctrl/Cmd combinations - split and wrap each part
+            const parts = matchText.split(/\s*\+\s*/);
+            const kbdParts = parts.map(part => `<kbd class="zendesk-key">${part.trim()}</kbd>`);
+            kbdHtml = kbdParts.join('+');
+          } else if (pattern === 3) {
+            // "Press X" pattern - only wrap the key part
+            const keyPart = match[2];
+            kbdHtml = `${match[1]} <kbd class="zendesk-key">${keyPart}</kbd>`;
+          } else {
+            // Simple wrap in kbd
+            kbdHtml = `<kbd class="zendesk-key">${matchText}</kbd>`;
+          }
+          
+          htmlFragments.unshift(beforeText + kbdHtml);
+          lastIndex = match.index + matchText.length;
+        }
+      });
+
+      // If we found matches, replace the text node with HTML
+      if (htmlFragments.length > 0) {
+        const remainingText = text.substring(lastIndex);
+        const finalHtml = htmlFragments.join('') + remainingText;
+        
+        // Create a temporary element to parse the HTML
+        const temp = document.createElement('span');
+        temp.innerHTML = finalHtml;
+        
+        // Replace the text node with the parsed HTML content
+        const parent = node.parentNode!;
+        while (temp.firstChild) {
+          parent.insertBefore(temp.firstChild, node);
+        }
+        parent.removeChild(node);
+      }
+    });
+
+    // 3. Style existing <kbd> elements
+    const existingKbds = document.querySelectorAll('kbd');
+    existingKbds.forEach(kbd => {
+      if (!kbd.classList.contains('zendesk-key')) {
+        kbd.classList.add('zendesk-key');
+      }
+    });
+  }
+
+  // Optimized file reading with caching (shared with MadCapConverter)
+  private async readFileWithCache(filePath: string): Promise<string> {
+    try {
+      const stats = await stat(filePath);
+      const cached = ZendeskConverter.fileContentCache.get(filePath);
+      
+      if (cached && cached.mtime === stats.mtimeMs) {
+        return cached.content;
+      }
+      
+      const content = await readFile(filePath, 'utf8');
+      ZendeskConverter.fileContentCache.set(filePath, { content, mtime: stats.mtimeMs });
+      
+      // LRU eviction to prevent memory leaks
+      if (ZendeskConverter.fileContentCache.size > ZendeskConverter.MAX_CACHE_SIZE) {
+        const firstKey = ZendeskConverter.fileContentCache.keys().next().value as string;
+        ZendeskConverter.fileContentCache.delete(firstKey);
+      }
+      
+      return content;
+    } catch (error) {
+      throw error; // Re-throw to maintain existing error handling
+    }
+  }
+
+  private generateZendeskStylesheet(): string {
+    return `/* Zendesk Help Center CSS - Generated by MadCap Converter */
+
+/* Keyboard Keys */
+.zendesk-key, kbd.zendesk-key {
+  background-color: #f5f5f5;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  box-shadow: 0 1px 0 rgba(0,0,0,0.1);
+  padding: 2px 6px;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.85em;
+  display: inline-block;
+  margin: 0 1px;
+  vertical-align: baseline;
+  font-weight: normal;
+}
+
+/* Icons and Images */
+.zendesk-svg-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: middle;
+  fill: currentColor;
+}
+
+.zendesk-png-icon {
+  width: 1em;
+  height: 1em;
+  display: inline-block;
+  vertical-align: middle;
+  max-width: 24px;
+  max-height: 24px;
+}
+
+.zendesk-svg-button-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+  fill: currentColor;
+}
+
+.zendesk-png-button-icon {
+  width: 16px;
+  height: 16px;
+  display: inline-block;
+  vertical-align: middle;
+  margin-right: 4px;
+}
+
+.zendesk-icon-container {
+  display: inline-flex;
+  align-items: center;
+  vertical-align: middle;
+}
+
+/* Collapsible Sections */
+.zendesk-collapsible {
+  margin: 1em 0;
+  border: 1px solid #e0e0e0;
+  border-radius: 4px;
+}
+
+.zendesk-collapsible summary {
+  padding: 0.75em 1em;
+  background-color: #f8f9fa;
+  cursor: pointer;
+  border-radius: 4px 4px 0 0;
+  font-weight: 600;
+}
+
+.zendesk-collapsible[open] summary {
+  border-bottom: 1px solid #e0e0e0;
+}
+
+.collapsible-content {
+  padding: 1em;
+}
+
+/* Callouts and Notes */
+.zendesk-callout {
+  padding: 1em;
+  margin: 1em 0;
+  border-left: 4px solid #007acc;
+  border-radius: 4px;
+  background-color: #f8f9fa;
+}
+
+.zendesk-note {
+  border-left-color: #17a2b8;
+}
+
+.zendesk-warning {
+  border-left-color: #ffc107;
+  background-color: #fff3cd;
+}
+
+/* Typography */
+.zendesk-heading {
+  margin-top: 1.5em;
+  margin-bottom: 0.5em;
+  font-weight: 600;
+}
+
+.zendesk-list {
+  margin: 0.5em 0;
+  padding-left: 1.5em;
+}
+
+/* Tables */
+.zendesk-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1em 0;
+}
+
+.zendesk-table th,
+.zendesk-table td {
+  padding: 0.75em;
+  border: 1px solid #dee2e6;
+  text-align: left;
+}
+
+.zendesk-table th {
+  background-color: #f8f9fa;
+  font-weight: 600;
+}
+
+/* Code Blocks */
+.zendesk-code {
+  background-color: #f8f9fa;
+  border: 1px solid #e9ecef;
+  border-radius: 4px;
+  padding: 0.25em 0.5em;
+  font-family: 'Monaco', 'Menlo', 'Ubuntu Mono', monospace;
+  font-size: 0.9em;
+}
+
+/* Images */
+.zendesk-image-small {
+  max-width: 32px;
+  height: auto;
+  display: inline-block;
+  vertical-align: middle;
+}
+
+.zendesk-image-medium {
+  max-width: 300px;
+  height: auto;
+  margin: 10px 0;
+}
+
+.zendesk-image-large {
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ddd;
+  margin: 10px 0;
+}
+
+.zendesk-image-default {
+  max-width: 600px;
+  height: auto;
+  margin: 10px 0;
+}
+
+/* Video Placeholders */
+.zendesk-video-embed {
+  background-color: #f8f9fa;
+  border: 2px dashed #6c757d;
+  border-radius: 8px;
+  padding: 2em;
+  margin: 1em 0;
+  text-align: center;
+}
+
+/* Snippet Content */
+.snippet-content {
+  margin: 0.5em 0;
+}
+
+.snippet-placeholder {
+  background-color: #fff3cd;
+  border: 1px solid #ffeaa7;
+  border-radius: 4px;
+  padding: 1em;
+  margin: 1em 0;
+}
+
+/* SVG Elements */
+.zendesk-svg {
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+}
+
+.zendesk-svg-default {
+  max-width: 100%;
+  height: auto;
+  display: inline-block;
+}
+`;
   }
 }

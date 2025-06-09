@@ -58,11 +58,38 @@ The server exposes 5 main tools:
 
 ### MadCap Flare Handling
 The `MadCapConverter` includes sophisticated preprocessing for:
-- Conditional text (`data-mc-conditions`) → HTML comments
+- Conditional text (`data-mc-conditions`) → HTML comments or exclusion
 - Variables (`data-mc-variable`) → preserved references
 - Cross-references (`data-mc-xref`) → standard links
 - Snippets (`data-mc-snippet`) → documented includes
 - Style class mapping (mc-heading-1, mc-note, mc-warning, etc.)
+
+### MadCap Condition Filtering (All Formats)
+All converters automatically exclude content with specific MadCap conditions using regex patterns:
+
+**Color-based conditions:**
+- `Black`, `Red`, `Gray`, `Grey` - Color-coded content exclusions
+
+**Deprecation patterns:**
+- `deprecated`, `deprecation`, `obsolete`, `legacy`, `old` - Deprecated content
+
+**Status patterns:**
+- `paused`, `halted`, `stopped`, `discontinued`, `retired` - Development status exclusions
+
+**Print-only patterns:**
+- `print only`, `print-only`, `printonly` - Print-exclusive content
+
+**Development status:**
+- `cancelled`, `canceled`, `abandoned`, `shelved` - Cancelled development
+
+**Hidden/Internal patterns:**
+- `hidden`, `internal`, `private`, `draft` - Internal content
+
+**Implementation levels:**
+- **Single file conversion**: Throws error with descriptive message
+- **Batch conversion**: Skips entire file and logs to console  
+- **Element-level**: (Zendesk only) Removes elements and adds HTML comments
+- **Applies to**: Markdown, AsciiDoc, and Zendesk conversions
 
 ### Word Document Processing
 Uses **mammoth.js** with custom style mapping and image extraction:

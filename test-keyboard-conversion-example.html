@@ -1,0 +1,43 @@
+<!-- BEFORE: MadCap Source with various keyboard references -->
+<html>
+<head><title>Keyboard Test</title></head>
+<body>
+    <h1>Using Keyboard Shortcuts</h1>
+    
+    <!-- Various input patterns that would be converted -->
+    <p>Save your document with <span class="key">Ctrl</span> + <span class="key">S</span></p>
+    <p>Copy text using Ctrl+C and paste with Ctrl+V</p>
+    <p>Press F1 for help or ESC to cancel</p>
+    <p>Use ENTER to confirm your selection</p>
+    <p>Press A to continue or Q to quit</p>
+    <p>Navigate with UP ARROW and DOWN ARROW keys</p>
+    <p>On Mac, use ⌘+C to copy</p>
+    <p>Already formatted: <kbd>Tab</kbd> key</p>
+</body>
+</html>
+
+<!-- AFTER: Expected Zendesk HTML Output -->
+<!-- 
+<html>
+<head><title>Keyboard Test</title></head>
+<body>
+    <h1 class="zendesk-heading">Using Keyboard Shortcuts</h1>
+    
+    <p>Save your document with <kbd class="zendesk-key" style="background-color: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; box-shadow: 0 1px 0 rgba(0,0,0,0.1); padding: 2px 6px; font-family: monospace; font-size: 0.85em; display: inline-block; margin: 0 1px; vertical-align: baseline;">Ctrl</kbd> + <kbd class="zendesk-key" style="background-color: #f5f5f5; border: 1px solid #ccc; border-radius: 3px; box-shadow: 0 1px 0 rgba(0,0,0,0.1); padding: 2px 6px; font-family: monospace; font-size: 0.85em; display: inline-block; margin: 0 1px; vertical-align: baseline;">S</kbd></p>
+    
+    <p>Copy text using <kbd class="zendesk-key">Ctrl</kbd>+<kbd class="zendesk-key">C</kbd> and paste with <kbd class="zendesk-key">Ctrl</kbd>+<kbd class="zendesk-key">V</kbd></p>
+    
+    <p>Press <kbd class="zendesk-key">F1</kbd> for help or <kbd class="zendesk-key">ESC</kbd> to cancel</p>
+    
+    <p>Use <kbd class="zendesk-key">ENTER</kbd> to confirm your selection</p>
+    
+    <p>Press <kbd class="zendesk-key">A</kbd> to continue or Type <kbd class="zendesk-key">Q</kbd> to quit</p>
+    
+    <p>Navigate with <kbd class="zendesk-key">UP ARROW</kbd> and <kbd class="zendesk-key">DOWN ARROW</kbd> keys</p>
+    
+    <p>On Mac, use <kbd class="zendesk-key">⌘</kbd>+<kbd class="zendesk-key">C</kbd> to copy</p>
+    
+    <p>Already formatted: <kbd class="zendesk-key" style="...">Tab</kbd> key</p>
+</body>
+</html>
+-->

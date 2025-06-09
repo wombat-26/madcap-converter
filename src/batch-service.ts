@@ -3,6 +3,8 @@ import { join, relative, extname, dirname, basename } from 'path';
 import { DocumentService } from './document-service.js';
 import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from './types/index.js';
 import { JSDOM } from 'jsdom';
+import { ZendeskConverter } from './converters/zendesk-converter.js';
+import { MadCapConverter } from './converters/madcap-converter.js';
 
 export interface BatchConversionOptions extends Partial<ConversionOptions> {
   recursive?: boolean;
@@ -48,6 +50,21 @@ export class BatchService {
 
     for (const inputPath of files) {
       try {
+        // Check if file should be skipped due to MadCap conditions (applies to all formats)
+        const content = await readFile(inputPath, 'utf8');
+        if (this.containsMadCapContent(content)) {
+          // Use appropriate converter's skip check based on format
+          const shouldSkip = options.format === 'zendesk' 
+            ? ZendeskConverter.shouldSkipFile(content)
+            : MadCapConverter.shouldSkipFile(content);
+            
+          if (shouldSkip) {
+            // Skipping file with excluded MadCap conditions: ${inputPath}
+            result.skippedFiles++;
+            continue;
+          }
+        }
+
         const relativePath = relative(inputDir, inputPath);
         const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath);
         
@@ -333,6 +350,15 @@ export class BatchService {
       default:
         return 'html';
     }
+  }
+
+  private containsMadCapContent(content: string): boolean {
+    return content.includes('MadCap:') || 
+           content.includes('madcap:') || 
+           content.includes('xmlns:MadCap') ||
+           content.includes('data-mc-') ||
+           content.includes('mc-variable') ||
+           content.includes('mc-');
   }
 
   private async ensureDirectoryExists(dirPath: string): Promise<void> {

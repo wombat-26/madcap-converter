@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Skip Conditions</title>
+</head>
+<body>
+    <h1>MadCap Skip Conditions Test</h1>
+    
+    <!-- This content should be included -->
+    <p>This content should be converted normally.</p>
+    
+    <!-- This content should be skipped - deprecated -->
+    <div madcap:conditions="General.deprecated">
+        <p>This is deprecated content that should not be converted.</p>
+    </div>
+    
+    <!-- This content should be skipped - Black color condition -->
+    <p data-mc-conditions="Colors.Black">This content is marked as Black and should be excluded.</p>
+    
+    <!-- This content should be skipped - Red color condition -->
+    <div madcap:conditions="Status.Red">This content is marked as Red status.</div>
+    
+    <!-- This content should be skipped - Gray/Grey color condition -->
+    <p madcap:conditions="Display.Gray">This content is marked as Gray.</p>
+    
+    <!-- This content should be skipped - discontinued -->
+    <section madcap:conditions="Products.discontinued">
+        <h2>Discontinued Feature</h2>
+        <p>This entire section is discontinued and should not appear in Zendesk.</p>
+    </section>
+    
+    <!-- This content should be skipped - print only -->
+    <div madcap:conditions="Output.print only">
+        <p>This content is for print only and should not go to Zendesk.</p>
+    </div>
+    
+    <!-- This content should be skipped - paused -->
+    <p data-mc-conditions="Status.paused">This feature is paused.</p>
+    
+    <!-- This content should be skipped - halted -->
+    <div madcap:conditions="Development.halted">
+        <p>Development has been halted on this feature.</p>
+    </div>
+    
+    <!-- This content should be included -->
+    <p>This content should also be converted normally.</p>
+    
+    <!-- Mixed conditions - should be skipped because it contains deprecated -->
+    <div madcap:conditions="General.webhelp,General.deprecated">
+        <p>This has multiple conditions including deprecated, so should be skipped.</p>
+    </div>
+    
+    <!-- Good conditions - should be included -->
+    <div madcap:conditions="General.webhelp,Output.zendesk">
+        <p>This content is for web help and Zendesk, so should be included.</p>
+    </div>
+</body>
+</html>

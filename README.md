@@ -2,7 +2,7 @@
 
 > **A specialized Model Context Protocol (MCP) server that expertly converts MadCap Flare output to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML.**
 
-Transform your documents with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like image extraction, cross-reference processing, variable resolution, and comprehensive batch operations.
+Transform your technical documentation with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like dynamic variable resolution, snippet processing, cross-reference handling, condition filtering, and comprehensive batch operations with specialized Zendesk Help Center support.
 
 ---
 
@@ -13,9 +13,10 @@ Transform your documents with intelligent conversion that preserves structure, f
 - **Microsoft Word** (.docx, .doc) - Complete document structure with styles and images
 - **MadCap Flare Output** - Specialized processing for technical documentation with full MadCap element support
 
-### Dual Output Formats
+### Triple Output Formats
 - **Markdown** - GitHub-flavored Markdown with tables, code blocks, and task lists
 - **AsciiDoc** - Professional documentation format with advanced features and proper syntax validation
+- **Zendesk HTML** - Help Center optimized HTML with collapsible sections, styled callouts, and inline CSS
 
 ### MCP Integration
 - **Claude Desktop Compatible** - Seamless integration with AI workflows
@@ -30,8 +31,10 @@ Transform your documents with intelligent conversion that preserves structure, f
 - ⚙️ **MadCap Specialization** - Handles conditional text, variables, snippets, dropDowns, and cross-references
 - 🎨 **Formatting Options** - Configurable formatting preservation with Microsoft properties cleanup
 - 📁 **Batch Processing** - Folder conversion with structure preservation and link rewriting
-- 🔄 **Variable Resolution** - Loads and resolves MadCap variables from .flvar files
+- 🔄 **Dynamic Variable Resolution** - Automatically discovers and loads all .flvar files with fallback support for Administration_ScreenCommands
 - 📋 **TOC Extraction** - Generates master documents from MadCap .fltoc files
+- 🚫 **Smart Condition Filtering** - Automatically excludes deprecated, discontinued, and print-only content
+- 🎨 **Zendesk Optimization** - Converts dropdowns to collapsible details, applies inline styling, and handles video placeholders
 
 ---
 
@@ -118,7 +121,7 @@ Convert content directly from string input.
 |-----------|------|----------|-------------|
 | `input` | string | ✅ | Input content (HTML string or base64 for Word docs) |
 | `inputType` | enum | ✅ | Type: `html`, `word`, `madcap` |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
 | `preserveFormatting` | boolean | ❌ | Preserve original formatting (default: true) |
 | `extractImages` | boolean | ❌ | Extract and reference images (default: false) |
 | `outputPath` | string | ❌ | Save to file (returns content only if omitted) |
@@ -131,7 +134,7 @@ Convert documents from file system paths with advanced MadCap processing.
 |-----------|------|----------|-------------|
 | `inputPath` | string | ✅ | Path to source file |
 | `outputPath` | string | ✅ | Path for converted output |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
 | `preserveFormatting` | boolean | ❌ | Preserve original formatting (default: true) |
 | `extractImages` | boolean | ❌ | Extract images to files (default: false) |
 
@@ -143,7 +146,7 @@ Batch convert entire folder structures with link rewriting and structure preserv
 |-----------|------|----------|-------------|
 | `inputDir` | string | ✅ | Source directory path |
 | `outputDir` | string | ✅ | Destination directory path |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
 | `includePattern` | string | ❌ | File pattern to include (default: all supported) |
 | `excludePattern` | string | ❌ | File pattern to exclude |
 | `preserveStructure` | boolean | ❌ | Maintain folder hierarchy (default: true) |
@@ -167,7 +170,7 @@ Extract table of contents from MadCap .fltoc files and generate master documents
 | `fltocPath` | string | ✅ | Path to .fltoc file |
 | `contentBasePath` | string | ✅ | Base path for content files |
 | `outputPath` | string | ✅ | Path for generated master document |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc` |
+| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
 
 #### `get_supported_formats`
 Returns list of supported input and output formats.
@@ -190,6 +193,25 @@ Please convert this HTML to Markdown:
   <li>Item two</li>
 </ul>
 ```
+
+### MadCap Flare to Zendesk Conversion
+
+**Claude Desktop:**
+```
+Convert MadCap Flare content to Zendesk Help Center format:
+Input: /Volumes/Envoy Pro/Flare/Administration EN/Content
+Output: /Volumes/Envoy Pro/ZendeskOutput
+Format: zendesk
+```
+
+This will:
+- Convert all .htm files to .html with Zendesk optimization
+- Transform MadCap dropdowns to HTML5 `<details>` elements
+- Resolve all MadCap variables to actual text values
+- Apply inline CSS styling for Help Center compatibility
+- Process snippets and cross-references
+- Filter out deprecated/discontinued content automatically
+- Generate video placeholders for multimedia content
 
 ### MadCap Flare Folder Conversion
 
@@ -245,15 +267,22 @@ This will:
 
 The converter provides sophisticated handling for MadCap Flare's unique elements:
 
-#### Variable Resolution
-Automatically loads and resolves variables from `.flvar` files:
+#### Dynamic Variable Resolution
+Automatically discovers and loads all `.flvar` files in the project, with intelligent fallback support:
 ```html
 <!-- Input -->
-<MadCap:variable name="General.ProductName" />
+<MadCap:variable name="Administration_ScreenCommands.admin.permission.admin_manage-user.name" />
 
 <!-- Conversion Result -->
-Spend (resolved from General.flvar)
+Manage Users (resolved from Administration_ScreenCommands.flvar)
 ```
+
+**Features:**
+- Auto-discovery of all `.flvar` files in Project/VariableSets
+- Parallel loading for performance
+- Fallback variables for common Administration screen commands
+- Prefix stripping for Administration_ScreenCommands variables
+- Graceful handling of missing variable files
 
 #### Cross-Reference Processing
 Converts MadCap cross-references with proper extension mapping:
@@ -304,13 +333,100 @@ Automatically removes Microsoft Office metadata and contamination:
 - Cleans namespace declarations
 - Eliminates custom document properties
 
+#### Smart Condition Filtering
+Automatically excludes content based on MadCap conditions:
+```html
+<!-- Content with these conditions is automatically excluded -->
+<p madcap:conditions="Status.Black">This content is excluded</p>
+<div data-mc-conditions="deprecated">This content is excluded</div>
+```
+
+**Excluded Conditions:**
+- **Color-based**: Black, Red, Gray, Grey
+- **Status**: deprecated, obsolete, legacy, old, discontinued, retired
+- **Development**: paused, halted, stopped, cancelled, abandoned
+- **Visibility**: hidden, internal, private, draft
+- **Print**: print-only, printonly
+
 #### Style Conversion Mapping
-| MadCap Class | Markdown | AsciiDoc |
-|--------------|----------|----------|
-| `mc-heading-1` | `# Title` | `= Title` |
-| `mc-note` | `> **📝 NOTE:** Content` | `NOTE: Content` |
-| `mc-warning` | `> **⚠️ WARNING:** Content` | `WARNING: Content` |
-| `mc-procedure` | Numbered list | Numbered list |
+| MadCap Class | Markdown | AsciiDoc | Zendesk |
+|--------------|----------|----------|---------|
+| `mc-heading-1` | `# Title` | `= Title` | `<h1>Title</h1>` |
+| `mc-note` | `> **📝 NOTE:** Content` | `NOTE: Content` | `<blockquote class="zendesk-callout zendesk-note">` |
+| `mc-warning` | `> **⚠️ WARNING:** Content` | `WARNING: Content` | `<blockquote class="zendesk-callout zendesk-warning">` |
+| `mc-procedure` | Numbered list | Numbered list | `<ol class="zendesk-list">` |
+
+### Zendesk Help Center Optimization
+
+The converter provides specialized optimization for Zendesk Help Center with comprehensive HTML5 support:
+
+#### Collapsible Sections
+Converts MadCap dropdowns to native HTML5 details/summary:
+```html
+<!-- Input -->
+<MadCap:dropDown>
+    <MadCap:dropDownHead>
+        <MadCap:dropDownHotspot>Prerequisites</MadCap:dropDownHotspot>
+    </MadCap:dropDownHead>
+    <MadCap:dropDownBody>
+        <p>Content here...</p>
+    </MadCap:dropDownBody>
+</MadCap:dropDown>
+
+<!-- Zendesk Result -->
+<details class="zendesk-collapsible">
+    <summary><strong>Prerequisites</strong></summary>
+    <div class="collapsible-content">
+        <p>Content here...</p>
+    </div>
+</details>
+```
+
+#### Styled Callouts
+Transforms notes and warnings into Zendesk-compatible callouts:
+```html
+<!-- Input -->
+<p class="mc-note">Important information</p>
+
+<!-- Zendesk Result -->
+<blockquote class="zendesk-callout zendesk-note" style="padding: 1em; margin: 1em 0; border-left: 4px solid #007acc; border-radius: 4px; background-color: #f8f9fa;">
+    <p><strong>📝 Note:</strong> Important information</p>
+</blockquote>
+```
+
+#### Image Optimization
+Applies appropriate sizing and styling for different image types:
+- **Icons**: 16-24px inline elements
+- **Screenshots**: Responsive with borders and margins
+- **Feature images**: Medium-sized with proper spacing
+- **Default images**: Up to 600px width with auto height
+
+#### Video Placeholder Generation
+Converts video references to Zendesk upload placeholders:
+```html
+<!-- Input -->
+<video src="demo.mp4">Demo video</video>
+
+<!-- Zendesk Result -->
+<div class="zendesk-video-embed">
+    <p><strong>🎬 Video:</strong> demo.mp4</p>
+    <p><em>Upload this video to Zendesk and replace this placeholder with the embedded video.</em></p>
+    <p><strong>Video file:</strong> <code>demo.mp4</code></p>
+</div>
+```
+
+#### Inline CSS Support
+Provides configurable styling approach:
+- **Inline styles** (default): Embedded CSS for immediate compatibility
+- **Class-based**: CSS classes for custom styling integration
+- **Generated stylesheet**: Optional external CSS file for theme customization
+
+#### Table Optimization
+Ensures Zendesk-compatible table structure:
+- Proper thead/tbody hierarchy
+- Border styling for readability
+- Responsive design considerations
+- Header styling differentiation
 
 ### Batch Processing Features
 
@@ -473,12 +589,13 @@ npm install
 - **Platform**: Cross-platform (Windows, macOS, Linux)
 
 ### Performance Benchmarks
-| Document Type | Size | Conversion Time | Memory Usage |
-|---------------|------|-----------------|--------------|
-| Simple HTML | 50KB | <100ms | ~30MB |
-| Complex Word Doc | 5MB | ~2s | ~150MB |
-| MadCap Project | 20MB | ~8s | ~400MB |
-| Folder Conversion | 100 files | ~30s | ~200MB |
+| Document Type | Size | Conversion Time | Memory Usage | Notes |
+|---------------|------|-----------------|--------------|-------|
+| Simple HTML | 50KB | <100ms | ~30MB | Basic HTML conversion |
+| Complex Word Doc | 5MB | ~2s | ~150MB | With image extraction |
+| MadCap to Markdown | 20MB | ~8s | ~400MB | Full project processing |
+| MadCap to Zendesk | 5MB | ~3s | ~200MB | With variable resolution |
+| Zendesk Folder | 100 files | ~45s | ~300MB | Includes condition filtering |
 
 ---
 
@@ -494,11 +611,13 @@ We welcome contributions! Please see our [Contributing Guidelines](CONTRIBUTING.
 5. Push and create a Pull Request
 
 ### Areas for Contribution
-- Additional input format support (PDF, RTF, etc.)
-- Enhanced MadCap Flare features
-- Performance optimizations
-- Test coverage improvements
-- Documentation enhancements
+- **Additional input formats**: PDF, RTF, EPUB support
+- **Enhanced MadCap features**: Advanced condition processing, topic templates
+- **Zendesk improvements**: Additional Help Center themes, custom CSS generators
+- **Performance optimizations**: Caching strategies, parallel processing
+- **Variable resolution**: Support for additional MadCap variable types
+- **Test coverage**: Unit tests, integration tests, end-to-end scenarios
+- **Documentation**: Usage examples, troubleshooting guides
 
 ---
 
