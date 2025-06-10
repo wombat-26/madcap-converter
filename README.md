@@ -25,16 +25,17 @@ Transform your technical documentation with intelligent conversion that preserve
 
 ### Advanced Processing Capabilities
 - 🔧 **Structure Preservation** - Maintains heading hierarchy and document flow
-- 🖼️ **Image Handling** - Extracts and references images with configurable output
+- 🖼️ **Smart Image Handling** - Context-aware image classification with optimized inline icon detection for tables
 - 🔗 **Cross-Reference Processing** - Converts MadCap xrefs and links intelligently with proper extension mapping
 - 📊 **Metadata Extraction** - Title, word count, warnings, and document statistics
-- ⚙️ **MadCap Specialization** - Handles conditional text, variables, snippets, dropDowns, and cross-references
+- ⚙️ **Unified MadCap Processing** - Consistent handling across all output formats via shared preprocessing service
 - 🎨 **Formatting Options** - Configurable formatting preservation with Microsoft properties cleanup
 - 📁 **Batch Processing** - Folder conversion with structure preservation and link rewriting
 - 🔄 **Dynamic Variable Resolution** - Automatically discovers and loads all .flvar files with fallback support for Administration_ScreenCommands
 - 📋 **TOC Extraction** - Generates master documents from MadCap .fltoc files
 - 🚫 **Smart Condition Filtering** - Automatically excludes deprecated, discontinued, and print-only content
 - 🎨 **Zendesk Optimization** - Converts dropdowns to collapsible details, applies inline styling, and handles video placeholders
+- 📝 **List Continuation Support** - Proper handling of `madcap:continue="true"` for sequential numbering across all formats
 
 ---
 
@@ -106,6 +107,41 @@ node build/index.js
 # Via MCP client libraries
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 ```
+
+---
+
+## 🖥️ Web Interface
+
+The MadCap Converter now includes a modern **Next.js web interface** for users who prefer a graphical interface over the command-line MCP tools.
+
+### Features
+- **🎛️ Comprehensive Configuration**: Full access to all conversion options through an intuitive interface
+- **🎨 Modern UI**: Built with Radix UI primitives and Tailwind CSS for a polished experience
+- **🚀 Real-time Processing**: Live conversion status updates and progress feedback
+- **📱 Responsive Design**: Works seamlessly on desktop and mobile devices
+- **🌙 Theme Support**: Built-in dark/light mode switching
+
+### Quick Start
+```bash
+# Navigate to the UI directory
+cd ui
+
+# Install dependencies
+npm install
+
+# Start development server
+npm run dev
+```
+
+Open [http://localhost:3000](http://localhost:3000) to access the web interface.
+
+### Interface Capabilities
+- **📁 Folder Conversion**: Batch process entire directories with full configuration options
+- **📄 Single File Conversion**: Convert individual files with simplified interface
+- **🔍 Folder Analysis**: Analyze directory structure before conversion
+- **⚙️ Zendesk Integration**: Complete Zendesk Help Center optimization settings
+
+The web interface communicates directly with the MCP server, providing the same powerful conversion capabilities through an accessible graphical interface.
 
 ---
 
@@ -202,14 +238,44 @@ Convert MadCap Flare content to Zendesk Help Center format:
 Input: /Volumes/Envoy Pro/Flare/Administration EN/Content
 Output: /Volumes/Envoy Pro/ZendeskOutput
 Format: zendesk
+
+Options:
+- Generate external stylesheet: true
+- Inline styles: false (for clean HTML + external CSS)
+- Generate AI tags: true
+- Ignore videos: true
+```
+
+**Advanced Configuration Example:**
+```json
+{
+  "name": "convert_folder",
+  "arguments": {
+    "inputDir": "/Volumes/Envoy Pro/Flare/Administration EN/Content",
+    "outputDir": "/Volumes/Envoy Pro/ZendeskOutputAdmin",
+    "format": "zendesk",
+    "preserveStructure": true,
+    "copyImages": true,
+    "zendeskOptions": {
+      "generateTags": true,
+      "generateStylesheet": true,
+      "ignoreVideos": true,
+      "inlineStyles": false,
+      "locale": "en-us",
+      "cssOutputPath": "zendesk-styles.css"
+    }
+  }
+}
 ```
 
 This will:
-- Convert all .htm files to .html with Zendesk optimization
+- Convert all .htm files to complete .html documents with proper DOCTYPE and head sections
 - Transform MadCap dropdowns to HTML5 `<details>` elements
 - Resolve all MadCap variables to actual text values
-- Apply inline CSS styling for Help Center compatibility
-- Process snippets and cross-references
+- Generate external CSS file for clean HTML separation
+- Process snippets and cross-references with unified preprocessing
+- Handle list continuation for proper sequential numbering
+- Apply context-aware image classification for optimal table display
 - Filter out deprecated/discontinued content automatically
 - Generate video placeholders for multimedia content
 
@@ -265,7 +331,7 @@ This will:
 
 ### MadCap Flare Specialization
 
-The converter provides sophisticated handling for MadCap Flare's unique elements:
+The converter provides sophisticated handling for MadCap Flare's unique elements with **unified preprocessing** ensuring consistent behavior across all output formats (Zendesk, Markdown, AsciiDoc):
 
 #### Dynamic Variable Resolution
 Automatically discovers and loads all `.flvar` files in the project, with intelligent fallback support:
@@ -306,6 +372,33 @@ Loads and processes snippet content:
 <!-- Result -->
 Content from snippet is loaded and processed inline
 ```
+
+#### List Continuation Support
+Properly handles MadCap's `madcap:continue="true"` attribute for sequential numbering:
+```html
+<!-- Input -->
+<ol>
+    <li>First item</li>
+</ol>
+<p>Some content between lists</p>
+<ol madcap:continue="true">
+    <li>Second item</li>
+</ol>
+<ol madcap:continue="true">
+    <li>Third item</li>
+</ol>
+
+<!-- Result (all formats) -->
+1. First item
+(content)
+2. Second item
+3. Third item
+```
+
+**Cross-Format Consistency:**
+- **Markdown**: Uses proper numbering with continuation
+- **AsciiDoc**: Maintains sequential numbering across separated lists
+- **Zendesk**: Sets `start` attribute on `<ol>` elements for proper display
 
 #### DropDown Section Conversion
 Converts MadCap dropDowns to proper sections:
@@ -394,12 +487,25 @@ Transforms notes and warnings into Zendesk-compatible callouts:
 </blockquote>
 ```
 
-#### Image Optimization
-Applies appropriate sizing and styling for different image types:
-- **Icons**: 16-24px inline elements
-- **Screenshots**: Responsive with borders and margins
-- **Feature images**: Medium-sized with proper spacing
-- **Default images**: Up to 600px width with auto height
+#### Enhanced Image Processing
+Context-aware image classification with intelligent sizing for optimal display:
+
+**Smart Icon Detection:**
+- **Filename patterns**: `icon`, `symbol_`, `GUI-Elemente/` prefixes
+- **Size-based detection**: Images ≤32px automatically treated as inline icons
+- **Context awareness**: Small images in table cells (`<td>`) properly classified
+- **Dimension attributes**: Uses `height`/`width` attributes for classification
+
+**Image Type Optimization:**
+- **Inline icons**: 1em sizing with 24px max for table compatibility
+- **Screenshots**: Responsive with borders and margins for readability
+- **Feature images**: Medium-sized (300px) with proper spacing
+- **Default images**: Up to 600px width with auto height and margins
+
+**Table Icon Fixes:**
+- Small symbols in tables now display correctly as inline elements
+- Prevents oversized icons that break table layout
+- Maintains visual hierarchy and readability
 
 #### Video Placeholder Generation
 Converts video references to Zendesk upload placeholders:
@@ -486,9 +592,11 @@ madcap-converter/
 │   ├── converters/
 │   │   ├── html-converter.ts     # HTML processing engine
 │   │   ├── word-converter.ts     # Word document handling
-│   │   ├── madcap-converter.ts   # MadCap specialization
-│   │   ├── zendesk-converter.ts  # Zendesk specialization
+│   │   ├── madcap-converter.ts   # MadCap to Markdown/AsciiDoc
+│   │   ├── zendesk-converter.ts  # MadCap to Zendesk HTML
 │   │   └── index.ts             # Converter exports
+│   ├── services/
+│   │   └── madcap-preprocessor.ts # Shared MadCap processing
 │   ├── document-service.ts       # Service coordination layer
 │   ├── batch-service.ts          # Folder processing service
 │   ├── toc-service.ts           # TOC extraction service
