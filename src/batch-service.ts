@@ -1,4 +1,4 @@
-import { readdir, stat, copyFile, mkdir, readFile } from 'fs/promises';
+import { readdir, stat, copyFile, mkdir, readFile, writeFile } from 'fs/promises';
 import { join, relative, extname, dirname, basename } from 'path';
 import { DocumentService } from './document-service.js';
 import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from './types/index.js';
@@ -48,6 +48,9 @@ export class BatchService {
     const files = await this.findDocumentFiles(inputDir, options);
     result.totalFiles = files.length;
 
+    // Track if stylesheet has been written for this batch
+    let stylesheetWritten = false;
+
     for (const inputPath of files) {
       try {
         // Check if file should be skipped due to MadCap conditions (applies to all formats)
@@ -87,6 +90,12 @@ export class BatchService {
           outputPath,
           conversionOptions
         );
+
+        // Handle external stylesheet generation for batch conversions (write only once per batch)
+        if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
+          await this.writeStylesheet(conversionResult.stylesheet, outputDir, options.zendeskOptions.cssOutputPath);
+          stylesheetWritten = true;
+        }
 
         if (options.copyImages) {
           if (conversionResult.metadata?.images) {
@@ -317,11 +326,25 @@ export class BatchService {
     targetDir: string,
     allowedExtensions?: Set<string>
   ): Promise<void> {
+    // Prevent infinite recursion by checking if source is within target
+    const normalizedSource = sourceDir.replace(/\/$/, '');
+    const normalizedTarget = targetDir.replace(/\/$/, '');
+    
+    if (normalizedSource === normalizedTarget || normalizedSource.startsWith(normalizedTarget + '/')) {
+      console.warn(`Skipping recursive copy: source ${sourceDir} is within target ${targetDir}`);
+      return;
+    }
+    
     await this.ensureDirectoryExists(targetDir);
     
     const entries = await readdir(sourceDir);
     
     for (const entry of entries) {
+      // Skip macOS metadata files
+      if (entry.startsWith('._') || entry === '.DS_Store') {
+        continue;
+      }
+      
       const sourcePath = join(sourceDir, entry);
       const targetPath = join(targetDir, entry);
       
@@ -416,5 +439,22 @@ export class BatchService {
     }
     
     return files;
+  }
+
+  private async writeStylesheet(stylesheet: string, outputDir: string, cssOutputPath?: string): Promise<void> {
+    try {
+      // Determine the CSS file path
+      const cssFilePath = cssOutputPath ? join(outputDir, cssOutputPath) : join(outputDir, 'zendesk-styles.css');
+      
+      // Ensure the directory exists
+      await this.ensureDirectoryExists(dirname(cssFilePath));
+      
+      // Write the stylesheet to the file
+      await writeFile(cssFilePath, stylesheet, 'utf8');
+      
+      console.log(`External stylesheet generated: ${cssFilePath}`);
+    } catch (error) {
+      console.warn('Failed to write external stylesheet:', error);
+    }
   }
 }

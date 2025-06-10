@@ -8,6 +8,20 @@ import { BatchService } from './batch-service.js';
 import { TocService } from './toc-service.js';
 import { ConversionOptions } from './types/index.js';
 
+const ZendeskOptionsSchema = z.object({
+  sectionId: z.string().optional().describe('Zendesk section ID'),
+  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags'),
+  maxTags: z.number().optional().describe('Maximum number of tags (default: 10)'),
+  sanitizeHtml: z.boolean().optional().describe('Remove unsafe HTML tags (default: true)'),
+  ignoreVideos: z.boolean().optional().describe('Skip video processing (default: false)'),
+  inlineStyles: z.boolean().optional().describe('Apply inline CSS styles (default: true)'),
+  generateStylesheet: z.boolean().optional().describe('Generate separate CSS file (default: false)'),
+  cssOutputPath: z.string().optional().describe('Path for CSS file when generateStylesheet is true')
+}).optional();
+
 const ConvertDocumentSchema = {
   input: z.string().describe('Input content (HTML, file path, or base64 encoded content)'),
   inputType: z.enum(['html', 'word', 'madcap']).describe('Type of input document'),
@@ -15,11 +29,13 @@ const ConvertDocumentSchema = {
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
   outputPath: z.string().optional().describe('Output file path (if not provided, returns content only)'),
-  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
-  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
-  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
-  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
-  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
+  zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  // Legacy individual parameters for backward compatibility
+  sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
+  locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID (legacy - use zendeskOptions)'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID (legacy - use zendeskOptions)'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (legacy - use zendeskOptions)')
 };
 
 const ConvertFileSchema = {
@@ -28,11 +44,13 @@ const ConvertFileSchema = {
   format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
-  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
-  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
-  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
-  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
-  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
+  zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  // Legacy individual parameters for backward compatibility
+  sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
+  locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID (legacy - use zendeskOptions)'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID (legacy - use zendeskOptions)'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (legacy - use zendeskOptions)')
 };
 
 const GetSupportedFormatsSchema = {};
@@ -48,11 +66,13 @@ const ConvertFolderSchema = {
   extractImages: z.boolean().optional().describe('Extract images from documents (default: true)'),
   includePatterns: z.array(z.string()).optional().describe('File patterns to include'),
   excludePatterns: z.array(z.string()).optional().describe('File patterns to exclude'),
-  sectionId: z.string().optional().describe('Zendesk section ID (for zendesk format)'),
-  locale: z.string().optional().describe('Zendesk locale (default: en-us)'),
-  userSegmentId: z.string().optional().describe('Zendesk user segment ID'),
-  permissionGroupId: z.string().optional().describe('Zendesk permission group ID'),
-  generateTags: z.boolean().optional().describe('Generate AI-based content tags (for zendesk format)')
+  zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  // Legacy individual parameters for backward compatibility
+  sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
+  locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
+  userSegmentId: z.string().optional().describe('Zendesk user segment ID (legacy - use zendeskOptions)'),
+  permissionGroupId: z.string().optional().describe('Zendesk permission group ID (legacy - use zendeskOptions)'),
+  generateTags: z.boolean().optional().describe('Generate AI-based content tags (legacy - use zendeskOptions)')
 };
 
 const AnalyzeFolderSchema = {
@@ -93,20 +113,26 @@ class MadCapConverterServer {
 
   private setupToolHandlers(): void {
     this.server.tool('convert_document', ConvertDocumentSchema, async (args) => {
+      const zendeskOptions = args.format === 'zendesk' ? {
+        sectionId: args.zendeskOptions?.sectionId ?? args.sectionId,
+        locale: args.zendeskOptions?.locale ?? args.locale ?? 'en-us',
+        userSegmentId: args.zendeskOptions?.userSegmentId ?? args.userSegmentId,
+        permissionGroupId: args.zendeskOptions?.permissionGroupId ?? args.permissionGroupId,
+        generateTags: args.zendeskOptions?.generateTags ?? args.generateTags ?? true,
+        maxTags: args.zendeskOptions?.maxTags ?? 10,
+        sanitizeHtml: args.zendeskOptions?.sanitizeHtml ?? true,
+        ignoreVideos: args.zendeskOptions?.ignoreVideos ?? false,
+        inlineStyles: args.zendeskOptions?.inlineStyles ?? true,
+        generateStylesheet: args.zendeskOptions?.generateStylesheet ?? false,
+        cssOutputPath: args.zendeskOptions?.cssOutputPath
+      } : undefined;
+
       const options: ConversionOptions = {
         inputType: args.inputType,
         format: args.format,
         preserveFormatting: args.preserveFormatting ?? true,
         extractImages: args.extractImages ?? false,
-        zendeskOptions: args.format === 'zendesk' ? {
-          sectionId: args.sectionId,
-          locale: args.locale || 'en-us',
-          userSegmentId: args.userSegmentId,
-          permissionGroupId: args.permissionGroupId,
-          generateTags: args.generateTags ?? true,
-          maxTags: 10,
-          sanitizeHtml: true
-        } : undefined
+        zendeskOptions
       };
 
       let result;
@@ -143,6 +169,20 @@ class MadCapConverterServer {
     });
 
     this.server.tool('convert_file', ConvertFileSchema, async (args) => {
+      const zendeskOptions = args.format === 'zendesk' ? {
+        sectionId: args.zendeskOptions?.sectionId ?? args.sectionId,
+        locale: args.zendeskOptions?.locale ?? args.locale ?? 'en-us',
+        userSegmentId: args.zendeskOptions?.userSegmentId ?? args.userSegmentId,
+        permissionGroupId: args.zendeskOptions?.permissionGroupId ?? args.permissionGroupId,
+        generateTags: args.zendeskOptions?.generateTags ?? args.generateTags ?? true,
+        maxTags: args.zendeskOptions?.maxTags ?? 10,
+        sanitizeHtml: args.zendeskOptions?.sanitizeHtml ?? true,
+        ignoreVideos: args.zendeskOptions?.ignoreVideos ?? false,
+        inlineStyles: args.zendeskOptions?.inlineStyles ?? true,
+        generateStylesheet: args.zendeskOptions?.generateStylesheet ?? false,
+        cssOutputPath: args.zendeskOptions?.cssOutputPath
+      } : undefined;
+
       const result = await this.documentService.convertFile(
         args.inputPath,
         args.outputPath,
@@ -150,15 +190,7 @@ class MadCapConverterServer {
           format: args.format,
           preserveFormatting: args.preserveFormatting,
           extractImages: args.extractImages,
-          zendeskOptions: args.format === 'zendesk' ? {
-            sectionId: args.sectionId,
-            locale: args.locale || 'en-us',
-            userSegmentId: args.userSegmentId,
-            permissionGroupId: args.permissionGroupId,
-            generateTags: args.generateTags ?? true,
-            maxTags: 10,
-            sanitizeHtml: true
-          } : undefined
+          zendeskOptions
         }
       );
 
@@ -186,6 +218,22 @@ class MadCapConverterServer {
     });
 
     this.server.tool('convert_folder', ConvertFolderSchema, async (args) => {
+      // Handle both new zendeskOptions and legacy individual parameters
+      const zendeskOptions = args.format === 'zendesk' ? {
+        // Use zendeskOptions if provided, otherwise fall back to individual parameters
+        sectionId: args.zendeskOptions?.sectionId ?? args.sectionId,
+        locale: args.zendeskOptions?.locale ?? args.locale ?? 'en-us',
+        userSegmentId: args.zendeskOptions?.userSegmentId ?? args.userSegmentId,
+        permissionGroupId: args.zendeskOptions?.permissionGroupId ?? args.permissionGroupId,
+        generateTags: args.zendeskOptions?.generateTags ?? args.generateTags ?? true,
+        maxTags: args.zendeskOptions?.maxTags ?? 10,
+        sanitizeHtml: args.zendeskOptions?.sanitizeHtml ?? true,
+        ignoreVideos: args.zendeskOptions?.ignoreVideos ?? false,
+        inlineStyles: args.zendeskOptions?.inlineStyles ?? true,
+        generateStylesheet: args.zendeskOptions?.generateStylesheet ?? false,
+        cssOutputPath: args.zendeskOptions?.cssOutputPath
+      } : undefined;
+
       const options = {
         format: args.format,
         recursive: args.recursive ?? true,
@@ -195,16 +243,7 @@ class MadCapConverterServer {
         extractImages: args.extractImages ?? true,
         includePatterns: args.includePatterns,
         excludePatterns: args.excludePatterns,
-        zendeskOptions: args.format === 'zendesk' ? {
-          sectionId: args.sectionId,
-          locale: args.locale || 'en-us',
-          userSegmentId: args.userSegmentId,
-          permissionGroupId: args.permissionGroupId,
-          generateTags: args.generateTags ?? true,
-          maxTags: 10,
-          sanitizeHtml: true,
-          ignoreVideos: true  // Ignore videos as requested
-        } : undefined
+        zendeskOptions
       };
 
       const result = await this.batchService.convertFolder(
