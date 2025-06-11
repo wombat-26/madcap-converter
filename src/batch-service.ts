@@ -10,6 +10,7 @@ export interface BatchConversionOptions extends Partial<ConversionOptions> {
   recursive?: boolean;
   preserveStructure?: boolean;
   copyImages?: boolean;
+  renameFiles?: boolean;
   includePatterns?: string[];
   excludePatterns?: string[];
 }
@@ -20,6 +21,7 @@ export interface BatchConversionResult {
   skippedFiles: number;
   errors: Array<{ file: string; error: string }>;
   results: Array<{ inputPath: string; outputPath: string; result: ConversionResult }>;
+  filenameMapping?: Map<string, string>; // Maps old relative paths to new relative paths
 }
 
 export class BatchService {
@@ -40,7 +42,8 @@ export class BatchService {
       convertedFiles: 0,
       skippedFiles: 0,
       errors: [],
-      results: []
+      results: [],
+      filenameMapping: options.renameFiles ? new Map<string, string>() : undefined
     };
 
     await this.ensureDirectoryExists(outputDir);
@@ -69,7 +72,14 @@ export class BatchService {
         }
 
         const relativePath = relative(inputDir, inputPath);
-        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath);
+        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
+        
+        // Track filename mapping for cross-reference updates
+        if (options.renameFiles && result.filenameMapping) {
+          const originalRelativePath = relativePath;
+          const newRelativePath = relative(outputDir, outputPath);
+          result.filenameMapping.set(originalRelativePath, newRelativePath);
+        }
         
         if (options.preserveStructure) {
           await this.ensureDirectoryExists(dirname(outputPath));
@@ -129,6 +139,12 @@ export class BatchService {
     }
 
     result.skippedFiles = result.totalFiles - result.convertedFiles - result.errors.length;
+    
+    // Update cross-references if files were renamed
+    if (options.renameFiles && result.filenameMapping && result.filenameMapping.size > 0) {
+      await this.updateCrossReferences(result, outputDir, options.format || 'markdown');
+    }
+    
     return result;
   }
 
@@ -184,7 +200,7 @@ export class BatchService {
     return true;
   }
 
-  private async generateOutputPath(relativePath: string, outputDir: string, format: string, inputPath?: string): Promise<string> {
+  private async generateOutputPath(relativePath: string, outputDir: string, format: string, inputPath?: string, renameFiles?: boolean): Promise<string> {
     const parsedPath = {
       dir: dirname(relativePath),
       name: basename(relativePath, extname(relativePath))
@@ -206,18 +222,12 @@ export class BatchService {
     
     let outputFileName: string;
     
-    // For Zendesk format, use H1 text as filename
-    if (format === 'zendesk' && inputPath) {
+    // Use H1 text as filename when renameFiles is enabled OR for Zendesk format
+    if ((renameFiles || format === 'zendesk') && inputPath) {
       const h1Text = await this.extractH1Text(inputPath);
       if (h1Text) {
-        // Convert H1 text to filename: lowercase, replace spaces with underscores, remove special chars
-        const cleanFileName = h1Text
-          .toLowerCase()
-          .replace(/[^\w\s-]/g, '') // Remove special characters except word chars, spaces, hyphens
-          .replace(/\s+/g, '_') // Replace spaces with underscores
-          .replace(/-+/g, '_') // Replace hyphens with underscores
-          .replace(/_+/g, '_') // Collapse multiple underscores
-          .replace(/^_+|_+$/g, ''); // Trim leading/trailing underscores
+        // Convert H1 text to filename: create clean, URL-friendly name
+        const cleanFileName = this.sanitizeFilename(h1Text);
         
         if (cleanFileName) {
           outputFileName = `${cleanFileName}${extension}`;
@@ -232,6 +242,109 @@ export class BatchService {
     }
     
     return join(outputDir, parsedPath.dir, outputFileName);
+  }
+
+  private sanitizeFilename(text: string): string {
+    // Create clean, URL-friendly filename from H1 text
+    return text
+      .toLowerCase()
+      .replace(/[^\w\s-]/g, '') // Remove special characters except word chars, spaces, hyphens
+      .replace(/\s+/g, '-') // Replace spaces with hyphens (more URL-friendly than underscores)
+      .replace(/_+/g, '-') // Replace underscores with hyphens
+      .replace(/-+/g, '-') // Collapse multiple hyphens
+      .replace(/^-+|-+$/g, '') // Trim leading/trailing hyphens
+      .substring(0, 100); // Limit length to prevent filesystem issues
+  }
+
+  private async updateCrossReferences(
+    result: BatchConversionResult, 
+    outputDir: string, 
+    format: string
+  ): Promise<void> {
+    if (!result.filenameMapping) return;
+
+    console.log(`Updating cross-references for ${result.results.length} files...`);
+    
+    for (const { outputPath } of result.results) {
+      try {
+        const content = await readFile(outputPath, 'utf8');
+        let updatedContent = content;
+        let hasChanges = false;
+
+        // Update links based on format
+        if (format === 'markdown') {
+          // Update Markdown links: [text](path) and [text](path#anchor)
+          updatedContent = content.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (match, text, url) => {
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            if (updatedUrl !== url) {
+              hasChanges = true;
+              return `[${text}](${updatedUrl})`;
+            }
+            return match;
+          });
+        } else if (format === 'asciidoc') {
+          // Update AsciiDoc links: link:path[text] and xref:path[text]
+          updatedContent = content.replace(/(link|xref):([^\[]+)\[([^\]]*)\]/g, (match, linkType, url, text) => {
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            if (updatedUrl !== url) {
+              hasChanges = true;
+              return `${linkType}:${updatedUrl}[${text}]`;
+            }
+            return match;
+          });
+        } else if (format === 'zendesk') {
+          // Update HTML links: <a href="path">text</a>
+          updatedContent = content.replace(/<a\s+([^>]*\s+)?href="([^"]*)"([^>]*)>([^<]*)<\/a>/gi, (match, before, url, after, text) => {
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            if (updatedUrl !== url) {
+              hasChanges = true;
+              return `<a ${before || ''}href="${updatedUrl}"${after || ''}>${text}</a>`;
+            }
+            return match;
+          });
+        }
+
+        // Write updated content if changes were made
+        if (hasChanges) {
+          await writeFile(outputPath, updatedContent, 'utf8');
+          console.log(`Updated cross-references in: ${basename(outputPath)}`);
+        }
+
+      } catch (error) {
+        console.warn(`Failed to update cross-references in ${outputPath}:`, error);
+      }
+    }
+  }
+
+  private updateLinkUrl(url: string, filenameMapping: Map<string, string>): string {
+    // Skip external URLs, anchors, and mailto links
+    if (url.startsWith('http') || url.startsWith('mailto:') || url.startsWith('#')) {
+      return url;
+    }
+
+    // Split URL and anchor
+    const [path, anchor] = url.split('#');
+    
+    // Check if this path (or a variation) exists in our mapping
+    for (const [oldPath, newPath] of filenameMapping.entries()) {
+      // Try exact match
+      if (path === oldPath) {
+        return anchor ? `${newPath}#${anchor}` : newPath;
+      }
+      
+      // Try without extension for cross-format references
+      const pathWithoutExt = path.replace(/\.(html?|adoc|md)$/i, '');
+      const oldPathWithoutExt = oldPath.replace(/\.(html?|adoc|md)$/i, '');
+      
+      if (pathWithoutExt === oldPathWithoutExt) {
+        const newPathWithoutExt = newPath.replace(/\.(html?|adoc|md)$/i, '');
+        const extension = path.match(/\.(html?|adoc|md)$/i)?.[0] || '';
+        return anchor ? `${newPathWithoutExt}${extension}#${anchor}` : `${newPathWithoutExt}${extension}`;
+      }
+    }
+
+    // No mapping found, return original
+    return url;
   }
 
   private async extractH1Text(filePath: string): Promise<string | null> {
