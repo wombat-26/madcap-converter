@@ -11,7 +11,7 @@ Transform your technical documentation with intelligent conversion that preserve
 ### Multi-Format Input Support
 - **HTML Documents** (.html, .htm) - Full HTML5 support with semantic preservation
 - **Microsoft Word** (.docx, .doc) - Complete document structure with styles and images
-- **MadCap Flare Output** - Specialized processing for technical documentation with full MadCap element support
+- **MadCap Flare Source Project** - Specialized processing for technical documentation with full MadCap element support
 
 ### Triple Output Formats
 - **Markdown** - GitHub-flavored Markdown with tables, code blocks, and task lists
