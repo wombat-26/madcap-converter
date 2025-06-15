@@ -1,6 +1,7 @@
 import { JSDOM } from 'jsdom';
-import { readFile, stat, readdir } from 'fs/promises';
-import { resolve, dirname } from 'path';
+import { readFile, stat, readdir, existsSync } from 'fs';
+import { readFile as readFileAsync, stat as statAsync, readdir as readdirAsync } from 'fs/promises';
+import { resolve, dirname, join } from 'path';
 
 /**
  * Shared MadCap preprocessing service used by both MadCapConverter and ZendeskConverter
@@ -283,7 +284,7 @@ export class MadCapPreprocessor {
             // Mark snippet as being loaded
             this.loadedSnippets.add(snippetPath);
             
-            const rawContent = await readFile(snippetPath, 'utf8');
+            const rawContent = await readFileAsync(snippetPath, 'utf8');
             snippetContent = await this.processSnippetContent(rawContent);
             this.snippetCache.set(snippetPath, snippetContent);
           }
@@ -318,8 +319,9 @@ export class MadCapPreprocessor {
       
       if (snippetSrc && inputPath) {
         try {
-          // Resolve snippet path relative to the current document
-          const snippetPath = resolve(dirname(inputPath), snippetSrc);
+          // Resolve snippet path from MadCap project root, not relative to current document
+          // Snippets are always in /Content/Resources/Snippets/ directory
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath);
           
           // Check for circular references
           if (this.loadedSnippets.has(snippetPath)) {
@@ -336,7 +338,7 @@ export class MadCapPreprocessor {
             // Mark snippet as being loaded
             this.loadedSnippets.add(snippetPath);
             
-            const rawContent = await readFile(snippetPath, 'utf8');
+            const rawContent = await readFileAsync(snippetPath, 'utf8');
             snippetContent = await this.processSnippetContent(rawContent);
             this.snippetCache.set(snippetPath, snippetContent);
           }
@@ -354,6 +356,68 @@ export class MadCapPreprocessor {
         element.remove();
       }
     }
+  }
+
+  /**
+   * Resolve snippet path from MadCap project structure
+   * Snippets are always in /Content/Resources/Snippets/ directory
+   */
+  private resolveSnippetPath(snippetSrc: string, inputPath: string): string {
+    // Find the MadCap project root by looking for /Content/ directory
+    const projectRoot = this.findMadCapProjectRoot(inputPath);
+    
+    // Clean the snippet source path
+    let cleanSnippetSrc = snippetSrc;
+    
+    // Remove leading ../ patterns that try to go relative
+    cleanSnippetSrc = cleanSnippetSrc.replace(/^(\.\.\/)+/, '');
+    
+    // If the path already contains Resources/Snippets/, use it directly from Content root
+    if (cleanSnippetSrc.startsWith('Resources/Snippets/')) {
+      const snippetPath = join(projectRoot, 'Content', cleanSnippetSrc);
+      console.log(`Resolving snippet (with Resources/Snippets): ${snippetSrc} → ${snippetPath}`);
+      return snippetPath;
+    }
+    
+    // Remove leading Snippets/ if present (since we'll add the full path)
+    cleanSnippetSrc = cleanSnippetSrc.replace(/^Snippets\//, '');
+    
+    // Construct the full snippet path
+    const snippetPath = join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
+    
+    console.log(`Resolving snippet (adding Resources/Snippets): ${snippetSrc} → ${snippetPath}`);
+    return snippetPath;
+  }
+
+  /**
+   * Find the MadCap project root directory by walking up from input path
+   */
+  private findMadCapProjectRoot(inputPath: string): string {
+    let currentDir = dirname(inputPath);
+    
+    // Walk up directory tree to find Content directory
+    while (currentDir !== dirname(currentDir)) {
+      const contentDir = join(currentDir, 'Content');
+      try {
+        // Check if Content directory exists
+        if (existsSync(contentDir)) {
+          return currentDir;
+        }
+      } catch (error) {
+        // Continue searching
+      }
+      currentDir = dirname(currentDir);
+    }
+    
+    // Fallback: if no Content directory found, assume current directory structure
+    // Extract path before /Content/ if it exists
+    const contentIndex = inputPath.indexOf('/Content/');
+    if (contentIndex >= 0) {
+      return inputPath.substring(0, contentIndex);
+    }
+    
+    // Ultimate fallback
+    return dirname(inputPath);
   }
 
   private async processSnippetContent(snippetContent: string): Promise<string> {
@@ -405,19 +469,19 @@ export class MadCapPreprocessor {
       );
       
       if (hotspot && body) {
-        // Create collapsible section using details/summary
-        const details = dropDown.ownerDocument.createElement('details');
-        details.className = 'collapsible';
+        // Create a proper heading structure for AsciiDoc conversion
+        const fragment = dropDown.ownerDocument.createDocumentFragment();
         
+        // Create heading from hotspot text
         const summaryText = hotspot.textContent?.trim() || 'More Information';
-        const summary = dropDown.ownerDocument.createElement('summary');
-        summary.innerHTML = `<strong>${summaryText}</strong>`;
+        const heading = dropDown.ownerDocument.createElement('h3');
+        heading.textContent = summaryText;
+        heading.className = 'dropdown-heading';
+        fragment.appendChild(heading);
         
-        details.appendChild(summary);
-        
-        // Create content container
+        // Create content container with a line break
         const contentDiv = dropDown.ownerDocument.createElement('div');
-        contentDiv.className = 'collapsible-content';
+        contentDiv.className = 'dropdown-content';
         
         // Move all body content to the container
         const bodyContent = Array.from(body.childNodes);
@@ -425,10 +489,10 @@ export class MadCapPreprocessor {
           contentDiv.appendChild(child.cloneNode(true));
         });
         
-        details.appendChild(contentDiv);
+        fragment.appendChild(contentDiv);
         
-        // Replace the entire dropDown with the details element
-        dropDown.parentNode?.replaceChild(details, dropDown);
+        // Replace the entire dropDown with the fragment
+        dropDown.parentNode?.replaceChild(fragment, dropDown);
       }
     });
   }
@@ -505,7 +569,9 @@ export class MadCapPreprocessor {
     const notes = document.querySelectorAll('.mc-note, [class*="mc-note"], .note');
     notes.forEach(note => {
       const blockquote = document.createElement('blockquote');
-      blockquote.innerHTML = `<strong>Note:</strong> ${note.innerHTML}`;
+      // Don't add "Note:" prefix here, let the converter handle it
+      blockquote.innerHTML = note.innerHTML;
+      blockquote.className = 'note'; // Add class for converter to detect
       note.parentNode?.replaceChild(blockquote, note);
     });
 
@@ -513,7 +579,8 @@ export class MadCapPreprocessor {
     const warnings = document.querySelectorAll('.mc-warning, [class*="mc-warning"], .warning, .attention');
     warnings.forEach(warning => {
       const blockquote = document.createElement('blockquote');
-      blockquote.innerHTML = `<strong>Warning:</strong> ${warning.innerHTML}`;
+      blockquote.innerHTML = warning.innerHTML;
+      blockquote.className = 'warning'; // Add class for converter to detect
       warning.parentNode?.replaceChild(blockquote, warning);
     });
 
@@ -603,7 +670,7 @@ export class MadCapPreprocessor {
       
       // Dynamically find all .flvar files in the project directory
       try {
-        const files = await readdir(projectPath);
+        const files = await readdirAsync(projectPath);
         const flvarFiles = files.filter(file => file.endsWith('.flvar'));
         
         // Load variable files in parallel
@@ -743,14 +810,14 @@ export class MadCapPreprocessor {
 
   private async readFileWithCache(filePath: string): Promise<string> {
     try {
-      const stats = await stat(filePath);
+      const stats = await statAsync(filePath);
       const cached = MadCapPreprocessor.fileContentCache.get(filePath);
       
       if (cached && cached.mtime === stats.mtimeMs) {
         return cached.content;
       }
       
-      const content = await readFile(filePath, 'utf8');
+      const content = await readFileAsync(filePath, 'utf8');
       MadCapPreprocessor.fileContentCache.set(filePath, { content, mtime: stats.mtimeMs });
       
       // LRU eviction to prevent memory leaks

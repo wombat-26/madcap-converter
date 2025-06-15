@@ -31,11 +31,31 @@ export class MadCapConverter implements DocumentConverter {
     
     const finalHtml = document.documentElement.outerHTML;
     
+    // Store our variables before calling HTMLConverter - disabled for now
+    // const ourExtractor = this.madcapPreprocessor.getVariableExtractor();
+    // const ourVariables = ourExtractor.getVariables();
+    
     // Pass through all options including rewriteLinks
+    // The finalHtml has already been preprocessed, so HTMLConverter won't reprocess MadCap content
     const result = await this.htmlConverter.convert(finalHtml, options);
+    
+    // CRITICAL FIX: Transfer variables from our preprocessor to the HTMLConverter AFTER conversion - disabled for now
+    // const htmlExtractor = this.htmlConverter.getVariableExtractor();
+    
+    // Copy all variables from our extractor to the HTML converter's extractor for variables file generation
+    // for (const variable of ourVariables) {
+    //   htmlExtractor.addVariable(variable);
+    // }
+    
+    // Regenerate variables file if needed
+    let finalVariablesFile = result.variablesFile;
+    // if (options.variableOptions?.extractVariables && options.variableOptions.variableFormat && ourVariables.length > 0) {
+    //   finalVariablesFile = htmlExtractor.generateVariablesFile(options.variableOptions);
+    // }
     
     return {
       content: result.content,
+      variablesFile: finalVariablesFile,
       metadata: {
         title: result.metadata?.title,
         wordCount: result.metadata?.wordCount || 0,

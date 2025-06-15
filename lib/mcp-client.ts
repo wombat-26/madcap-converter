@@ -17,12 +17,33 @@ export interface MCPResponse {
   };
 }
 
+export interface VariableExtractionOptions {
+  extractVariables?: boolean;
+  variableFormat?: 'adoc' | 'writerside';
+  variablesOutputPath?: string;
+  preserveVariableStructure?: boolean;
+}
+
+export interface AsciidocOptions {
+  useCollapsibleBlocks?: boolean;
+  tilesAsTable?: boolean;
+  generateAsBook?: boolean;
+  bookTitle?: string;
+  bookAuthor?: string;
+  useLinkedTitleFromTOC?: boolean;
+  includeChapterBreaks?: boolean;
+  includeTOCLevels?: number;
+  useBookDoctype?: boolean;
+}
+
 export interface ConversionOptions {
   format: 'markdown' | 'asciidoc' | 'zendesk';
   inputType?: 'html' | 'word' | 'madcap';
   preserveFormatting?: boolean;
   extractImages?: boolean;
+  variableOptions?: VariableExtractionOptions;
   zendeskOptions?: ZendeskOptions;
+  asciidocOptions?: AsciidocOptions;
 }
 
 export interface ZendeskOptions {
@@ -46,6 +67,8 @@ export interface BatchConversionOptions extends ConversionOptions {
   renameFiles?: boolean;
   includePatterns?: string[];
   excludePatterns?: string[];
+  useTOCStructure?: boolean;
+  generateMasterDoc?: boolean;
 }
 
 export class MCPClient {
@@ -164,6 +187,40 @@ export class MCPClient {
       params: {
         name: "get_supported_formats",
         arguments: {}
+      }
+    };
+
+    return this.sendRequest(request);
+  }
+
+  async discoverTOCs(projectPath: string) {
+    const request: MCPRequest = {
+      jsonrpc: "2.0",
+      id: 7,
+      method: "tools/call",
+      params: {
+        name: "discover_tocs",
+        arguments: {
+          projectPath
+        }
+      }
+    };
+
+    return this.sendRequest(request);
+  }
+
+  async convertWithTOCStructure(projectPath: string, outputDir: string, options: BatchConversionOptions) {
+    const request: MCPRequest = {
+      jsonrpc: "2.0",
+      id: 8,
+      method: "tools/call",
+      params: {
+        name: "convert_with_toc_structure",
+        arguments: {
+          projectPath,
+          outputDir,
+          ...options
+        }
       }
     };
 

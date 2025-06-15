@@ -64,6 +64,20 @@ The `MadCapConverter` includes sophisticated preprocessing for:
 - Snippets (`data-mc-snippet`) → documented includes
 - Style class mapping (mc-heading-1, mc-note, mc-warning, etc.)
 
+### General Flare Image Conversion Rule
+**Applied to both AsciiDoc and Markdown formats:**
+
+Images in their own paragraphs are automatically formatted as **block images** with proper line breaks before and after, while images within text content are formatted as **inline images**.
+
+**Detection logic:**
+- **Block images**: Images in paragraphs with minimal or no surrounding text (≤5 characters beyond alt text)
+- **Inline images**: Images with `IconInline` class, small dimensions (≤32px), or substantial surrounding text
+- **Path-based detection**: UI icons in `/GUI/`, `/Icon/`, `/Button/` paths are treated as inline
+
+**Output formats:**
+- **AsciiDoc**: `image::path[alt]` (block) vs `image:path[alt]` (inline)  
+- **Markdown**: Proper spacing with line breaks (block) vs inline syntax (inline)
+
 ### MadCap Condition Filtering (All Formats)
 All converters automatically exclude content with specific MadCap conditions using regex patterns:
 

@@ -6,6 +6,7 @@ import { z } from 'zod';
 import { DocumentService } from './document-service.js';
 import { BatchService } from './batch-service.js';
 import { TocService } from './toc-service.js';
+import { TOCDiscoveryService } from './services/toc-discovery.js';
 import { ConversionOptions } from './types/index.js';
 
 const ZendeskOptionsSchema = z.object({
@@ -22,14 +23,35 @@ const ZendeskOptionsSchema = z.object({
   cssOutputPath: z.string().optional().describe('Path for CSS file when generateStylesheet is true')
 }).optional();
 
+const VariableOptionsSchema = z.object({
+  extractVariables: z.boolean().optional().describe('Extract MadCap variables to separate file instead of flattening to text (default: false)'),
+  variableFormat: z.enum(['adoc', 'writerside']).optional().describe('Format for variables file (adoc = AsciiDoc attributes, writerside = XML)'),
+  variablesOutputPath: z.string().optional().describe('Custom path for variables file (default: auto-generated)'),
+  preserveVariableStructure: z.boolean().optional().describe('Preserve namespace grouping in variables file (default: false)')
+}).optional();
+
+const AsciiDocOptionsSchema = z.object({
+  useCollapsibleBlocks: z.boolean().optional().describe('Convert MadCap dropdowns to AsciiDoc collapsible blocks instead of regular sections (default: false)'),
+  tilesAsTable: z.boolean().optional().describe('Convert tile/card grids to AsciiDoc tables instead of sequential blocks (default: false)'),
+  generateAsBook: z.boolean().optional().describe('Generate complete AsciiDoc book structure with master document (default: false)'),
+  bookTitle: z.string().optional().describe('Custom book title (auto-detected from TOC if empty)'),
+  bookAuthor: z.string().optional().describe('Book author name (optional)'),
+  useLinkedTitleFromTOC: z.boolean().optional().describe('Extract chapter titles from H1 headings when TOC uses LinkedTitle (default: false)'),
+  includeChapterBreaks: z.boolean().optional().describe('Add chapter breaks between major sections (default: false)'),
+  includeTOCLevels: z.number().optional().describe('Number of heading levels to include in TOC (1-6, default: 3)'),
+  useBookDoctype: z.boolean().optional().describe('Set doctype to "book" for multi-chapter documents (default: true)')
+}).optional();
+
 const ConvertDocumentSchema = {
   input: z.string().describe('Input content (HTML, file path, or base64 encoded content)'),
-  inputType: z.enum(['html', 'word', 'madcap']).describe('Type of input document'),
+  inputType: z.enum(['html', 'word', 'madcap']).describe('Type of input document: html (standard HTML), word (Microsoft Word document), madcap (MadCap Flare unpublished source)'),
   format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
   outputPath: z.string().optional().describe('Output file path (if not provided, returns content only)'),
+  variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
@@ -44,7 +66,9 @@ const ConvertFileSchema = {
   format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
+  variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
@@ -67,13 +91,34 @@ const ConvertFolderSchema = {
   extractImages: z.boolean().optional().describe('Extract images from documents (default: true)'),
   includePatterns: z.array(z.string()).optional().describe('File patterns to include'),
   excludePatterns: z.array(z.string()).optional().describe('File patterns to exclude'),
+  useTOCStructure: z.boolean().optional().describe('Use TOC hierarchy instead of file structure (default: false)'),
+  generateMasterDoc: z.boolean().optional().describe('Generate master document from TOCs (default: false)'),
+  variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
   userSegmentId: z.string().optional().describe('Zendesk user segment ID (legacy - use zendeskOptions)'),
   permissionGroupId: z.string().optional().describe('Zendesk permission group ID (legacy - use zendeskOptions)'),
   generateTags: z.boolean().optional().describe('Generate AI-based content tags (legacy - use zendeskOptions)')
+};
+
+const DiscoverTOCsSchema = {
+  projectPath: z.string().describe('Path to MadCap Flare project directory')
+};
+
+const ConvertWithTOCStructureSchema = {
+  projectPath: z.string().describe('Path to MadCap Flare project directory'),
+  outputDir: z.string().describe('Path to output directory for converted documents'),
+  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
+  generateMasterDoc: z.boolean().optional().describe('Generate master document from TOCs (default: true)'),
+  copyImages: z.boolean().optional().describe('Copy referenced images (default: true)'),
+  preserveFormatting: z.boolean().optional().describe('Preserve formatting (default: true)'),
+  extractImages: z.boolean().optional().describe('Extract images from documents (default: true)'),
+  variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
+  zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
+  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options')
 };
 
 const AnalyzeFolderSchema = {
@@ -98,11 +143,13 @@ class MadCapConverterServer {
   private documentService: DocumentService;
   private batchService: BatchService;
   private tocService: TocService;
+  private tocDiscoveryService: TOCDiscoveryService;
 
   constructor() {
     this.documentService = new DocumentService();
     this.batchService = new BatchService();
     this.tocService = new TocService();
+    this.tocDiscoveryService = new TOCDiscoveryService();
     
     this.server = new McpServer({
       name: 'madcap-converter',
@@ -133,6 +180,7 @@ class MadCapConverterServer {
         format: args.format,
         preserveFormatting: args.preserveFormatting ?? true,
         extractImages: args.extractImages ?? false,
+        variableOptions: args.variableOptions,
         zendeskOptions
       };
 
@@ -147,13 +195,24 @@ class MadCapConverterServer {
 
       if (args.outputPath) {
         const fs = await import('fs/promises');
+        const path = await import('path');
+        
         await fs.writeFile(args.outputPath, result.content, 'utf8');
+        
+        // Write variables file if generated
+        let variablesMessage = '';
+        if (result.variablesFile && args.variableOptions?.extractVariables) {
+          const variablesPath = args.variableOptions.variablesOutputPath || 
+                               await this.getDefaultVariablesPath(args.outputPath, args.variableOptions.variableFormat);
+          await fs.writeFile(variablesPath, result.variablesFile, 'utf8');
+          variablesMessage = `\nVariables file saved to: ${variablesPath}`;
+        }
         
         return {
           content: [
             {
               type: 'text',
-              text: `Document successfully converted and saved to: ${args.outputPath}\n\nMetadata:\n${JSON.stringify(result.metadata, null, 2)}`
+              text: `Document successfully converted and saved to: ${args.outputPath}${variablesMessage}\n\nMetadata:\n${JSON.stringify(result.metadata, null, 2)}`
             }
           ]
         };
@@ -191,7 +250,9 @@ class MadCapConverterServer {
           format: args.format,
           preserveFormatting: args.preserveFormatting,
           extractImages: args.extractImages,
-          zendeskOptions
+          variableOptions: args.variableOptions,
+          zendeskOptions,
+          asciidocOptions: args.asciidocOptions
         }
       );
 
@@ -245,7 +306,11 @@ class MadCapConverterServer {
         extractImages: args.extractImages ?? true,
         includePatterns: args.includePatterns,
         excludePatterns: args.excludePatterns,
-        zendeskOptions
+        useTOCStructure: args.useTOCStructure ?? false,
+        generateMasterDoc: args.generateMasterDoc ?? false,
+        variableOptions: args.variableOptions,
+        zendeskOptions,
+        asciidocOptions: args.asciidocOptions
       };
 
       const result = await this.batchService.convertFolder(
@@ -253,6 +318,13 @@ class MadCapConverterServer {
         args.outputDir,
         options
       );
+
+      const tocInfo = result.tocStructure 
+        ? `\n🗂️ TOC-Based Conversion:
+- TOCs discovered: ${result.tocStructure.totalTOCs}
+- Total entries: ${result.tocStructure.discoveredFiles}
+${result.tocStructure.masterDocumentPath ? `- Master document: ${result.tocStructure.masterDocumentPath}` : ''}`
+        : '';
 
       const summary = `Batch conversion completed!
 
@@ -264,10 +336,12 @@ class MadCapConverterServer {
 
 📁 Output directory: ${args.outputDir}
 📝 Format: ${args.format}
-${options.preserveStructure ? '📂 Directory structure preserved' : '📄 Flat structure'}
-${options.copyImages ? '🖼️ Images copied' : ''}
+${options.useTOCStructure ? '🗂️ TOC hierarchy structure used' : options.preserveStructure ? '📂 Directory structure preserved' : '📄 Flat structure'}
+${options.copyImages ? '🖼️ Images copied' : ''}${tocInfo}
 
 ${result.errors.length > 0 ? `\n❌ Errors:\n${result.errors.map(e => `  - ${e.file}: ${e.error}`).join('\n')}` : ''}
+
+${result.skippedFilesList && result.skippedFilesList.length > 0 ? `\n⏭️ Skipped files:\n${result.skippedFilesList.map(s => `  - ${s.file} (${s.reason})`).join('\n')}` : ''}
 
 ✅ Converted files:
 ${result.results.slice(0, 10).map(r => `  - ${r.inputPath} → ${r.outputPath}`).join('\n')}${result.results.length > 10 ? `\n  ... and ${result.results.length - 10} more files` : ''}`;
@@ -364,6 +438,99 @@ ${stats.structure.slice(0, 20).map(f => `  - ${f}`).join('\n')}${stats.structure
         ]
       };
     });
+
+    this.server.tool('discover_tocs', DiscoverTOCsSchema, async (args) => {
+      const discovery = await this.tocDiscoveryService.discoverAllTOCs(args.projectPath);
+      const report = await this.tocDiscoveryService.getTOCReport(args.projectPath);
+      
+      return {
+        content: [
+          {
+            type: 'text',
+            text: report
+          }
+        ]
+      };
+    });
+
+    this.server.tool('convert_with_toc_structure', ConvertWithTOCStructureSchema, async (args) => {
+      // Handle Zendesk options
+      const zendeskOptions = args.format === 'zendesk' ? {
+        sectionId: args.zendeskOptions?.sectionId,
+        locale: args.zendeskOptions?.locale ?? 'en-us',
+        userSegmentId: args.zendeskOptions?.userSegmentId,
+        permissionGroupId: args.zendeskOptions?.permissionGroupId,
+        generateTags: args.zendeskOptions?.generateTags ?? true,
+        maxTags: args.zendeskOptions?.maxTags ?? 10,
+        sanitizeHtml: args.zendeskOptions?.sanitizeHtml ?? true,
+        ignoreVideos: args.zendeskOptions?.ignoreVideos ?? false,
+        inlineStyles: args.zendeskOptions?.inlineStyles ?? true,
+        generateStylesheet: args.zendeskOptions?.generateStylesheet ?? false,
+        cssOutputPath: args.zendeskOptions?.cssOutputPath
+      } : undefined;
+
+      const options = {
+        format: args.format,
+        useTOCStructure: true, // Always use TOC structure for this tool
+        generateMasterDoc: args.generateMasterDoc ?? true,
+        copyImages: args.copyImages ?? true,
+        preserveFormatting: args.preserveFormatting ?? true,
+        extractImages: args.extractImages ?? true,
+        variableOptions: args.variableOptions,
+        zendeskOptions
+      };
+
+      const result = await this.batchService.convertFolder(
+        args.projectPath,
+        args.outputDir,
+        options
+      );
+
+      const tocInfo = result.tocStructure 
+        ? `🗂️ TOC-Based Conversion Results:
+- TOCs discovered: ${result.tocStructure.totalTOCs}
+- Total entries: ${result.tocStructure.discoveredFiles}
+${result.tocStructure.masterDocumentPath ? `- Master document: ${result.tocStructure.masterDocumentPath}` : ''}
+
+🏗️ Structure Creation:
+- Hierarchical folders created based on TOC organization
+- Files placed according to TOC hierarchy instead of original structure
+- ${args.generateMasterDoc !== false ? 'Master document generated for unified access' : 'No master document generated'}`
+        : '';
+
+      const summary = `🗂️ TOC-Based Conversion Completed!
+
+📊 Conversion Summary:
+- Total files converted: ${result.convertedFiles}
+- Files skipped: ${result.skippedFiles}
+- Conversion errors: ${result.errors.length}
+
+📁 Project: ${args.projectPath}
+📁 Output: ${args.outputDir}
+📝 Format: ${args.format}
+
+${tocInfo}
+
+${result.errors.length > 0 ? `\n❌ Errors:\n${result.errors.map(e => `  - ${e.file}: ${e.error}`).join('\n')}` : ''}
+
+✅ Successfully converted files organized by TOC hierarchy:
+${result.results.slice(0, 10).map(r => `  - ${r.outputPath}`).join('\n')}${result.results.length > 10 ? `\n  ... and ${result.results.length - 10} more files` : ''}
+
+🎯 **Key Benefits:**
+- Content organized by logical structure (User Manual, Administration, etc.)
+- Hierarchical folders match documentation flow
+- Cross-references maintain proper relationships
+- Master document provides unified entry point`;
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: summary
+          }
+        ]
+      };
+    });
   }
 
   private countTocEntries(entries: any[]): number {
@@ -374,6 +541,21 @@ ${stats.structure.slice(0, 20).map(f => `  - ${f}`).join('\n')}${stats.structure
       }
     });
     return count;
+  }
+
+  private async getDefaultVariablesPath(outputPath: string, format?: 'adoc' | 'writerside'): Promise<string> {
+    const path = await import('path');
+    const dir = path.dirname(outputPath);
+    const baseName = path.basename(outputPath, path.extname(outputPath));
+    
+    switch (format) {
+      case 'adoc':
+        return path.join(dir, `${baseName}-variables.adoc`);
+      case 'writerside':
+        return path.join(dir, `${baseName}-variables.xml`);
+      default:
+        return path.join(dir, `${baseName}-variables.txt`);
+    }
   }
 
 

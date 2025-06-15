@@ -1,5 +1,5 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
-import { extname, dirname, basename } from 'path';
+import { extname, dirname, basename, join } from 'path';
 import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter } from './converters/index.js';
 import { ConversionOptions, ConversionResult, DocumentConverter } from './types/index.js';
 
@@ -18,16 +18,38 @@ export class DocumentService {
     ]);
   }
 
-  async convertFile(inputPath: string, outputPath: string, options: Partial<ConversionOptions> = {}): Promise<ConversionResult> {
+  async convertFile(inputPath: string, options: Partial<ConversionOptions>): Promise<ConversionResult>;
+  async convertFile(inputPath: string, outputPath: string, options?: Partial<ConversionOptions>): Promise<ConversionResult>;
+  async convertFile(inputPath: string, outputPathOrOptions: string | Partial<ConversionOptions>, options?: Partial<ConversionOptions>): Promise<ConversionResult> {
+    let outputPath: string | undefined;
+    let actualOptions: Partial<ConversionOptions>;
+
+    if (typeof outputPathOrOptions === 'string') {
+      outputPath = outputPathOrOptions;
+      actualOptions = options || {};
+    } else {
+      actualOptions = outputPathOrOptions;
+      outputPath = actualOptions.outputPath;
+    }
     const extension = extname(inputPath).toLowerCase().slice(1);
-    let converter = this.converters.get(extension);
+    
+    // Determine input type first to handle special cases like .flsnp
+    let inputType = this.determineInputType(extension);
+    
+    // Map extension to appropriate converter
+    let converterKey = extension;
+    if (extension === 'flsnp') {
+      converterKey = 'xml'; // Use XML/MadCap converter for snippet files
+    }
+    
+    let converter = this.converters.get(converterKey);
 
     if (!converter) {
-      throw new Error(`Unsupported file type: ${extension}. Supported types: ${Array.from(this.converters.keys()).join(', ')}`);
+      const supportedTypes = Array.from(this.converters.keys());
+      supportedTypes.push('flsnp'); // Add flsnp to supported types list
+      throw new Error(`Unsupported file type: ${extension}. Supported types: ${supportedTypes.join(', ')}`);
     }
-
-    let inputType = this.determineInputType(extension);
-    const format = options.format || 'markdown';
+    const format = actualOptions.format || 'markdown';
 
     let input: string | Buffer;
     
@@ -54,18 +76,30 @@ export class DocumentService {
     const conversionOptions: ConversionOptions = {
       format,
       inputType,
-      preserveFormatting: options.preserveFormatting ?? true,
-      extractImages: options.extractImages ?? false,
-      outputDir: options.outputDir || dirname(outputPath),
-      rewriteLinks: options.rewriteLinks,
+      preserveFormatting: actualOptions.preserveFormatting ?? true,
+      extractImages: actualOptions.extractImages ?? false,
+      outputDir: actualOptions.outputDir || (outputPath ? dirname(outputPath) : undefined),
+      outputPath,
+      rewriteLinks: actualOptions.rewriteLinks,
       inputPath: inputPath,
-      zendeskOptions: options.zendeskOptions
+      variableOptions: actualOptions.variableOptions,
+      zendeskOptions: actualOptions.zendeskOptions,
+      asciidocOptions: actualOptions.asciidocOptions
     };
 
     const result = await converter.convert(input, conversionOptions);
 
-    await this.ensureDirectoryExists(dirname(outputPath));
-    await writeFile(outputPath, result.content, 'utf8');
+    if (outputPath) {
+      await this.ensureDirectoryExists(dirname(outputPath));
+      await writeFile(outputPath, result.content, 'utf8');
+      
+      // Write variables file if it was generated
+      if (result.variablesFile && actualOptions.variableOptions?.extractVariables) {
+        const variablesPath = actualOptions.variableOptions.variablesOutputPath || 
+                             this.getDefaultVariablesPath(outputPath, actualOptions.variableOptions.variableFormat);
+        await writeFile(variablesPath, result.variablesFile, 'utf8');
+      }
+    }
 
     return result;
   }
@@ -105,6 +139,7 @@ export class DocumentService {
       case 'doc':
         return 'word';
       case 'xml':
+      case 'flsnp': // MadCap snippet files
         return 'madcap';
       default:
         return 'html';
@@ -140,6 +175,19 @@ export class DocumentService {
       if ((error as any).code !== 'EEXIST') {
         throw error;
       }
+    }
+  }
+
+  private getDefaultVariablesPath(outputPath: string, format?: 'adoc' | 'writerside'): string {
+    const dir = dirname(outputPath);
+    
+    switch (format) {
+      case 'adoc':
+        return join(dir, 'variables.adoc');
+      case 'writerside':
+        return join(dir, 'variables.xml');
+      default:
+        return join(dir, 'variables.txt');
     }
   }
 }

@@ -5,6 +5,8 @@ import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from '.
 import { JSDOM } from 'jsdom';
 import { ZendeskConverter } from './converters/zendesk-converter.js';
 import { MadCapConverter } from './converters/madcap-converter.js';
+import { TOCDiscoveryService } from './services/toc-discovery.js';
+import { TocService, TOCBasedConversionPlan } from './toc-service.js';
 
 export interface BatchConversionOptions extends Partial<ConversionOptions> {
   recursive?: boolean;
@@ -13,6 +15,8 @@ export interface BatchConversionOptions extends Partial<ConversionOptions> {
   renameFiles?: boolean;
   includePatterns?: string[];
   excludePatterns?: string[];
+  useTOCStructure?: boolean; // Use TOC hierarchy instead of file structure
+  generateMasterDoc?: boolean; // Generate master document from TOCs
 }
 
 export interface BatchConversionResult {
@@ -20,16 +24,26 @@ export interface BatchConversionResult {
   convertedFiles: number;
   skippedFiles: number;
   errors: Array<{ file: string; error: string }>;
+  skippedFilesList: Array<{ file: string; reason: string }>; // Track skipped files with reasons
   results: Array<{ inputPath: string; outputPath: string; result: ConversionResult }>;
   filenameMapping?: Map<string, string>; // Maps old relative paths to new relative paths
+  tocStructure?: {
+    totalTOCs: number;
+    discoveredFiles: number;
+    masterDocumentPath?: string;
+  };
 }
 
 export class BatchService {
   private documentService: DocumentService;
+  private tocDiscoveryService: TOCDiscoveryService;
+  private tocService: TocService;
   private supportedExtensions = new Set(['html', 'htm', 'docx', 'doc', 'xml']);
 
   constructor() {
     this.documentService = new DocumentService();
+    this.tocDiscoveryService = new TOCDiscoveryService();
+    this.tocService = new TocService();
   }
 
   async convertFolder(
@@ -42,110 +56,20 @@ export class BatchService {
       convertedFiles: 0,
       skippedFiles: 0,
       errors: [],
+      skippedFilesList: [], // Track skipped files with reasons
       results: [],
       filenameMapping: options.renameFiles ? new Map<string, string>() : undefined
     };
 
     await this.ensureDirectoryExists(outputDir);
 
-    const files = await this.findDocumentFiles(inputDir, options);
-    result.totalFiles = files.length;
-
-    // Track if stylesheet has been written for this batch
-    let stylesheetWritten = false;
-
-    for (const inputPath of files) {
-      try {
-        // Check if file should be skipped due to MadCap conditions (applies to all formats)
-        const content = await readFile(inputPath, 'utf8');
-        if (this.containsMadCapContent(content)) {
-          // Use appropriate converter's skip check based on format
-          const shouldSkip = options.format === 'zendesk' 
-            ? ZendeskConverter.shouldSkipFile(content)
-            : MadCapConverter.shouldSkipFile(content);
-            
-          if (shouldSkip) {
-            // Skipping file with excluded MadCap conditions: ${inputPath}
-            result.skippedFiles++;
-            continue;
-          }
-        }
-
-        const relativePath = relative(inputDir, inputPath);
-        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
-        
-        // Track filename mapping for cross-reference updates
-        if (options.renameFiles && result.filenameMapping) {
-          const originalRelativePath = relativePath;
-          const newRelativePath = relative(outputDir, outputPath);
-          result.filenameMapping.set(originalRelativePath, newRelativePath);
-        }
-        
-        if (options.preserveStructure) {
-          await this.ensureDirectoryExists(dirname(outputPath));
-        }
-
-        const conversionOptions: ConversionOptions = {
-          format: options.format || 'markdown',
-          inputType: this.determineInputType(extname(inputPath).toLowerCase().slice(1)),
-          preserveFormatting: options.preserveFormatting ?? true,
-          extractImages: options.extractImages ?? true,
-          outputDir: dirname(outputPath),
-          rewriteLinks: true,  // Enable link rewriting for batch conversions
-          zendeskOptions: options.zendeskOptions
-        };
-
-        const conversionResult = await this.documentService.convertFile(
-          inputPath,
-          outputPath,
-          conversionOptions
-        );
-
-        // Handle external stylesheet generation for batch conversions (write only once per batch)
-        if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
-          await this.writeStylesheet(conversionResult.stylesheet, outputDir, options.zendeskOptions.cssOutputPath);
-          stylesheetWritten = true;
-        }
-
-        if (options.copyImages) {
-          if (conversionResult.metadata?.images) {
-            await this.copyReferencedImages(
-              inputPath,
-              outputPath,
-              conversionResult.metadata.images,
-              options
-            );
-          }
-          
-          // For Zendesk conversions, also copy all image directories
-          if (options.format === 'zendesk') {
-            await this.copyImageDirectories(inputDir, outputDir);
-          }
-        }
-
-        result.results.push({
-          inputPath,
-          outputPath,
-          result: conversionResult
-        });
-
-        result.convertedFiles++;
-      } catch (error) {
-        result.errors.push({
-          file: inputPath,
-          error: error instanceof Error ? error.message : 'Unknown error'
-        });
-      }
+    // Handle TOC-based conversion if requested
+    if (options.useTOCStructure) {
+      return this.convertFolderWithTOCStructure(inputDir, outputDir, options, result);
     }
 
-    result.skippedFiles = result.totalFiles - result.convertedFiles - result.errors.length;
-    
-    // Update cross-references if files were renamed
-    if (options.renameFiles && result.filenameMapping && result.filenameMapping.size > 0) {
-      await this.updateCrossReferences(result, outputDir, options.format || 'markdown');
-    }
-    
-    return result;
+    // Use regular folder conversion for non-TOC based conversions
+    return this.convertFolderRegular(inputDir, outputDir, options, result);
   }
 
   private async findDocumentFiles(
@@ -171,7 +95,11 @@ export class BatchService {
         if (this.supportedExtensions.has(ext)) {
           if (this.shouldIncludeFile(entry, options)) {
             files.push(fullPath);
+          } else {
+            // SKIPPED: ${fullPath} - Excluded by filename pattern
           }
+        } else {
+          // SKIPPED: ${fullPath} - Unsupported file extension (.${ext})
         }
       }
     }
@@ -263,7 +191,7 @@ export class BatchService {
   ): Promise<void> {
     if (!result.filenameMapping) return;
 
-    console.log(`Updating cross-references for ${result.results.length} files...`);
+    // Updating cross-references for ${result.results.length} files...
     
     for (const { outputPath } of result.results) {
       try {
@@ -307,11 +235,11 @@ export class BatchService {
         // Write updated content if changes were made
         if (hasChanges) {
           await writeFile(outputPath, updatedContent, 'utf8');
-          console.log(`Updated cross-references in: ${basename(outputPath)}`);
+          // Updated cross-references in: ${basename(outputPath)}
         }
 
       } catch (error) {
-        console.warn(`Failed to update cross-references in ${outputPath}:`, error);
+        // Failed to update cross-references in ${outputPath}: ${error}
       }
     }
   }
@@ -371,7 +299,7 @@ export class BatchService {
       
       return null;
     } catch (error) {
-      console.warn(`Could not extract H1 text from ${filePath}:`, error);
+      // Could not extract H1 text from ${filePath}: ${error}
       return null;
     }
   }
@@ -397,7 +325,7 @@ export class BatchService {
         await this.ensureDirectoryExists(dirname(targetImagePath));
         await copyFile(sourceImagePath, targetImagePath);
       } catch (error) {
-        console.warn(`Failed to copy image ${imagePath}:`, error);
+        // Failed to copy image ${imagePath}: ${error}
       }
     }
   }
@@ -409,18 +337,20 @@ export class BatchService {
     const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp']);
     
     try {
-      // Find common image directories in MadCap Flare projects
-      const imageDirCandidates = [
-        'Images',
-        'Resources/Images', 
-        'Resources/Multimedia',
-        'Content/Images',
-        'Content/Resources/Images'
+      // Map source image directories to target locations
+      // For TOC-based conversions, images should be accessible from user/subfolder/ as ../../Images/
+      const imageDirMappings = [
+        // Source path -> Target path
+        { source: 'Content/Images', target: 'Images' },
+        { source: 'Content/Resources/Images', target: 'Images' },
+        { source: 'Images', target: 'Images' },
+        { source: 'Resources/Images', target: 'Images' },
+        { source: 'Resources/Multimedia', target: 'Images' }
       ];
       
-      for (const imageDir of imageDirCandidates) {
-        const sourceImageDir = join(sourceRootDir, imageDir);
-        const targetImageDir = join(targetRootDir, imageDir);
+      for (const mapping of imageDirMappings) {
+        const sourceImageDir = join(sourceRootDir, mapping.source);
+        const targetImageDir = join(targetRootDir, mapping.target);
         
         try {
           await this.copyDirectoryRecursive(sourceImageDir, targetImageDir, imageExtensions);
@@ -430,7 +360,7 @@ export class BatchService {
         }
       }
     } catch (error) {
-      console.warn('Failed to copy image directories:', error);
+      // Failed to copy image directories: ${error}
     }
   }
 
@@ -444,7 +374,7 @@ export class BatchService {
     const normalizedTarget = targetDir.replace(/\/$/, '');
     
     if (normalizedSource === normalizedTarget || normalizedSource.startsWith(normalizedTarget + '/')) {
-      console.warn(`Skipping recursive copy: source ${sourceDir} is within target ${targetDir}`);
+      // Skipping recursive copy: source ${sourceDir} is within target ${targetDir}
       return;
     }
     
@@ -565,9 +495,1313 @@ export class BatchService {
       // Write the stylesheet to the file
       await writeFile(cssFilePath, stylesheet, 'utf8');
       
-      console.log(`External stylesheet generated: ${cssFilePath}`);
+      // External stylesheet generated: ${cssFilePath}
     } catch (error) {
-      console.warn('Failed to write external stylesheet:', error);
+      // Failed to write external stylesheet: ${error}
     }
+  }
+
+  private getDefaultVariablesPath(outputPath: string, format?: 'adoc' | 'writerside'): string {
+    const dir = dirname(outputPath);
+    
+    switch (format) {
+      case 'adoc':
+        return join(dir, 'variables.adoc');
+      case 'writerside':
+        return join(dir, 'variables.xml');
+      default:
+        return join(dir, 'variables.txt');
+    }
+  }
+
+  /**
+   * Converts files using TOC-based folder structure instead of original file structure
+   */
+  private async convertFolderWithTOCStructure(
+    inputDir: string,
+    outputDir: string,
+    options: BatchConversionOptions,
+    result: BatchConversionResult
+  ): Promise<BatchConversionResult> {
+    // Starting TOC-based conversion from ${inputDir} to ${outputDir}
+    
+    try {
+      // Discover all TOC files in the project
+      const tocDiscovery = await this.tocDiscoveryService.discoverAllTOCs(inputDir);
+      
+      if (tocDiscovery.tocStructures.length === 0) {
+        // No TOC files found or parsed successfully. Falling back to regular folder conversion.
+        return this.convertFolderRegular(inputDir, outputDir, options, result);
+      }
+
+      // Found ${tocDiscovery.tocStructures.length} TOC files with ${tocDiscovery.totalEntries} total entries
+      
+      // Create TOC-based conversion plan
+      const conversionPlan = await this.tocService.createTOCBasedPlan(
+        tocDiscovery.tocStructures.map(ts => ts.structure),
+        options.format as 'markdown' | 'asciidoc' | 'zendesk' || 'markdown'
+      );
+      
+      // Creating ${conversionPlan.folderStructure.length} directories based on TOC hierarchy
+      
+      // Create all necessary directories
+      for (const folder of conversionPlan.folderStructure) {
+        await this.ensureDirectoryExists(join(outputDir, folder));
+      }
+      
+      // Update result with TOC structure info
+      result.tocStructure = {
+        totalTOCs: tocDiscovery.tocStructures.length,
+        discoveredFiles: tocDiscovery.totalEntries
+      };
+      
+      // Convert files based on TOC mapping
+      await this.processFilesWithTOCMapping(
+        inputDir,
+        outputDir,
+        conversionPlan,
+        options,
+        result
+      );
+      
+      // Update TOC-based cross-references and image paths
+      if (options.format === 'asciidoc') {
+        await this.updateTOCBasedReferences(
+          outputDir,
+          conversionPlan,
+          result
+        );
+      }
+      
+      // Generate master document if requested - do this AFTER files are processed and renamed
+      if (options.generateMasterDoc) {
+        const masterDocPath = await this.generateMasterDocumentFromActualFiles(
+          outputDir,
+          result,
+          options.format as 'markdown' | 'asciidoc' | 'zendesk' || 'markdown',
+          options
+        );
+        if (result.tocStructure) {
+          result.tocStructure.masterDocumentPath = masterDocPath;
+        }
+        
+        // Fix relative paths in included files for master document context
+        if (options.format === 'asciidoc') {
+          await this.fixIncludedFilePathsForMasterDoc(outputDir, result);
+        }
+      }
+      
+      // TOC-BASED CONVERSION SUMMARY:
+      // Total TOCs processed: ${tocDiscovery.tocStructures.length}
+      // Total entries discovered: ${tocDiscovery.totalEntries}
+      // Files converted: ${result.convertedFiles}
+      // Files skipped: ${result.skippedFiles}
+      // Errors: ${result.errors.length}
+      
+      return result;
+      
+    } catch (error) {
+      // Failed to perform TOC-based conversion: ${error}
+      // Falling back to regular folder conversion...
+      return this.convertFolderRegular(inputDir, outputDir, options, result);
+    }
+  }
+
+  /**
+   * Process files using TOC-based mapping
+   */
+  private async processFilesWithTOCMapping(
+    inputDir: string,
+    outputDir: string,
+    conversionPlan: TOCBasedConversionPlan,
+    options: BatchConversionOptions,
+    result: BatchConversionResult
+  ): Promise<void> {
+    const fileMapping = conversionPlan.fileMapping;
+    let stylesheetWritten = false;
+    let variablesFileWritten = false;
+    let imageDirectoriesCopied = false;
+    
+    // Process each file according to TOC mapping
+    for (const [originalPath, targetPath] of fileMapping.entries()) {
+      try {
+        // Resolve full input path (originalPath is relative to Content directory)
+        const fullInputPath = this.resolveContentPath(originalPath, inputDir);
+        const fullOutputPath = join(outputDir, targetPath);
+        
+        // Check if input file exists, try alternative locations if needed
+        const resolvedPath = await this.findActualFilePath(fullInputPath, originalPath, inputDir);
+        if (!resolvedPath) {
+          // DEBUG: File mapping issue - ${originalPath} → ${fullInputPath} (not found)
+          result.skippedFiles++;
+          result.skippedFilesList.push({ 
+            file: fullInputPath, 
+            reason: 'File not found in Content directory or alternative locations' 
+          });
+          continue;
+        }
+        
+        // Use the resolved path for processing
+        const actualInputPath = resolvedPath;
+        
+        // Handle renameFiles option: if enabled, extract H1 for filename but preserve TOC directory structure
+        let finalOutputPath = fullOutputPath;
+        if (options.renameFiles) {
+          try {
+            const h1Text = await this.extractH1Text(actualInputPath);
+            if (h1Text) {
+              const cleanFileName = this.sanitizeFilename(h1Text);
+              if (cleanFileName) {
+                // Extract directory from TOC-based targetPath and combine with H1-based filename
+                const tocDir = dirname(targetPath);
+                const extension = extname(targetPath);
+                const h1Filename = `${cleanFileName}${extension}`;
+                finalOutputPath = join(outputDir, tocDir, h1Filename);
+              }
+            }
+          } catch (error) {
+            // If H1 extraction fails, fall back to original TOC-based path
+            // Error extracting H1 from ${actualInputPath}: ${error}
+          }
+        }
+        
+        
+        // Check if file should be skipped due to MadCap conditions
+        const content = await readFile(actualInputPath, 'utf8');
+        if (this.containsMadCapContent(content)) {
+          const shouldSkip = options.format === 'zendesk' 
+            ? ZendeskConverter.shouldSkipFile(content)
+            : MadCapConverter.shouldSkipFile(content);
+            
+          if (shouldSkip) {
+            const reason = `MadCap conditions indicate content should be skipped`;
+            // SKIPPED: ${actualInputPath} - ${reason}
+            result.skippedFiles++;
+            result.skippedFilesList.push({ file: actualInputPath, reason });
+            continue;
+          }
+        }
+        
+        // Ensure output directory exists
+        await this.ensureDirectoryExists(dirname(finalOutputPath));
+        
+        const conversionOptions: ConversionOptions = {
+          format: options.format || 'markdown',
+          inputType: this.determineInputType(extname(actualInputPath).toLowerCase().slice(1)),
+          preserveFormatting: options.preserveFormatting ?? true,
+          extractImages: options.extractImages ?? true,
+          outputDir: dirname(finalOutputPath),
+          rewriteLinks: true,
+          variableOptions: options.variableOptions,
+          zendeskOptions: options.zendeskOptions
+        };
+
+        const conversionResult = await this.documentService.convertFile(
+          actualInputPath,
+          finalOutputPath,
+          conversionOptions
+        );
+
+        // Handle external stylesheet generation (write only once per batch)
+        if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
+          await this.writeStylesheet(conversionResult.stylesheet, outputDir, options.zendeskOptions.cssOutputPath);
+          stylesheetWritten = true;
+        }
+
+        // Handle variables file generation (write only once per batch)
+        if (conversionResult.variablesFile && options.variableOptions?.extractVariables && !variablesFileWritten) {
+          // For book generation, always put variables file in root output directory
+          const variablesPath = options.variableOptions.variablesOutputPath || 
+                               (options.asciidocOptions?.generateAsBook 
+                                 ? join(outputDir, 'variables.adoc')
+                                 : this.getDefaultVariablesPath(finalOutputPath, options.variableOptions.variableFormat));
+          await writeFile(variablesPath, conversionResult.variablesFile, 'utf8');
+          variablesFileWritten = true;
+        }
+
+        if (options.copyImages) {
+          if (conversionResult.metadata?.images) {
+            await this.copyReferencedImages(
+              actualInputPath,
+              finalOutputPath,
+              conversionResult.metadata.images,
+              options
+            );
+          }
+          
+          // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
+          if ((options.format === 'zendesk' || options.format === 'asciidoc') && !imageDirectoriesCopied) {
+            await this.copyImageDirectories(inputDir, outputDir);
+            imageDirectoriesCopied = true;
+          }
+        }
+
+        result.results.push({
+          inputPath: actualInputPath,
+          outputPath: finalOutputPath,
+          result: conversionResult
+        });
+
+        result.convertedFiles++;
+        // Converted: ${originalPath} → ${targetPath}
+        
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // ERROR: ${originalPath} - ${errorMessage}
+        result.errors.push({
+          file: originalPath,
+          error: errorMessage
+        });
+      }
+    }
+    
+    result.totalFiles = fileMapping.size;
+  }
+
+  /**
+   * Resolves a content-relative path to full path
+   */
+  private resolveContentPath(contentRelativePath: string, projectDir: string): string {
+    // First try Content directory
+    const contentPath = join(projectDir, 'Content', contentRelativePath);
+    
+    // Return the content path - existence checking is done separately in the calling code
+    // This ensures consistent path construction for the file mapping
+    return contentPath;
+  }
+
+  /**
+   * Finds the actual file path by trying multiple locations
+   */
+  private async findActualFilePath(
+    primaryPath: string, 
+    originalPath: string, 
+    projectDir: string
+  ): Promise<string | null> {
+    // Try the primary path first
+    try {
+      await stat(primaryPath);
+      return primaryPath;
+    } catch (error) {
+      // Primary path doesn't exist, try alternatives
+    }
+
+    // Alternative locations to try
+    const alternatives = [
+      join(projectDir, originalPath), // Direct in project root
+      join(projectDir, 'Project', 'Content', originalPath), // Project/Content structure
+      join(projectDir, 'Source', 'Content', originalPath), // Source/Content structure
+    ];
+
+    // Try each alternative location
+    for (const altPath of alternatives) {
+      try {
+        await stat(altPath);
+        return altPath;
+      } catch (error) {
+        continue;
+      }
+    }
+
+    // If no exact match found, try to find files with similar names
+    const filename = basename(originalPath);
+    const searchResult = await this.searchForSimilarFile(projectDir, filename);
+    
+    return searchResult;
+  }
+
+  /**
+   * Searches for files with similar names in the project directory
+   */
+  private async searchForSimilarFile(projectDir: string, targetFilename: string): Promise<string | null> {
+    const targetBase = basename(targetFilename, extname(targetFilename)).toLowerCase();
+    
+    const searchDirs = [
+      join(projectDir, 'Content'),
+      join(projectDir, 'Project', 'Content'),
+      join(projectDir, 'Source', 'Content')
+    ];
+
+    for (const searchDir of searchDirs) {
+      try {
+        const result = await this.searchDirectoryForFile(searchDir, targetBase);
+        if (result) return result;
+      } catch (error) {
+        continue;
+      }
+    }
+
+    return null;
+  }
+
+  /**
+   * Recursively searches a directory for files matching the target name
+   */
+  private async searchDirectoryForFile(dirPath: string, targetBasename: string): Promise<string | null> {
+    try {
+      const files = await readdir(dirPath);
+      
+      for (const file of files) {
+        const fullPath = join(dirPath, file);
+        const stats = await stat(fullPath);
+        
+        if (stats.isDirectory()) {
+          const result = await this.searchDirectoryForFile(fullPath, targetBasename);
+          if (result) return result;
+        } else if (stats.isFile()) {
+          const fileBase = basename(file, extname(file)).toLowerCase();
+          if (fileBase === targetBasename || fileBase.includes(targetBasename) || targetBasename.includes(fileBase)) {
+            return fullPath;
+          }
+        }
+      }
+    } catch (error) {
+      // Skip directories we can't read
+    }
+    
+    return null;
+  }
+
+  /**
+   * Generates master document from TOC structures
+   */
+  private async generateMasterDocument(
+    inputDir: string,
+    outputDir: string,
+    tocStructures: Array<{ path: string; structure: import('./toc-service.js').TocStructure }>,
+    format: 'markdown' | 'asciidoc' | 'zendesk',
+    options: BatchConversionOptions
+  ): Promise<string> {
+    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    const masterPath = join(outputDir, `master${extension}`);
+    
+    if (format === 'asciidoc' && options.asciidocOptions?.generateAsBook && tocStructures.length > 0) {
+      // Generate book-style master document with resolved LinkedTitle and proper structure
+      const masterContent = await this.generateBookMasterDocument(inputDir, tocStructures, options);
+      await writeFile(masterPath, masterContent, 'utf8');
+    } else {
+      // Generate simple master document (fallback)
+      const masterContent = await this.generateSimpleMasterDocument(outputDir, tocStructures.map(ts => ts.structure), format);
+      await writeFile(masterPath, masterContent, 'utf8');
+    }
+    
+    // Generated master document: ${masterPath}
+    return masterPath;
+  }
+
+  /**
+   * Generates master document from actually converted files with correct filenames
+   */
+  private async generateMasterDocumentFromActualFiles(
+    outputDir: string,
+    result: BatchConversionResult,
+    format: 'markdown' | 'asciidoc' | 'zendesk',
+    options: BatchConversionOptions
+  ): Promise<string> {
+    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    const masterPath = join(outputDir, `master${extension}`);
+    
+    if (format === 'asciidoc') {
+      const masterContent = await this.generateActualFilesAsciiDocMaster(outputDir, result, options);
+      await writeFile(masterPath, masterContent, 'utf8');
+    } else {
+      // For other formats, use simple file listing
+      const masterContent = await this.generateSimpleFileListMaster(outputDir, result, format);
+      await writeFile(masterPath, masterContent, 'utf8');
+    }
+    
+    return masterPath;
+  }
+
+  /**
+   * Generate AsciiDoc master document using actual converted files
+   */
+  private async generateActualFilesAsciiDocMaster(
+    outputDir: string,
+    result: BatchConversionResult,
+    options: BatchConversionOptions
+  ): Promise<string> {
+    const bookTitle = options.asciidocOptions?.bookTitle || 'Documentation';
+    const tocLevels = options.asciidocOptions?.includeTOCLevels || 3;
+    const useBookDoctype = options.asciidocOptions?.useBookDoctype !== false;
+    
+    let content = `= ${bookTitle}\n`;
+    
+    // Add author if provided
+    if (options.asciidocOptions?.bookAuthor) {
+      content += `${options.asciidocOptions.bookAuthor}\n`;
+    }
+    
+    // Add book-specific attributes
+    if (useBookDoctype) {
+      content += `:doctype: book\n`;
+    }
+    content += `:toc: left\n`;
+    content += `:toclevels: ${tocLevels}\n`;
+    content += `:sectnums:\n`;
+    content += `:sectlinks:\n`;
+    content += `:icons: font\n`;
+    content += `:experimental:\n`;
+    
+    // Add additional book attributes
+    if (useBookDoctype) {
+      // Don't use :partnums: as it causes Roman numerals for chapters
+      content += `:chapter-signifier: Chapter\n`;
+      content += `:appendix-caption: Appendix\n`;
+    }
+    
+    content += `\n`;
+    
+    // Include variables file if it exists
+    if (options.variableOptions?.extractVariables) {
+      content += `// Include variables file\n`;
+      content += `include::variables.adoc[]\n\n`;
+    }
+    
+    // Group files by directory structure and include them
+    const filesByDir = this.groupConvertedFilesByDirectory(result.results, outputDir);
+    
+    for (const [dirPath, files] of filesByDir.entries()) {
+      if (files.length === 0) continue;
+      
+      // Create chapter header for directory
+      const dirName = dirPath === '.' ? 'Root' : basename(dirPath).replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      
+      if (options.asciidocOptions?.includeChapterBreaks !== false) {
+        content += `[chapter]\n`;
+      }
+      content += `== ${dirName}\n\n`;
+      
+      // Include all files in this directory
+      for (const { outputPath } of files) {
+        const relativePath = relative(outputDir, outputPath);
+        const title = await this.extractTitleFromFile(outputPath) || basename(outputPath, '.adoc').replace(/[-_]/g, ' ');
+        
+        content += `include::${relativePath}[]\n\n`;
+      }
+    }
+    
+    return content;
+  }
+
+  /**
+   * Generate simple master document for non-AsciiDoc formats
+   */
+  private async generateSimpleFileListMaster(
+    outputDir: string,
+    result: BatchConversionResult,
+    format: 'markdown' | 'zendesk'
+  ): Promise<string> {
+    const title = format === 'markdown' ? '# Documentation' : '<h1>Documentation</h1>';
+    let content = `${title}\n\n`;
+    
+    for (const { outputPath } of result.results) {
+      const relativePath = relative(outputDir, outputPath);
+      const fileName = basename(outputPath);
+      
+      if (format === 'markdown') {
+        content += `- [${fileName}](${relativePath})\n`;
+      } else {
+        content += `<a href="${relativePath}">${fileName}</a><br>\n`;
+      }
+    }
+    
+    return content;
+  }
+
+  /**
+   * Group converted files by their directory structure
+   */
+  private groupConvertedFilesByDirectory(
+    results: Array<{ inputPath: string; outputPath: string; result: ConversionResult }>,
+    outputDir: string
+  ): Map<string, Array<{ inputPath: string; outputPath: string; result: ConversionResult }>> {
+    const groups = new Map<string, Array<{ inputPath: string; outputPath: string; result: ConversionResult }>>();
+    
+    for (const result of results) {
+      const relativePath = relative(outputDir, result.outputPath);
+      const dirPath = dirname(relativePath);
+      
+      if (!groups.has(dirPath)) {
+        groups.set(dirPath, []);
+      }
+      groups.get(dirPath)!.push(result);
+    }
+    
+    // Sort directories and files within each directory
+    const sortedGroups = new Map();
+    for (const [dirPath, files] of Array.from(groups.entries()).sort()) {
+      sortedGroups.set(dirPath, files.sort((a, b) => basename(a.outputPath).localeCompare(basename(b.outputPath))));
+    }
+    
+    return sortedGroups;
+  }
+
+  /**
+   * Generate book-style master document with resolved LinkedTitle and proper structure
+   */
+  private async generateBookMasterDocument(
+    inputDir: string,
+    tocStructures: Array<{ path: string; structure: import('./toc-service.js').TocStructure }>,
+    options: BatchConversionOptions
+  ): Promise<string> {
+    // Use the first (main) TOC structure for book generation
+    const mainTOC = tocStructures[0].structure;
+    
+    // Find Content directory for file resolution
+    const contentBasePath = await this.findContentDirectory(inputDir);
+    
+    // Resolve LinkedTitle entries by reading actual file content
+    let resolvedTOC = mainTOC;
+    if (options.asciidocOptions?.useLinkedTitleFromTOC) {
+      resolvedTOC = await this.tocService.resolveLinkedTitles(mainTOC, contentBasePath);
+    }
+    
+    // Generate master document with book options
+    const bookOptions = {
+      bookTitle: options.asciidocOptions?.bookTitle || resolvedTOC.title,
+      bookAuthor: options.asciidocOptions?.bookAuthor,
+      includeTOCLevels: options.asciidocOptions?.includeTOCLevels || 3,
+      useBookDoctype: options.asciidocOptions?.useBookDoctype !== false,
+      includeChapterBreaks: options.asciidocOptions?.includeChapterBreaks !== false,
+      includeVariablesFile: options.variableOptions?.extractVariables === true
+    };
+    
+    return this.tocService.generateMasterAdoc(resolvedTOC, 'adoc', bookOptions);
+  }
+
+  /**
+   * Find the Content directory in a MadCap project
+   */
+  private async findContentDirectory(projectPath: string): Promise<string> {
+    // Common locations for Content directory
+    const contentCandidates = [
+      join(projectPath, 'Content'),
+      join(projectPath, 'Project', 'Content'),
+      join(projectPath, 'Source', 'Content'),
+      projectPath // Fallback to project root
+    ];
+
+    for (const candidate of contentCandidates) {
+      try {
+        const stats = await stat(candidate);
+        if (stats.isDirectory()) {
+          return candidate;
+        }
+      } catch (error) {
+        continue;
+      }
+    }
+
+    // If no Content directory found, return project path as fallback
+    return projectPath;
+  }
+
+  /**
+   * Generate a simple master document that lists actual converted files
+   */
+  private async generateSimpleMasterDocument(
+    outputDir: string,
+    tocStructures: import('./toc-service.js').TocStructure[],
+    format: 'markdown' | 'asciidoc' | 'zendesk'
+  ): Promise<string> {
+    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    
+    // Find all actually converted files
+    const convertedFiles = await this.findConvertedFiles(outputDir, extension);
+    
+    if (format === 'asciidoc') {
+      let content = `= Master Documentation\n`;
+      content += `:doctype: book\n`;
+      content += `:toc: left\n`;
+      content += `:toclevels: 3\n`;
+      content += `:sectnums:\n`;
+      content += `:sectlinks:\n`;
+      content += `:icons: font\n\n`;
+      
+      content += `This document includes all converted documentation from the MadCap Flare project.\n\n`;
+      
+      // Group files by their directory structure
+      const filesByDir = this.groupFilesByDirectory(convertedFiles, outputDir);
+      
+      for (const [dirName, files] of filesByDir.entries()) {
+        if (dirName) {
+          content += `= ${dirName.charAt(0).toUpperCase() + dirName.slice(1)}\n\n`;
+        }
+        
+        for (const file of files) {
+          const relativePath = relative(outputDir, file);
+          const title = await this.extractTitleFromFile(file) || basename(file, extension).replace(/[-_]/g, ' ');
+          
+          content += `== ${title}\n\n`;
+          content += `include::${relativePath}[]\n\n`;
+        }
+      }
+      
+      return content;
+    }
+    
+    // For other formats, return simple list
+    return `# Master Documentation\n\nConverted files:\n` + 
+           convertedFiles.map(f => `- ${relative(outputDir, f)}`).join('\n');
+  }
+
+  private async findConvertedFiles(outputDir: string, extension: string): Promise<string[]> {
+    const files: string[] = [];
+    
+    const searchDir = async (dir: string): Promise<void> => {
+      try {
+        const entries = await readdir(dir);
+        
+        for (const entry of entries) {
+          const fullPath = join(dir, entry);
+          const stats = await stat(fullPath);
+          
+          if (stats.isDirectory()) {
+            await searchDir(fullPath);
+          } else if (entry.endsWith(extension) && entry !== `master${extension}`) {
+            files.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Skip directories we can't read
+      }
+    };
+    
+    await searchDir(outputDir);
+    return files.sort();
+  }
+
+  private groupFilesByDirectory(files: string[], outputDir: string): Map<string, string[]> {
+    const groups = new Map<string, string[]>();
+    
+    for (const file of files) {
+      const relativePath = relative(outputDir, file);
+      const dirName = dirname(relativePath);
+      const topLevelDir = dirName.split('/')[0];
+      
+      if (!groups.has(topLevelDir)) {
+        groups.set(topLevelDir, []);
+      }
+      groups.get(topLevelDir)!.push(file);
+    }
+    
+    return groups;
+  }
+
+  private async extractTitleFromFile(filePath: string): Promise<string | null> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      
+      // For AsciiDoc files, look for the main title
+      const titleMatch = content.match(/^=\s+(.+)$/m);
+      if (titleMatch && titleMatch[1]?.trim()) {
+        return titleMatch[1].trim();
+      }
+      
+      return null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  /**
+   * Update cross-references and image paths for TOC-based conversions
+   */
+  private async updateTOCBasedReferences(
+    outputDir: string,
+    conversionPlan: TOCBasedConversionPlan,
+    result: BatchConversionResult
+  ): Promise<void> {
+    // Create mapping from original TOC-based paths to actual output filenames
+    const actualFileMapping = this.createActualFileMapping(conversionPlan.fileMapping, result);
+    
+    for (const { outputPath } of result.results) {
+      try {
+        const content = await readFile(outputPath, 'utf8');
+        let updatedContent = content;
+        let hasChanges = false;
+
+        // Update AsciiDoc cross-references: xref:path[text] and link:path[text]
+        updatedContent = updatedContent.replace(/(xref|link):([^\[]+)\[([^\]]*)\]/g, (match, linkType, url, text) => {
+          const updatedUrl = this.updateActualLinkUrl(url, actualFileMapping, outputPath, outputDir);
+          if (updatedUrl !== url) {
+            hasChanges = true;
+            return `${linkType}:${updatedUrl}[${text}]`;
+          }
+          return match;
+        });
+
+        // Update image paths: image::path[alt] and image:path[alt]
+        updatedContent = updatedContent.replace(/(image::?)([^\[]+)\[([^\]]*)\]/g, (match, imageType, imagePath, alt) => {
+          const updatedImagePath = this.updateTOCBasedImagePath(imagePath, outputPath, outputDir);
+          if (updatedImagePath !== imagePath) {
+            hasChanges = true;
+            return `${imageType}${updatedImagePath}[${alt}]`;
+          }
+          return match;
+        });
+
+        // Write updated content if changes were made
+        if (hasChanges) {
+          await writeFile(outputPath, updatedContent, 'utf8');
+        }
+
+      } catch (error) {
+        // Failed to update TOC-based references in ${outputPath}: ${error}
+      }
+    }
+  }
+
+  /**
+   * Create mapping from various filename formats to actual output files
+   */
+  private createActualFileMapping(
+    originalFileMapping: Map<string, string>,
+    result: BatchConversionResult
+  ): Map<string, string> {
+    const actualMapping = new Map<string, string>();
+    
+    // Create a mapping of original content to actual files
+    const originalToActual = new Map<string, string>();
+    for (const { inputPath, outputPath } of result.results) {
+      originalToActual.set(inputPath, outputPath);
+    }
+    
+    // For each actual converted file, create multiple mapping entries
+    for (const { inputPath, outputPath } of result.results) {
+      const actualRelativePath = relative(dirname(dirname(outputPath)), outputPath); // Relative from user/ directory
+      const actualDir = dirname(actualRelativePath);
+      const actualBasename = basename(outputPath, extname(outputPath));
+      
+      // Find the original file mapping that corresponds to this conversion
+      let matchedOriginalPath: string | undefined;
+      let matchedTocPath: string | undefined;
+      
+      for (const [originalPath, tocPath] of originalFileMapping.entries()) {
+        if (inputPath.includes(originalPath) || inputPath.endsWith(basename(originalPath))) {
+          matchedOriginalPath = originalPath;
+          matchedTocPath = tocPath;
+          break;
+        }
+      }
+      
+      if (matchedOriginalPath && matchedTocPath) {
+        const originalBasename = basename(matchedOriginalPath, extname(matchedOriginalPath));
+        const tocBasename = basename(matchedTocPath, extname(matchedTocPath));
+        
+        // Generate all possible malformed reference patterns we've observed
+        const malformedPatterns = this.generateMalformedReferencePatterns(
+          originalBasename, 
+          tocBasename,
+          matchedTocPath,
+          actualDir
+        );
+        
+        // Map each pattern to the actual file
+        for (const pattern of malformedPatterns) {
+          actualMapping.set(pattern, actualRelativePath);
+        }
+      }
+      
+      // Also add direct filename mapping for simple cases
+      const simpleFilename = basename(outputPath);
+      actualMapping.set(simpleFilename, actualRelativePath);
+    }
+    
+    return actualMapping;
+  }
+
+  /**
+   * Generate all known malformed reference patterns for a file
+   */
+  private generateMalformedReferencePatterns(
+    originalBasename: string,
+    tocBasename: string, 
+    tocPath: string,
+    actualDir: string
+  ): string[] {
+    const patterns: string[] = [];
+    
+    // Pattern 1: Original TOC-based names
+    patterns.push(tocBasename + '.adoc');
+    patterns.push(tocPath);
+    
+    // Pattern 2: Common malformed pattern - basename + 'adoc.adoc'
+    patterns.push(tocBasename + 'adoc.adoc');
+    patterns.push(originalBasename + 'adoc.adoc');
+    
+    // Pattern 3: Numbers inserted (common corruption pattern)
+    // e.g., 03-1-analyzeactivity → 03-120analyzeactivityadoc.adoc
+    const numberedVariations = [];
+    
+    // For patterns like 03-1-something, insert numbers after the second dash
+    if (tocBasename.match(/^\d+-\d+-/)) {
+      const basePattern = tocBasename.replace(/^(\d+-\d+)-(.+)$/, '$1$2'); // Remove middle dash
+      numberedVariations.push(
+        basePattern.replace(/^(\d+-\d+)(.+)$/, '$10$2adoc.adoc'),
+        basePattern.replace(/^(\d+-\d+)(.+)$/, '$120$2adoc.adoc'),
+        basePattern.replace(/^(\d+-\d+)(.+)$/, '$1220$2adoc.adoc'),
+        basePattern.replace(/^(\d+-\d+)(.+)$/, '$1320$2adoc.adoc')
+      );
+    }
+    
+    // Also try the original replacement approach for other patterns
+    numberedVariations.push(
+      tocBasename.replace(/-/, '-1') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-12') + 'adoc.adoc', 
+      tocBasename.replace(/-/, '-120') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-2') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-20') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-220') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-3') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-30') + 'adoc.adoc',
+      tocBasename.replace(/-/, '-320') + 'adoc.adoc'
+    );
+    patterns.push(...numberedVariations);
+    
+    // Pattern 4: Path-based references that are wrong
+    patterns.push(`../../a6-00-other/configure-estimated-costs-options.adoc`); // Common wrong mapping
+    patterns.push(`user/${actualDir}/${tocBasename}.adoc`);
+    
+    // Pattern 5: Various combinations
+    patterns.push(originalBasename + '.adoc');
+    patterns.push(originalBasename.toLowerCase() + '.adoc');
+    patterns.push(originalBasename.replace(/\s+/g, '') + '.adoc');
+    
+    return patterns;
+  }
+
+  /**
+   * Update link URL using actual file mapping
+   */
+  private updateActualLinkUrl(
+    url: string,
+    actualFileMapping: Map<string, string>,
+    currentOutputPath: string,
+    outputDir: string
+  ): string {
+    // Skip external URLs, anchors, and mailto links
+    if (url.startsWith('http') || url.startsWith('mailto:') || url.startsWith('#')) {
+      return url;
+    }
+
+    // Split URL and anchor
+    const [path, anchor] = url.split('#');
+    
+    // Check if we have a direct mapping for this path
+    if (actualFileMapping.has(path)) {
+      const actualPath = actualFileMapping.get(path)!;
+      return this.calculateRelativePath(currentOutputPath, actualPath, outputDir, anchor);
+    }
+    
+    // Try fuzzy matching for patterns we might have missed
+    const bestMatch = this.findBestPathMatch(path, actualFileMapping);
+    if (bestMatch) {
+      return this.calculateRelativePath(currentOutputPath, bestMatch, outputDir, anchor);
+    }
+
+    // No mapping found, return original
+    return url;
+  }
+
+  /**
+   * Calculate proper relative path between files
+   */
+  private calculateRelativePath(
+    currentOutputPath: string, 
+    targetPath: string, 
+    outputDir: string, 
+    anchor?: string
+  ): string {
+    const currentDir = dirname(currentOutputPath);
+    const fullTargetPath = join(outputDir, targetPath);
+    let relativePath = relative(currentDir, fullTargetPath);
+    
+    // For same-directory references, use just the filename
+    if (dirname(currentOutputPath) === dirname(fullTargetPath)) {
+      relativePath = basename(fullTargetPath);
+    }
+    
+    return anchor ? `${relativePath}#${anchor}` : relativePath;
+  }
+
+  /**
+   * Find the best matching path using fuzzy matching
+   */
+  private findBestPathMatch(
+    searchPath: string, 
+    actualFileMapping: Map<string, string>
+  ): string | null {
+    let bestMatch: string | null = null;
+    let bestScore = 0;
+    
+    for (const [mappedPath, actualPath] of actualFileMapping.entries()) {
+      const score = this.calculatePathSimilarity(searchPath, mappedPath);
+      if (score > bestScore && score > 0.5) { // Minimum similarity threshold
+        bestScore = score;
+        bestMatch = actualPath;
+      }
+    }
+    
+    return bestMatch;
+  }
+
+  /**
+   * Calculate similarity score between two paths (0-1)
+   */
+  private calculatePathSimilarity(path1: string, path2: string): number {
+    // Normalize paths for comparison
+    const normalize = (p: string) => p.toLowerCase().replace(/[^a-z0-9]/g, '');
+    const norm1 = normalize(path1);
+    const norm2 = normalize(path2);
+    
+    // Exact match
+    if (norm1 === norm2) return 1.0;
+    
+    // Substring match
+    if (norm1.includes(norm2) || norm2.includes(norm1)) return 0.8;
+    
+    // Levenshtein distance-based similarity
+    const maxLen = Math.max(norm1.length, norm2.length);
+    if (maxLen === 0) return 1.0;
+    
+    const distance = this.levenshteinDistance(norm1, norm2);
+    return Math.max(0, (maxLen - distance) / maxLen);
+  }
+
+  /**
+   * Calculate Levenshtein distance between two strings
+   */
+  private levenshteinDistance(str1: string, str2: string): number {
+    const matrix = Array(str2.length + 1).fill(null).map(() => Array(str1.length + 1).fill(null));
+    
+    for (let i = 0; i <= str1.length; i++) matrix[0][i] = i;
+    for (let j = 0; j <= str2.length; j++) matrix[j][0] = j;
+    
+    for (let j = 1; j <= str2.length; j++) {
+      for (let i = 1; i <= str1.length; i++) {
+        const substitutionCost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+        matrix[j][i] = Math.min(
+          matrix[j][i - 1] + 1, // deletion
+          matrix[j - 1][i] + 1, // insertion
+          matrix[j - 1][i - 1] + substitutionCost // substitution
+        );
+      }
+    }
+    
+    return matrix[str2.length][str1.length];
+  }
+
+  /**
+   * Update link URL for TOC-based structure
+   */
+  private updateTOCBasedLinkUrl(
+    url: string, 
+    fileMapping: Map<string, string>, 
+    currentOutputPath: string, 
+    outputDir: string
+  ): string {
+    // Skip external URLs, anchors, and mailto links
+    if (url.startsWith('http') || url.startsWith('mailto:') || url.startsWith('#')) {
+      return url;
+    }
+
+    // Split URL and anchor
+    const [path, anchor] = url.split('#');
+    
+    // For TOC-based conversions, we need to find the target file in the mapping
+    // First, try to find a direct match in the file mapping
+    for (const [originalPath, targetPath] of fileMapping.entries()) {
+      // Check various forms of the original path
+      const pathVariations = [
+        originalPath,
+        originalPath.replace(/\.htm$/i, '.adoc'),
+        basename(originalPath, extname(originalPath)) + '.adoc',
+        basename(originalPath, extname(originalPath))
+      ];
+      
+      const urlVariations = [
+        path,
+        path.replace(/\.adoc$/i, ''),
+        path.replace(/\.adoc$/i, '.htm'),
+        basename(path, extname(path))
+      ];
+      
+      for (const pathVar of pathVariations) {
+        for (const urlVar of urlVariations) {
+          if (pathVar.includes(urlVar) || urlVar.includes(pathVar)) {
+            // Calculate relative path from current file to target file
+            const currentDir = dirname(currentOutputPath);
+            const relativePath = relative(currentDir, join(outputDir, targetPath));
+            return anchor ? `${relativePath}#${anchor}` : relativePath;
+          }
+        }
+      }
+    }
+
+    // If no mapping found, return original URL
+    return url;
+  }
+
+  /**
+   * Update image path for TOC-based structure
+   */
+  private updateTOCBasedImagePath(
+    imagePath: string, 
+    currentOutputPath: string, 
+    outputDir: string
+  ): string {
+    // Skip data URLs and external URLs
+    if (imagePath.startsWith('data:') || imagePath.startsWith('http')) {
+      return imagePath;
+    }
+
+    // Handle relative paths that go up directories (../Images/)
+    if (imagePath.startsWith('../')) {
+      // If the path already looks reasonable (1 level up to Images), keep it as-is
+      const upwardCount = (imagePath.match(/\.\.\//g) || []).length;
+      if (upwardCount === 1 && imagePath.includes('Images/')) {
+        return imagePath; // Path already looks correct for TOC structure
+      }
+      
+      // For paths that need fixing (too many ../ levels), simplify to standard relative path
+      if (upwardCount > 1) {
+        const cleanImagePath = imagePath.replace(/^(\.\.\/)+/, ''); // Remove all leading ../
+        
+        // For TOC-based conversions, most files are one level deep (user/subfolder/)
+        // So ../Images/ is the correct path from subdirectories to the Images folder
+        if (cleanImagePath.startsWith('Images/')) {
+          return `../${cleanImagePath}`;
+        }
+      }
+    }
+    
+    // Handle absolute user/ prefixed paths (convert to relative)
+    if (imagePath.startsWith('user/Images/')) {
+      const cleanImagePath = imagePath.replace(/^user\//, '');
+      return `../${cleanImagePath}`;
+    }
+
+    // Return original path if no better option found
+    return imagePath;
+  }
+
+  /**
+   * Fix relative paths in included files for master document context
+   */
+  private async fixIncludedFilePathsForMasterDoc(
+    outputDir: string,
+    result: BatchConversionResult
+  ): Promise<void> {
+    // Fix paths in all converted files that will be included in the master document
+    for (const { outputPath } of result.results) {
+      try {
+        const content = await readFile(outputPath, 'utf8');
+        let updatedContent = content;
+        let hasChanges = false;
+
+        // Calculate the depth of this file relative to the output directory
+        const relativePath = relative(outputDir, outputPath);
+        const depth = relativePath.split('/').length - 1; // Number of subdirectories deep
+        
+        // Remove HTML comments that shouldn't appear in AsciiDoc (always remove these)
+        updatedContent = updatedContent.replace(/<!--\s*BOUNDARY\s*-->/gi, '');
+        
+        // Remove other HTML comments that might be conversion artifacts  
+        updatedContent = updatedContent.replace(/<!--[^>]*-->/g, '');
+        
+        // Clean up excessive line breaks that might result from comment removal
+        const originalContent = updatedContent;
+        updatedContent = updatedContent.replace(/\n\s*\n\s*\n/g, '\n\n');
+        
+        if (originalContent !== updatedContent) {
+          hasChanges = true;
+        }
+        
+        // ONLY adjust paths for master document context if file is in subdirectories
+        // BUT preserve the standard TOC-based relative paths for standalone usage
+        if (depth > 0) {
+          // Fix paths ONLY in files that have user/ prefix in their images (indicating incorrect conversion)
+          // Convert user/Images/ back to ../Images/ for proper relative path resolution
+          updatedContent = updatedContent.replace(/(image::?)user\/(Images\/[^[\]]+)/g, (match, imageType, imagePath) => {
+            const correctedPath = `../${imagePath}`;
+            hasChanges = true;
+            return `${imageType}${correctedPath}`;
+          });
+
+          // Fix image paths that use ../Images/ format to work from subdirectories
+          // For files in subdirectories, we need to add additional ../ for each level
+          const additionalPrefix = '../'.repeat(depth - 1);
+          updatedContent = updatedContent.replace(/(image::?)\.\.\/(Images\/[^[\]]+)/g, (match, imageType, imagePath) => {
+            const correctedPath = `../${additionalPrefix}${imagePath}`;
+            hasChanges = true;
+            return `${imageType}${correctedPath}`;
+          });
+
+          // Adjust cross-references: fix user/ prefix back to proper relative paths
+          updatedContent = updatedContent.replace(/(xref|link):user\/(.*?)(\[.*?\])/g, (match, linkType, linkPath, linkText) => {
+            // Replace user/ with ../ prefix for proper relative path resolution
+            const correctedPath = `../${linkPath}`;
+            hasChanges = true;
+            return `${linkType}:${correctedPath}${linkText}`;
+          });
+        }
+
+        // Write updated content if changes were made
+        if (hasChanges) {
+          await writeFile(outputPath, updatedContent, 'utf8');
+        }
+
+      } catch (error) {
+        // Failed to fix included file paths in ${outputPath}: ${error}
+      }
+    }
+  }
+
+  /**
+   * Regular folder conversion (non-TOC based)
+   */
+  private async convertFolderRegular(
+    inputDir: string,
+    outputDir: string,
+    options: BatchConversionOptions,
+    result: BatchConversionResult
+  ): Promise<BatchConversionResult> {
+    const files = await this.findDocumentFiles(inputDir, options);
+    result.totalFiles = files.length;
+
+    // Track if stylesheet has been written for this batch
+    let stylesheetWritten = false;
+    let variablesFileWritten = false;
+    let imageDirectoriesCopied = false;
+
+    for (const inputPath of files) {
+      try {
+        // Check if file should be skipped due to MadCap conditions (applies to all formats)
+        const content = await readFile(inputPath, 'utf8');
+        if (this.containsMadCapContent(content)) {
+          // Use appropriate converter's skip check based on format
+          const shouldSkip = options.format === 'zendesk' 
+            ? ZendeskConverter.shouldSkipFile(content)
+            : MadCapConverter.shouldSkipFile(content);
+            
+          if (shouldSkip) {
+            const reason = `MadCap conditions indicate content should be skipped (Black, Red, Gray, deprecated, paused, print-only, etc.)`;
+            // SKIPPED: ${inputPath} - ${reason}
+            result.skippedFiles++;
+            result.skippedFilesList.push({ file: inputPath, reason });
+            continue;
+          }
+        }
+
+        const relativePath = relative(inputDir, inputPath);
+        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
+        
+        // Track filename mapping for cross-reference updates
+        if (options.renameFiles && result.filenameMapping) {
+          const originalRelativePath = relativePath;
+          const newRelativePath = relative(outputDir, outputPath);
+          result.filenameMapping.set(originalRelativePath, newRelativePath);
+        }
+        
+        if (options.preserveStructure) {
+          await this.ensureDirectoryExists(dirname(outputPath));
+        }
+
+        const conversionOptions: ConversionOptions = {
+          format: options.format || 'markdown',
+          inputType: this.determineInputType(extname(inputPath).toLowerCase().slice(1)),
+          preserveFormatting: options.preserveFormatting ?? true,
+          extractImages: options.extractImages ?? true,
+          outputDir: dirname(outputPath),
+          rewriteLinks: true,  // Enable link rewriting for batch conversions
+          variableOptions: options.variableOptions,
+          zendeskOptions: options.zendeskOptions
+        };
+
+        const conversionResult = await this.documentService.convertFile(
+          inputPath,
+          outputPath,
+          conversionOptions
+        );
+
+        // Handle external stylesheet generation for batch conversions (write only once per batch)
+        if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
+          await this.writeStylesheet(conversionResult.stylesheet, outputDir, options.zendeskOptions.cssOutputPath);
+          stylesheetWritten = true;
+        }
+
+        // Handle variables file generation (write only once per batch)
+        if (conversionResult.variablesFile && options.variableOptions?.extractVariables && !variablesFileWritten) {
+          const variablesPath = options.variableOptions.variablesOutputPath || 
+                               this.getDefaultVariablesPath(outputPath, options.variableOptions.variableFormat);
+          await writeFile(variablesPath, conversionResult.variablesFile, 'utf8');
+          variablesFileWritten = true;
+        }
+
+        if (options.copyImages) {
+          if (conversionResult.metadata?.images) {
+            await this.copyReferencedImages(
+              inputPath,
+              outputPath,
+              conversionResult.metadata.images,
+              options
+            );
+          }
+          
+          // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
+          if ((options.format === 'zendesk' || options.format === 'asciidoc') && !imageDirectoriesCopied) {
+            await this.copyImageDirectories(inputDir, outputDir);
+            imageDirectoriesCopied = true;
+          }
+        }
+
+        result.results.push({
+          inputPath,
+          outputPath,
+          result: conversionResult
+        });
+
+        result.convertedFiles++;
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        // ERROR: ${inputPath} - ${errorMessage}
+        result.errors.push({
+          file: inputPath,
+          error: errorMessage
+        });
+      }
+    }
+
+    result.skippedFiles = result.totalFiles - result.convertedFiles - result.errors.length;
+    
+    // Log summary
+    // CONVERSION SUMMARY:
+    // Total files found: ${result.totalFiles}
+    // Successfully converted: ${result.convertedFiles}
+    // Skipped: ${result.skippedFiles}
+    // Errors: ${result.errors.length}
+    
+    if (result.skippedFilesList.length > 0) {
+      // SKIPPED FILES:
+      result.skippedFilesList.forEach(({ file, reason }) => {
+        // ${file} - ${reason}
+      });
+    }
+    
+    if (result.errors.length > 0) {
+      // ERROR FILES:
+      result.errors.forEach(({ file, error }) => {
+        // ${file} - ${error}
+      });
+    }
+    
+    // Update cross-references if files were renamed
+    if (options.renameFiles && result.filenameMapping && result.filenameMapping.size > 0) {
+      await this.updateCrossReferences(result, outputDir, options.format || 'markdown');
+    }
+    
+    return result;
   }
 }
