@@ -1,7 +1,7 @@
 export interface ConversionOptions {
   format: 'markdown' | 'asciidoc' | 'zendesk';
   inputType: 'html' | 'word' | 'madcap';
-  preserveFormatting?: boolean;
+  preserveFormatting?: boolean; // Always defaults to true - formatting is always preserved
   extractImages?: boolean;
   outputDir?: string;
   outputPath?: string;
@@ -10,6 +10,7 @@ export interface ConversionOptions {
   zendeskOptions?: ZendeskConversionOptions;
   variableOptions?: VariableExtractionOptions;
   asciidocOptions?: AsciiDocConversionOptions;
+  validateLinks?: boolean;
 }
 
 export interface AsciiDocConversionOptions {
@@ -29,6 +30,7 @@ export interface VariableExtractionOptions {
   variablesOutputPath?: string; // Custom path for variables file
   variableFormat?: 'adoc' | 'writerside'; // Format for variables file
   preserveVariableStructure?: boolean; // Keep namespace/grouping structure
+  skipFileGeneration?: boolean; // Skip generating variables file (for batch processing)
 }
 
 export interface ZendeskConversionOptions {
@@ -56,6 +58,8 @@ export interface ConversionResult {
     warnings?: string[];
     variables?: ExtractedVariable[]; // Variables found during conversion
     zendeskMetadata?: ZendeskArticleMetadata;
+    brokenLinks?: any[]; // Link validation results if validation was performed
+    format?: string;
   };
 }
 
@@ -83,3 +87,19 @@ export interface DocumentConverter {
   convert(input: string | Buffer, options: ConversionOptions): Promise<ConversionResult>;
   supportedInputTypes: string[];
 }
+
+export interface BatchConversionOptions extends ConversionOptions {
+  recursive?: boolean;
+  preserveStructure?: boolean;
+  copyImages?: boolean;
+  renameFiles?: boolean;
+  includePatterns?: string[];
+  excludePatterns?: string[];
+  useTOCStructure?: boolean;
+  generateMasterDoc?: boolean;
+}
+
+// Re-export new types with correct names for backward compatibility
+export type AsciidocOptions = AsciiDocConversionOptions;
+export type VariableOptions = VariableExtractionOptions;
+export type ZendeskOptions = ZendeskConversionOptions;

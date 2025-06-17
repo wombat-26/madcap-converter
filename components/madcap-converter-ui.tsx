@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useCallback } from 'react'
+import React, { useState, useCallback, useEffect } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -23,7 +23,11 @@ import {
   Video,
   Image,
   Code,
-  RefreshCw
+  RefreshCw,
+  Upload,
+  FolderOpen,
+  AlertTriangle,
+  X
 } from 'lucide-react'
 import { MCPClient, ConversionOptions, ZendeskOptions, BatchConversionOptions, VariableExtractionOptions, AsciidocOptions } from '@/lib/mcp-client'
 
@@ -34,15 +38,23 @@ interface ConversionState {
   error?: string
 }
 
+interface NotificationState {
+  id: string
+  type: 'warning' | 'error' | 'info' | 'success'
+  title: string
+  message: string
+  autoHide?: boolean
+  duration?: number
+}
+
 export function MadCapConverterUI() {
   // Basic Options
   const [format, setFormat] = useState<'markdown' | 'asciidoc' | 'zendesk'>('zendesk')
   const [inputType, setInputType] = useState<'html' | 'word' | 'madcap'>('madcap')
-  const [preserveFormatting, setPreserveFormatting] = useState(true)
   const [extractImages, setExtractImages] = useState(true)
 
   // File/Folder Paths
-  const [inputPath, setInputPath] = useState('/Volumes/Envoy Pro/Flare/Plan_EN/')
+  const [inputPath, setInputPath] = useState('/Volumes/Envoy Pro/Flare/Plan_EN/Content')
   const [outputPath, setOutputPath] = useState('/Volumes/Envoy Pro/target')
 
   // Batch Options
@@ -97,8 +109,266 @@ export function MadCapConverterUI() {
   const [conversionState, setConversionState] = useState<ConversionState>({
     isConverting: false
   })
+  const [isDragOverSource, setIsDragOverSource] = useState(false)
+  const [isDragOverTarget, setIsDragOverTarget] = useState(false)
+  const [notifications, setNotifications] = useState<NotificationState[]>([])
 
   const mcpClient = new MCPClient('/api/mcp')
+
+  // Notification management
+  const addNotification = useCallback((notification: Omit<NotificationState, 'id'>) => {
+    const id = Date.now().toString()
+    const newNotification: NotificationState = { 
+      id, 
+      autoHide: true, 
+      duration: 5000,
+      ...notification 
+    }
+    
+    setNotifications(prev => [...prev, newNotification])
+    
+    if (newNotification.autoHide) {
+      setTimeout(() => {
+        removeNotification(id)
+      }, newNotification.duration)
+    }
+  }, [])
+
+  const removeNotification = useCallback((id: string) => {
+    setNotifications(prev => prev.filter(notification => notification.id !== id))
+  }, [])
+
+  // Check for path conflicts and show warnings
+  useEffect(() => {
+    // Remove any existing path warning notifications
+    setNotifications(prev => prev.filter(notification => 
+      notification.title !== 'Path Conflict Warning'
+    ))
+    
+    // Check if input and output paths are the same (and both are non-empty)
+    if (inputPath && outputPath && inputPath.trim() === outputPath.trim()) {
+      addNotification({
+        type: 'warning',
+        title: 'Path Conflict Warning',
+        message: 'Input and output paths are the same. This may overwrite your source files!',
+        autoHide: false // Don't auto-hide this important warning
+      })
+    }
+  }, [inputPath, outputPath, addNotification])
+
+  // File drop and dialog handlers
+  const handleDragOver = useCallback((e: React.DragEvent, isSource: boolean) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (isSource) {
+      setIsDragOverSource(true)
+    } else {
+      setIsDragOverTarget(true)
+    }
+  }, [])
+
+  const handleDragLeave = useCallback((e: React.DragEvent, isSource: boolean) => {
+    e.preventDefault()
+    e.stopPropagation()
+    if (isSource) {
+      setIsDragOverSource(false)
+    } else {
+      setIsDragOverTarget(false)
+    }
+  }, [])
+
+  const handleDrop = useCallback(async (e: React.DragEvent, isSource: boolean) => {
+    e.preventDefault()
+    e.stopPropagation()
+    
+    if (isSource) {
+      setIsDragOverSource(false)
+    } else {
+      setIsDragOverTarget(false)
+    }
+
+    // Try to get directory path from dropped items
+    const items = Array.from(e.dataTransfer.items)
+    const files = Array.from(e.dataTransfer.files)
+    
+    // First, try to extract path from files with webkitRelativePath (when folder is dropped)
+    if (files.length > 0) {
+      const file = files[0]
+      const relativePath = (file as any).webkitRelativePath
+      
+      if (relativePath) {
+        // Extract the full directory path from the relative path
+        const pathParts = relativePath.split('/')
+        if (pathParts.length > 1) {
+          // For drag and drop, we only get the relative path
+          // User needs to provide the full path or use the file dialog
+          const dirPath = pathParts.join('/')
+          if (isSource) {
+            // Show notification about needing full path
+            addNotification({
+              type: 'info',
+              title: 'Path Update Needed',
+              message: `Dropped folder: "${dirPath}". Please update with the full absolute path for conversion.`,
+              autoHide: true,
+              duration: 7000
+            })
+            setInputPath(dirPath)
+          } else {
+            setOutputPath(dirPath)
+          }
+          return
+        }
+      }
+    }
+
+    // Try directory entry API for modern browsers
+    for (const item of items) {
+      if (item.kind === 'file') {
+        // Check if this is a directory entry (modern browsers)
+        const entry = (item as any).webkitGetAsEntry?.() || (item as any).getAsEntry?.()
+        
+        if (entry && entry.isDirectory) {
+          // For directories, use the directory name (browsers don't expose full system paths)
+          const path = entry.name
+          if (isSource) {
+            // Show notification about needing full path
+            addNotification({
+              type: 'info',
+              title: 'Path Update Needed',
+              message: `Dropped folder: "${path}". Please update with the full absolute path for conversion.`,
+              autoHide: true,
+              duration: 7000
+            })
+            setInputPath(path)
+          } else {
+            setOutputPath(path)
+          }
+          return
+        }
+      }
+    }
+
+    // Final fallback to file-based path extraction
+    if (files.length > 0) {
+      const file = files[0]
+      
+      if (isSource) {
+        // For source, use the file name (let user manually edit to directory path)
+        const fileName = file.name
+        // Remove file extension and suggest as directory name
+        const baseName = fileName.replace(/\.[^/.]+$/, '')
+        setInputPath(baseName)
+      } else {
+        // For target, use current directory or file name without extension
+        const fileName = file.name
+        const baseName = fileName.replace(/\.[^/.]+$/, '')
+        setOutputPath(baseName)
+      }
+    }
+  }, [])
+
+  const openFileDialog = useCallback(async (isSource: boolean, isDirectory: boolean = true) => {
+    try {
+      // Check if we're running in an Electron environment or browser with File System Access API
+      if ('showDirectoryPicker' in window && isDirectory) {
+        // Modern browsers with File System Access API
+        const dirHandle = await (window as any).showDirectoryPicker()
+        const path = dirHandle.name
+        if (isSource) {
+          setInputPath(path)
+        } else {
+          setOutputPath(path)
+        }
+      } else if ('showOpenFilePicker' in window && !isDirectory) {
+        // File picker for single files
+        const [fileHandle] = await (window as any).showOpenFilePicker({
+          multiple: false,
+          types: [
+            {
+              description: 'MadCap files',
+              accept: {
+                'text/html': ['.htm', '.html'],
+                'application/xml': ['.flsnp', '.flvar', '.fltoc'],
+                'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+                'application/msword': ['.doc']
+              }
+            }
+          ]
+        })
+        const file = await fileHandle.getFile()
+        if (isSource) {
+          setInputPath(file.name)
+        }
+      } else {
+        // Fallback to traditional file input
+        const input = document.createElement('input')
+        input.type = 'file'
+        
+        if (isDirectory) {
+          // For directory selection, we need to inform the user about the browser limitation
+          const userConfirmed = confirm(
+            `Your browser doesn't support modern directory selection. ` +
+            `The file picker will ask you to select files from the directory to extract the path. ` +
+            `This will NOT upload the files - only the directory path will be used. ` +
+            `Continue?`
+          )
+          
+          if (!userConfirmed) {
+            return
+          }
+          
+          (input as any).webkitdirectory = true
+          input.multiple = true
+        } else {
+          input.accept = '.htm,.html,.flsnp,.flvar,.fltoc,.docx,.doc'
+        }
+        
+        input.onchange = (e) => {
+          const files = (e.target as HTMLInputElement).files
+          if (files && files.length > 0) {
+            const file = files[0]
+            
+            if (isDirectory) {
+              // Extract directory path from selected files - don't process file contents
+              const relativePath = file.webkitRelativePath || file.name
+              if (relativePath.includes('/')) {
+                // Get the full directory path, not just the root
+                const pathParts = relativePath.split('/')
+                pathParts.pop() // Remove the filename
+                const fullDirPath = pathParts.join('/')
+                if (isSource) {
+                  setInputPath(fullDirPath)
+                } else {
+                  setOutputPath(fullDirPath)
+                }
+              } else {
+                // Single file selected, use its name without extension as directory hint
+                const fileName = file.name
+                const baseName = fileName.replace(/\.[^/.]+$/, '')
+                if (isSource) {
+                  setInputPath(baseName)
+                } else {
+                  setOutputPath(baseName)
+                }
+              }
+            } else {
+              // Single file selection
+              const path = file.name
+              if (isSource) {
+                setInputPath(path)
+              } else {
+                setOutputPath(path)
+              }
+            }
+          }
+        }
+        
+        input.click()
+      }
+    } catch (error) {
+      console.warn('File dialog cancelled or not supported:', error)
+    }
+  }, [])
 
   const handleSingleFileConversion = useCallback(async () => {
     setConversionState({ isConverting: true })
@@ -111,7 +381,7 @@ export function MadCapConverterUI() {
       const options: ConversionOptions = {
         format,
         inputType,
-        preserveFormatting,
+        preserveFormatting: true,  // Always preserve formatting
         extractImages,
         variableOptions: (format === 'asciidoc' || format === 'markdown') && variableOptions.extractVariables ? variableOptions : undefined,
         zendeskOptions: format === 'zendesk' ? zendeskOptions : undefined,
@@ -133,7 +403,7 @@ export function MadCapConverterUI() {
         error: error instanceof Error ? error.message : 'Unknown error' 
       })
     }
-  }, [format, inputType, preserveFormatting, extractImages, variableOptions, zendeskOptions, asciidocOptions, inputPath, outputPath, mcpClient])
+  }, [format, inputType, extractImages, variableOptions, zendeskOptions, asciidocOptions, inputPath, outputPath, mcpClient])
 
   const handleFolderConversion = useCallback(async () => {
     setConversionState({ isConverting: true })
@@ -146,7 +416,7 @@ export function MadCapConverterUI() {
       const options: BatchConversionOptions = {
         format,
         // Don't include inputType for folder conversion - let the server auto-detect
-        preserveFormatting,
+        preserveFormatting: true,  // Always preserve formatting
         extractImages,
         recursive,
         preserveStructure,
@@ -175,7 +445,7 @@ export function MadCapConverterUI() {
       })
     }
   }, [
-    format, preserveFormatting, extractImages, recursive, 
+    format, extractImages, recursive, 
     preserveStructure, copyImages, renameFiles, includePatterns, excludePatterns, 
     useTOCStructure, generateMasterDoc, variableOptions, zendeskOptions, asciidocOptions, inputPath, outputPath, mcpClient
   ])
@@ -224,6 +494,155 @@ export function MadCapConverterUI() {
     }
   }, [inputPath, mcpClient])
 
+  // Notification Tile Component
+  const NotificationTile = ({ notification }: { notification: NotificationState }) => {
+    const getIcon = () => {
+      switch (notification.type) {
+        case 'warning':
+          return <AlertTriangle className="w-5 h-5 text-amber-500" />
+        case 'error':
+          return <AlertTriangle className="w-5 h-5 text-red-500" />
+        case 'success':
+          return <AlertTriangle className="w-5 h-5 text-green-500" />
+        default:
+          return <AlertTriangle className="w-5 h-5 text-blue-500" />
+      }
+    }
+
+    const getBgColor = () => {
+      switch (notification.type) {
+        case 'warning':
+          return 'bg-amber-50 border-amber-200 dark:bg-amber-950/20 dark:border-amber-800'
+        case 'error':
+          return 'bg-red-50 border-red-200 dark:bg-red-950/20 dark:border-red-800'
+        case 'success':
+          return 'bg-green-50 border-green-200 dark:bg-green-950/20 dark:border-green-800'
+        default:
+          return 'bg-blue-50 border-blue-200 dark:bg-blue-950/20 dark:border-blue-800'
+      }
+    }
+
+    return (
+      <div 
+        className={`
+          max-w-md p-4 rounded-lg border shadow-lg 
+          transform transition-all duration-300 ease-in-out
+          animate-in slide-in-from-right
+          ${getBgColor()}
+        `}
+      >
+        <div className="flex items-start gap-3">
+          {getIcon()}
+          <div className="flex-1 min-w-0">
+            <h4 className="font-medium text-sm">{notification.title}</h4>
+            <p className="text-sm text-muted-foreground mt-1">{notification.message}</p>
+          </div>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => removeNotification(notification.id)}
+            className="h-6 w-6 p-0 flex-shrink-0"
+          >
+            <X className="w-4 h-4" />
+          </Button>
+        </div>
+      </div>
+    )
+  }
+
+  // File Drop Zone Component
+  const FileDropZone = ({ 
+    value, 
+    onChange, 
+    isSource, 
+    placeholder, 
+    label,
+    isDirectory = true,
+    accept = ""
+  }: {
+    value: string
+    onChange: (value: string) => void
+    isSource: boolean
+    placeholder: string
+    label: string
+    isDirectory?: boolean
+    accept?: string
+  }) => {
+    const isDragOver = isSource ? isDragOverSource : isDragOverTarget
+    
+    return (
+      <div className="space-y-2">
+        <Label>{label}</Label>
+        <div
+          className={`
+            relative border-2 border-dashed rounded-lg p-6 transition-all duration-200 cursor-pointer
+            ${isDragOver 
+              ? 'border-blue-400 bg-blue-50 dark:bg-blue-950/20' 
+              : 'border-gray-300 hover:border-gray-400 dark:border-gray-600 dark:hover:border-gray-500'
+            }
+          `}
+          onDragOver={(e) => handleDragOver(e, isSource)}
+          onDragLeave={(e) => handleDragLeave(e, isSource)}
+          onDrop={(e) => handleDrop(e, isSource)}
+          onClick={() => openFileDialog(isSource, isDirectory)}
+        >
+          <div className="flex flex-col items-center justify-center space-y-3">
+            <div className="flex items-center space-x-2 text-gray-500 dark:text-gray-400">
+              {isDirectory ? (
+                <Folder className="w-8 h-8" />
+              ) : (
+                <FileText className="w-8 h-8" />
+              )}
+              <Upload className="w-6 h-6" />
+            </div>
+            
+            <div className="text-center">
+              <p className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                {isDragOver 
+                  ? `Drop ${isDirectory ? 'folder' : 'file'} here` 
+                  : `Drag & drop ${isDirectory ? 'folder' : 'file'} here`
+                }
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                or click to browse
+                {accept && ` (${accept})`}
+              </p>
+            </div>
+          </div>
+          
+          {value && (
+            <div className="absolute inset-x-0 bottom-0 bg-gray-50 dark:bg-gray-800 px-3 py-2 rounded-b-lg border-t">
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-600 dark:text-gray-400 truncate flex-1">
+                  {value}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    onChange('')
+                  }}
+                  className="h-6 w-6 p-0 ml-2"
+                >
+                  ×
+                </Button>
+              </div>
+            </div>
+          )}
+        </div>
+        
+        {/* Fallback input for manual entry */}
+        <Input
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          placeholder={placeholder}
+          className="mt-2"
+        />
+      </div>
+    )
+  }
+
   return (
     <div className="container mx-auto p-6 max-w-6xl">
       <div className="mb-8 flex justify-between items-start">
@@ -240,7 +659,7 @@ export function MadCapConverterUI() {
         </div>
         <div className="flex-shrink-0">
           <img 
-            src="/logo.png" 
+            src="/images/logo.png" 
             alt="MadCap Converter Logo" 
             width="80" 
             height="80" 
@@ -289,25 +708,24 @@ export function MadCapConverterUI() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="input-path">Input Directory</Label>
-                  <Input
-                    id="input-path"
-                    value={inputPath}
-                    onChange={(e) => setInputPath(e.target.value)}
-                    placeholder="/path/to/madcap/content"
-                  />
-                </div>
+                <FileDropZone
+                  value={inputPath}
+                  onChange={setInputPath}
+                  isSource={true}
+                  placeholder="/absolute/path/to/madcap/Content"
+                  label="Input Directory (Full Path Required)"
+                  isDirectory={true}
+                  accept=".htm,.html,.flsnp,.flvar,.fltoc"
+                />
                 
-                <div className="space-y-2">
-                  <Label htmlFor="output-path">Output Directory</Label>
-                  <Input
-                    id="output-path"
-                    value={outputPath}
-                    onChange={(e) => setOutputPath(e.target.value)}
-                    placeholder="/path/to/output"
-                  />
-                </div>
+                <FileDropZone
+                  value={outputPath}
+                  onChange={setOutputPath}
+                  isSource={false}
+                  placeholder="/absolute/path/to/output"
+                  label="Output Directory (Full Path Required)"
+                  isDirectory={true}
+                />
 
                 <div className="space-y-2">
                   <Label htmlFor="format">Output Format</Label>
@@ -424,18 +842,6 @@ export function MadCapConverterUI() {
                   />
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Preserve Formatting</Label>
-                    <div className="text-sm text-muted-foreground">
-                      Maintain original styles
-                    </div>
-                  </div>
-                  <Switch
-                    checked={preserveFormatting}
-                    onCheckedChange={setPreserveFormatting}
-                  />
-                </div>
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
@@ -1108,25 +1514,24 @@ export function MadCapConverterUI() {
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-4">
-                <div className="space-y-2">
-                  <Label htmlFor="single-input">Input File Path</Label>
-                  <Input
-                    id="single-input"
-                    value={inputPath}
-                    onChange={(e) => setInputPath(e.target.value)}
-                    placeholder="/path/to/input/file.htm"
-                  />
-                </div>
+                <FileDropZone
+                  value={inputPath}
+                  onChange={setInputPath}
+                  isSource={true}
+                  placeholder="/path/to/input/file.htm"
+                  label="Input File"
+                  isDirectory={false}
+                  accept=".htm,.html,.flsnp,.docx,.doc"
+                />
                 
-                <div className="space-y-2">
-                  <Label htmlFor="single-output">Output File Path</Label>
-                  <Input
-                    id="single-output"
-                    value={outputPath}
-                    onChange={(e) => setOutputPath(e.target.value)}
-                    placeholder="/path/to/output/file.html"
-                  />
-                </div>
+                <FileDropZone
+                  value={outputPath}
+                  onChange={setOutputPath}
+                  isSource={false}
+                  placeholder="/path/to/output/file.html"
+                  label="Output File"
+                  isDirectory={false}
+                />
 
                 <Button 
                   onClick={handleSingleFileConversion}
@@ -1198,18 +1603,6 @@ export function MadCapConverterUI() {
                   </Select>
                 </div>
 
-                <div className="flex items-center justify-between">
-                  <div className="space-y-0.5">
-                    <Label>Preserve Formatting</Label>
-                    <div className="text-sm text-muted-foreground">
-                      Maintain original styles
-                    </div>
-                  </div>
-                  <Switch
-                    checked={preserveFormatting}
-                    onCheckedChange={setPreserveFormatting}
-                  />
-                </div>
 
                 <div className="flex items-center justify-between">
                   <div className="space-y-0.5">
@@ -1606,15 +1999,15 @@ export function MadCapConverterUI() {
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <Label htmlFor="analyze-path">Directory to Analyze</Label>
-                <Input
-                  id="analyze-path"
-                  value={inputPath}
-                  onChange={(e) => setInputPath(e.target.value)}
-                  placeholder="/path/to/madcap/content"
-                />
-              </div>
+              <FileDropZone
+                value={inputPath}
+                onChange={setInputPath}
+                isSource={true}
+                placeholder="/absolute/path/to/madcap/Content"
+                label="Directory to Analyze (Full Path Required)"
+                isDirectory={true}
+                accept=".htm,.html,.flsnp,.flvar,.fltoc"
+              />
 
               <Button 
                 onClick={handleAnalyzeFolder}
@@ -1650,6 +2043,21 @@ export function MadCapConverterUI() {
           </CardContent>
         </Card>
       )}
+
+      {/* Notifications */}
+      {notifications.map((notification, index) => (
+        <div 
+          key={notification.id}
+          style={{ 
+            top: `${16 + index * 80}px`,
+            position: 'fixed',
+            right: '16px',
+            zIndex: 50
+          }}
+        >
+          <NotificationTile notification={notification} />
+        </div>
+      ))}
 
     </div>
   )

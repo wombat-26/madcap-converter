@@ -506,7 +506,8 @@ export class BatchService {
     
     switch (format) {
       case 'adoc':
-        return join(dir, 'variables.adoc');
+        // Use includes directory for AsciiDoc variables following best practices
+        return join(dir, 'includes', 'includes.adoc');
       case 'writerside':
         return join(dir, 'variables.xml');
       default:
@@ -622,6 +623,19 @@ export class BatchService {
     let variablesFileWritten = false;
     let imageDirectoriesCopied = false;
     
+    // Create a shared variable extractor for batch processing
+    const { VariableExtractor } = await import('./services/variable-extractor.js');
+    const batchVariableExtractor = options.variableOptions?.extractVariables 
+      ? new VariableExtractor()
+      : null;
+    
+    // Extract all variables from .flvar files in the Flare project
+    if (batchVariableExtractor) {
+      console.log('Extracting variables from all .flvar files in the project...');
+      await batchVariableExtractor.extractAllVariablesFromProject(inputDir);
+      console.log(`Found ${batchVariableExtractor.getVariables().length} variables from .flvar files`);
+    }
+    
     // Process each file according to TOC mapping
     for (const [originalPath, targetPath] of fileMapping.entries()) {
       try {
@@ -687,12 +701,17 @@ export class BatchService {
         
         const conversionOptions: ConversionOptions = {
           format: options.format || 'markdown',
+          inputPath: actualInputPath,
+          outputPath: relative(outputDir, finalOutputPath), // Add relative output path for variables include
           inputType: this.determineInputType(extname(actualInputPath).toLowerCase().slice(1)),
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
           outputDir: dirname(finalOutputPath),
           rewriteLinks: true,
-          variableOptions: options.variableOptions,
+          variableOptions: options.variableOptions ? {
+            ...options.variableOptions,
+            skipFileGeneration: true // Prevent individual files from generating variables files
+          } : undefined,
           zendeskOptions: options.zendeskOptions
         };
 
@@ -708,15 +727,11 @@ export class BatchService {
           stylesheetWritten = true;
         }
 
-        // Handle variables file generation (write only once per batch)
-        if (conversionResult.variablesFile && options.variableOptions?.extractVariables && !variablesFileWritten) {
-          // For book generation, always put variables file in root output directory
-          const variablesPath = options.variableOptions.variablesOutputPath || 
-                               (options.asciidocOptions?.generateAsBook 
-                                 ? join(outputDir, 'variables.adoc')
-                                 : this.getDefaultVariablesPath(finalOutputPath, options.variableOptions.variableFormat));
-          await writeFile(variablesPath, conversionResult.variablesFile, 'utf8');
-          variablesFileWritten = true;
+        // Collect variables from this file if extraction is enabled
+        if (batchVariableExtractor && conversionResult.metadata?.variables) {
+          for (const variable of conversionResult.metadata.variables) {
+            batchVariableExtractor.addVariable(variable);
+          }
         }
 
         if (options.copyImages) {
@@ -752,6 +767,21 @@ export class BatchService {
           file: originalPath,
           error: errorMessage
         });
+      }
+    }
+    
+    // Write combined variables file at the end if extraction is enabled
+    if (batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten) {
+      const variablesFile = batchVariableExtractor.generateVariablesFile(options.variableOptions);
+      if (variablesFile) {
+        // Create includes directory and save variables there
+        const includesDir = join(outputDir, 'includes');
+        await this.ensureDirectoryExists(includesDir);
+        const variablesPath = options.variableOptions.variablesOutputPath || 
+                             join(includesDir, 'includes.adoc');
+        await writeFile(variablesPath, variablesFile, 'utf8');
+        // Log combined variables info
+        console.log(`Generated combined variables file with ${batchVariableExtractor.getVariables().length} unique variables`);
       }
     }
     
@@ -955,7 +985,7 @@ export class BatchService {
     // Include variables file if it exists
     if (options.variableOptions?.extractVariables) {
       content += `// Include variables file\n`;
-      content += `include::variables.adoc[]\n\n`;
+      content += `include::includes/variables.adoc[]\n\n`;
     }
     
     // Group files by directory structure and include them
@@ -1675,6 +1705,19 @@ export class BatchService {
     let stylesheetWritten = false;
     let variablesFileWritten = false;
     let imageDirectoriesCopied = false;
+    
+    // Create a shared variable extractor for batch processing
+    const { VariableExtractor } = await import('./services/variable-extractor.js');
+    const batchVariableExtractor = options.variableOptions?.extractVariables 
+      ? new VariableExtractor()
+      : null;
+    
+    // Extract all variables from .flvar files in the Flare project
+    if (batchVariableExtractor) {
+      console.log('Extracting variables from all .flvar files in the project...');
+      await batchVariableExtractor.extractAllVariablesFromProject(inputDir);
+      console.log(`Found ${batchVariableExtractor.getVariables().length} variables from .flvar files`);
+    }
 
     for (const inputPath of files) {
       try {
@@ -1711,12 +1754,17 @@ export class BatchService {
 
         const conversionOptions: ConversionOptions = {
           format: options.format || 'markdown',
+          inputPath: inputPath,
+          outputPath: relative(outputDir, outputPath), // Add relative output path for variables include
           inputType: this.determineInputType(extname(inputPath).toLowerCase().slice(1)),
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
           outputDir: dirname(outputPath),
           rewriteLinks: true,  // Enable link rewriting for batch conversions
-          variableOptions: options.variableOptions,
+          variableOptions: options.variableOptions ? {
+            ...options.variableOptions,
+            skipFileGeneration: true // Prevent individual files from generating variables files
+          } : undefined,
           zendeskOptions: options.zendeskOptions
         };
 
@@ -1732,12 +1780,11 @@ export class BatchService {
           stylesheetWritten = true;
         }
 
-        // Handle variables file generation (write only once per batch)
-        if (conversionResult.variablesFile && options.variableOptions?.extractVariables && !variablesFileWritten) {
-          const variablesPath = options.variableOptions.variablesOutputPath || 
-                               this.getDefaultVariablesPath(outputPath, options.variableOptions.variableFormat);
-          await writeFile(variablesPath, conversionResult.variablesFile, 'utf8');
-          variablesFileWritten = true;
+        // Collect variables from this file if extraction is enabled
+        if (batchVariableExtractor && conversionResult.metadata?.variables) {
+          for (const variable of conversionResult.metadata.variables) {
+            batchVariableExtractor.addVariable(variable);
+          }
         }
 
         if (options.copyImages) {
@@ -1795,6 +1842,21 @@ export class BatchService {
       result.errors.forEach(({ file, error }) => {
         // ${file} - ${error}
       });
+    }
+    
+    // Write combined variables file at the end if extraction is enabled
+    if (batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten) {
+      const variablesFile = batchVariableExtractor.generateVariablesFile(options.variableOptions);
+      if (variablesFile) {
+        // Create includes directory and save variables there
+        const includesDir = join(outputDir, 'includes');
+        await this.ensureDirectoryExists(includesDir);
+        const variablesPath = options.variableOptions.variablesOutputPath || 
+                             join(includesDir, 'includes.adoc');
+        await writeFile(variablesPath, variablesFile, 'utf8');
+        // Log combined variables info
+        console.log(`Generated combined variables file with ${batchVariableExtractor.getVariables().length} unique variables`);
+      }
     }
     
     // Update cross-references if files were renamed

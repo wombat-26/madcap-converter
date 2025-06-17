@@ -11,12 +11,31 @@ export class MadCapPreprocessor {
   private variableCache: Map<string, Map<string, string>> = new Map();
   private loadedSnippets: Set<string> = new Set();
   private snippetCache: Map<string, string> = new Map();
+  private extractVariables: boolean = false;
+  private extractedVariables: Map<string, { name: string; value: string }> = new Map();
   
   // File content cache for performance
   private static readonly MAX_CACHE_SIZE = 500;
   private static fileContentCache = new Map<string, { content: string; mtime: number }>();
 
   constructor() {}
+
+  /**
+   * Set whether to extract variables instead of resolving them
+   */
+  setExtractVariables(extract: boolean): void {
+    this.extractVariables = extract;
+    if (extract) {
+      this.extractedVariables.clear(); // Clear previous extraction
+    }
+  }
+
+  /**
+   * Get extracted variables from the last preprocessing
+   */
+  getExtractedVariables(): { name: string; value: string }[] {
+    return Array.from(this.extractedVariables.values());
+  }
 
   /**
    * Main preprocessing method - cleans up MadCap elements, resolves variables, processes snippets
@@ -45,6 +64,9 @@ export class MadCapPreprocessor {
     
     // Batch process all MadCap elements in one pass
     await this.processMadCapElementsBatch(document, inputPath);
+    
+    // Clean up DOM structure for all converters
+    this.cleanupDOMStructure(document);
     
     return document.documentElement.outerHTML;
   }
@@ -289,12 +311,33 @@ export class MadCapPreprocessor {
             this.snippetCache.set(snippetPath, snippetContent);
           }
           
-          // Create container for snippet content
-          const div = element.ownerDocument.createElement('div');
-          div.className = 'snippet-content';
-          div.innerHTML = snippetContent;
+          // Parse snippet content with JSDOM and extract body children with boundary preservation
+          const snippetDom = new JSDOM(snippetContent, { contentType: 'text/html' });
+          const snippetBody = snippetDom.window.document.body;
           
-          element.parentNode?.replaceChild(div, element);
+          if (snippetBody && element.parentNode) {
+            // Wrap snippet content in a container to preserve boundaries
+            const snippetContainer = element.ownerDocument.createElement('div');
+            snippetContainer.className = 'snippet-boundary';
+            
+            // Insert body children into the container, maintaining structure
+            const children = Array.from(snippetBody.children);
+            for (const child of children) {
+              // Import the node into the target document
+              const importedNode = element.ownerDocument.importNode(child, true);
+              snippetContainer.appendChild(importedNode);
+            }
+            
+            // Insert the container and remove the original snippet element
+            element.parentNode.insertBefore(snippetContainer, element);
+            element.parentNode.removeChild(element);
+          } else {
+            // Fallback: use the old method if no body found
+            const div = element.ownerDocument.createElement('div');
+            div.className = 'snippet-content';
+            div.innerHTML = snippetContent;
+            element.parentNode?.replaceChild(div, element);
+          }
           
         } catch (error) {
           console.warn(`Could not load snippet ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
@@ -529,10 +572,24 @@ export class MadCapPreprocessor {
         const textNode = element.ownerDocument.createTextNode(textContent);
         element.parentNode?.replaceChild(textNode, element);
       } else if (variableName) {
-        // Try to resolve the variable
-        const resolvedValue = this.resolveVariable(variableName);
-        const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
-        element.parentNode?.replaceChild(textNode, element);
+        // Check if we should extract variables instead of resolving them
+        if (this.extractVariables) {
+          // For extraction mode: resolve the variable to get its actual value for the variables file
+          const resolvedValue = this.resolveVariable(variableName);
+          if (resolvedValue) {
+            // Store the extracted variable for later retrieval
+            this.extractedVariables.set(variableName, { name: variableName, value: resolvedValue });
+          }
+          // Convert variable reference to AsciiDoc attribute format
+          const asciidocVariableName = this.convertToAsciiDocAttributeName(variableName);
+          const textNode = element.ownerDocument.createTextNode(`{${asciidocVariableName}}`);
+          element.parentNode?.replaceChild(textNode, element);
+        } else {
+          // Try to resolve the variable
+          const resolvedValue = this.resolveVariable(variableName);
+          const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
+          element.parentNode?.replaceChild(textNode, element);
+        }
       } else {
         // If no variable name found, create placeholder
         const placeholder = `{Variable: ${element.outerHTML.substring(0, 50)}...}`;
@@ -551,10 +608,24 @@ export class MadCapPreprocessor {
       const variableName = element.getAttribute('name');
       
       if (variableName) {
-        // Try to resolve the variable
-        const resolvedValue = this.resolveVariable(variableName);
-        const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
-        element.parentNode?.replaceChild(textNode, element);
+        // Check if we should extract variables instead of resolving them
+        if (this.extractVariables) {
+          // For extraction mode: resolve the variable to get its actual value for the variables file
+          const resolvedValue = this.resolveVariable(variableName);
+          if (resolvedValue) {
+            // Store the extracted variable for later retrieval
+            this.extractedVariables.set(variableName, { name: variableName, value: resolvedValue });
+          }
+          // Convert variable reference to AsciiDoc attribute format
+          const asciidocVariableName = this.convertToAsciiDocAttributeName(variableName);
+          const textNode = element.ownerDocument.createTextNode(`{${asciidocVariableName}}`);
+          element.parentNode?.replaceChild(textNode, element);
+        } else {
+          // Try to resolve the variable
+          const resolvedValue = this.resolveVariable(variableName);
+          const textNode = element.ownerDocument.createTextNode(resolvedValue || `{${variableName}}`);
+          element.parentNode?.replaceChild(textNode, element);
+        }
       } else {
         // If no variable name found, create placeholder
         const placeholder = `{Variable: ${element.outerHTML.substring(0, 50)}...}`;
@@ -726,86 +797,34 @@ export class MadCapPreprocessor {
     
     // First, try to find the full variable path in the loaded variable sets
     for (const variables of this.variableCache.values()) {
-      // Try full variable reference (e.g., "admin.start_page")
-      if (variableRef.startsWith('Administration_ScreenCommands.')) {
-        const fullVarName = variableRef.substring('Administration_ScreenCommands.'.length);
-        const value = variables.get(fullVarName);
-        if (value) {
-          return value;
-        }
-      } else {
-        // For other variable sets, try the full reference
-        const value = variables.get(variableRef);
-        if (value) {
-          return value;
-        }
+      // Try the full reference
+      const value = variables.get(variableRef);
+      if (value) {
+        return value;
       }
       
       // Also try just the last part as a fallback
       const variableName = parts[parts.length - 1];
-      const value = variables.get(variableName);
-      if (value) {
-        return value;
+      const fallbackValue = variables.get(variableName);
+      if (fallbackValue) {
+        return fallbackValue;
       }
     }
     
-    // Enhanced fallback for common variables with the specific ones we need
-    const fallbackVariables: { [key: string]: string } = {
-      // General variables
-      'ProductName': 'Uptempo',
-      'CompanyShort': 'Uptempo',
-      'CompanyName': 'Uptempo GmbH',
-      'VersionNumber': 'October 2024',
-      
-      // Administration screen commands - specific to this file
-      'admin.start_page': 'Overview',
-      'admin.setup.app_and_module_names': 'App & Navigation Names',
-      'commons.save': 'Save',
-      'commons.discard.label': 'Discard',
-      
-      // Other administration screen commands
-      'admin.permission.admin_manage-user.name': 'Manage Users',
-      'admin.uptempo.user.new_account.label': 'New User',
-      'admin.uptempo.user_modal.tabs.account.label': 'Account',
-      'admin.user.first_name': 'First Name',
-      'admin.request_login.last_name': 'Last Name',
-      'commons.add_user_login': 'Login',
-      'admin.login.password': 'Password',
-      'admin.uptempo.user_modal.form.department.label': 'Department',
-      'admin.user_administration.organizational_unit': 'organizational units',
-      'admin.uptempo.user_modal.tabs.membership.label': 'Membership',
-      'admin.uptempo.user_modal.cards.storage_group.label': 'Storage Group',
-      'admin.uptempo.user_modal.change_storage_group.btn': 'Change Storage Group',
-      'admin.uptempo.user_drawer.assign_team.btn': 'Assign Team',
-      'admin.uptempo.user_drawer.permissions.label': 'Permissions',
-      'admin.uptempo.user_modal.assign_role.btn': 'Assign Role',
-      'admin.dmc.mpm.form.role': 'role',
-      'admin.dmc.mpm.roles.type.admin': 'Administrator',
-      'admin.user_configuration.title': 'User Configuration',
-      'admin.uptempo.user_page.start_module.label': 'Start Module',
-      'admin.uptempo.rights.create.confirm.btn': 'Create User'
-    };
-    
-    // For Administration_ScreenCommands variables, try removing the prefix
-    if (variableRef.startsWith('Administration_ScreenCommands.')) {
-      const adminVar = variableRef.substring('Administration_ScreenCommands.'.length);
-      if (fallbackVariables[adminVar]) {
-        return fallbackVariables[adminVar];
-      }
-    }
-    
-    // Try the full variable reference
-    if (fallbackVariables[variableRef]) {
-      return fallbackVariables[variableRef];
-    }
-    
-    // Try the simple variable name (last part)
-    const variableName = parts[parts.length - 1];
-    if (fallbackVariables[variableName]) {
-      return fallbackVariables[variableName];
-    }
+    // No fallbacks - rely entirely on MadCap project variable sets
     
     return null;
+  }
+
+  /**
+   * Convert MadCap variable name to AsciiDoc attribute name format
+   */
+  private convertToAsciiDocAttributeName(variableName: string): string {
+    // AsciiDoc attribute names must start with letter/underscore and contain only alphanumeric, hyphen, underscore
+    return variableName
+      .replace(/[^a-zA-Z0-9_-]/g, '_')
+      .replace(/^[^a-zA-Z_]/, '_')
+      .toLowerCase();
   }
 
   private async readFileWithCache(filePath: string): Promise<string> {
@@ -830,6 +849,303 @@ export class MadCapPreprocessor {
     } catch (error) {
       throw error; // Re-throw to maintain existing error handling
     }
+  }
+
+  /**
+   * Clean up DOM structure using pure JSDOM operations for all converters
+   * This centralizes DOM manipulation that was previously scattered across converters
+   */
+  private cleanupDOMStructure(document: Document): void {
+    // Fix malformed list nesting (sublists as siblings → children)
+    this.fixListNesting(document);
+    
+    // Separate mixed content in paragraphs  
+    this.separateMixedContent(document);
+    
+    // Normalize block structure and remove empty paragraphs
+    this.normalizeBlockStructure(document);
+  }
+
+  /**
+   * Fix malformed list nesting where sublists are siblings instead of children
+   * Uses pure JSDOM operations to restructure the DOM
+   */
+  private fixListNesting(document: Document): void {
+    // Find all list items that should have sublists as children
+    const allLists = Array.from(document.querySelectorAll('ol, ul'));
+    
+    for (const list of allLists) {
+      const listItems = Array.from(list.querySelectorAll(':scope > li'));
+      
+      for (let i = 0; i < listItems.length; i++) {
+        const currentLi = listItems[i];
+        let nextSibling = currentLi.nextElementSibling;
+        
+        // Check if the next sibling is a list that should be nested
+        while (nextSibling && (nextSibling.tagName.toLowerCase() === 'ol' || nextSibling.tagName.toLowerCase() === 'ul')) {
+          const currentText = currentLi.textContent?.trim() || '';
+          
+          // If current li ends with colon, nest the following list
+          if (currentText.endsWith(':')) {
+            const listToMove = nextSibling;
+            nextSibling = nextSibling.nextElementSibling; // Get next before moving
+            currentLi.appendChild(listToMove);
+          } else {
+            break;
+          }
+        }
+      }
+    }
+  }
+
+  /**
+   * Separate mixed content in paragraphs (images + text) into separate elements
+   * This creates clean DOM structure for converters to work with
+   */
+  private separateMixedContent(document: Document): void {
+    const paragraphs = Array.from(document.querySelectorAll('p'));
+    
+    for (const para of paragraphs) {
+      const hasImage = para.querySelector('img') !== null;
+      const hasText = Array.from(para.childNodes).some(node => 
+        node.nodeType === 3 && node.textContent?.trim() !== ''
+      );
+      
+      // Only process paragraphs with both images and meaningful text
+      if (hasImage && hasText) {
+        this.splitMixedContentParagraph(para);
+      }
+    }
+  }
+
+  /**
+   * Split a paragraph containing both images and text into separate elements
+   * Enhanced to detect bullet points and separate them properly
+   */
+  private splitMixedContentParagraph(para: Element): void {
+    const parent = para.parentNode;
+    if (!parent) return;
+    
+    const children = Array.from(para.childNodes);
+    let currentTextContent = '';
+    const elementsToInsert: Node[] = [];
+    
+    for (const child of children) {
+      if (child.nodeType === 3) { // TEXT_NODE
+        const text = child.textContent?.trim();
+        if (text) {
+          // Check if this text starts with a bullet point pattern
+          const bulletMatch = text.match(/^(\s*\*\s+)(.*)/);
+          if (bulletMatch && currentTextContent.trim()) {
+            // We found a bullet point - flush accumulated text first
+            const textPara = para.ownerDocument.createElement('p');
+            textPara.innerHTML = currentTextContent.trim();
+            elementsToInsert.push(textPara);
+            currentTextContent = '';
+            
+            // Create a list item for the bullet point
+            const ul = para.ownerDocument.createElement('ul');
+            const li = para.ownerDocument.createElement('li');
+            li.textContent = bulletMatch[2]; // Text after the bullet
+            ul.appendChild(li);
+            elementsToInsert.push(ul);
+          } else {
+            currentTextContent += text + ' ';
+          }
+        }
+      } else if (child.nodeType === 1) { // ELEMENT_NODE
+        const element = child as Element;
+        
+        if (element.tagName.toLowerCase() === 'img') {
+          // Flush accumulated text before the image
+          if (currentTextContent.trim()) {
+            const textPara = para.ownerDocument.createElement('p');
+            textPara.innerHTML = currentTextContent.trim();
+            elementsToInsert.push(textPara);
+            currentTextContent = '';
+          }
+          
+          // Create standalone paragraph for the image if it's a block image
+          if (this.isBlockImage(element)) {
+            const imgPara = para.ownerDocument.createElement('p');
+            imgPara.appendChild(element.cloneNode(true));
+            elementsToInsert.push(imgPara);
+          } else {
+            // For inline images, include in the next text block
+            currentTextContent += element.outerHTML + ' ';
+          }
+        } else {
+          // Other elements become part of text content
+          currentTextContent += element.outerHTML + ' ';
+        }
+      }
+    }
+    
+    // Flush any remaining text
+    if (currentTextContent.trim()) {
+      const textPara = para.ownerDocument.createElement('p');
+      textPara.innerHTML = currentTextContent.trim();
+      elementsToInsert.push(textPara);
+    }
+    
+    // Replace the original paragraph with the separated elements
+    if (elementsToInsert.length > 0) {
+      for (const element of elementsToInsert) {
+        parent.insertBefore(element, para);
+      }
+      parent.removeChild(para);
+    }
+  }
+
+  /**
+   * Determine if an image should be treated as a block image
+   * Uses the same logic as the enhanced-list-processor but in pure DOM
+   */
+  private isBlockImage(img: Element): boolean {
+    // Check for IconInline class
+    const className = img.getAttribute('class') || img.className || '';
+    if (className.includes('IconInline')) {
+      return false;
+    }
+    
+    // Check image source for UI patterns
+    const src = img.getAttribute('src') || '';
+    const isUIIcon = /\/(GUI|gui|Icon|icon|Button|button)/i.test(src);
+    const isScreenshot = /\/(Screens|screens|Screenshots|screenshots)/i.test(src) ||
+                         src.includes('CreateActivity') ||
+                         src.includes('AddFundingSource') ||
+                         src.includes('InvestItem') ||
+                         src.includes('BudgetTab') ||
+                         src.includes('FundingSource');
+    
+    // Screenshots should always be block
+    if (isScreenshot) {
+      return true;
+    }
+    
+    // UI icons are typically inline
+    if (isUIIcon) {
+      return false;
+    }
+    
+    // Check dimensions
+    const width = img.getAttribute('width');
+    const height = img.getAttribute('height');
+    if (width && height) {
+      const w = parseInt(width);
+      const h = parseInt(height);
+      if (w <= 32 && h <= 32) {
+        return false;
+      }
+    }
+    
+    // Default to block for larger images
+    return true;
+  }
+
+  /**
+   * Normalize block structure and remove problematic empty paragraphs
+   */
+  private normalizeBlockStructure(document: Document): void {
+    // Skip text node whitespace normalization - it breaks block element detection
+    // this.normalizeTextNodeWhitespace(document);
+    
+    // Remove empty paragraphs that don't contain images
+    const emptyParagraphs = Array.from(document.querySelectorAll('p')).filter(p => {
+      const text = p.textContent?.trim() || '';
+      const hasImage = p.querySelector('img') !== null;
+      return text.length === 0 && !hasImage;
+    });
+    
+    emptyParagraphs.forEach(p => p.remove());
+    
+    // Convert common HTML formatting to clean structure for AsciiDoc
+    this.normalizeHtmlFormatting(document);
+    
+    // Ensure proper spacing between block elements
+    const blockElements = Array.from(document.querySelectorAll('p, ul, ol, dl, blockquote, h1, h2, h3, h4, h5, h6'));
+    for (let i = 0; i < blockElements.length - 1; i++) {
+      const current = blockElements[i];
+      const next = blockElements[i + 1];
+      
+      // Ensure there's proper separation between consecutive block elements
+      if (current.nextSibling === next && current.parentNode === next.parentNode) {
+        // They're direct siblings - this is fine for DOM processing
+        continue;
+      }
+    }
+  }
+
+  /**
+   * Normalize trailing whitespace in all text nodes throughout the document
+   * This ensures consistent formatting before conversion processing
+   */
+  private normalizeTextNodeWhitespace(document: Document): void {
+    const walker = document.createTreeWalker(
+      document.body || document.documentElement,
+      4 // NodeFilter.SHOW_TEXT
+    );
+    
+    let textNode;
+    while (textNode = walker.nextNode()) {
+      if (textNode.nodeType === 3) { // TEXT_NODE
+        const originalText = textNode.textContent || '';
+        
+        // Normalize whitespace patterns:
+        // 1. Remove excessive whitespace (multiple spaces/tabs/newlines)
+        // 2. Preserve single spaces between words
+        // 3. Remove leading/trailing whitespace from text nodes
+        // 4. Preserve meaningful paragraph breaks
+        
+        let normalizedText;
+        
+        // Special handling for text nodes that are only whitespace
+        if (originalText.match(/^\s+$/)) {
+          if (originalText.includes('\n')) {
+            // This was likely a meaningful paragraph break - preserve as single space
+            normalizedText = ' ';
+          } else {
+            // Pure whitespace without line breaks - preserve minimal spacing
+            normalizedText = originalText.length > 1 ? ' ' : originalText;
+          }
+        } else {
+          // For text with actual content, be more conservative with whitespace
+          // Don't normalize whitespace for text nodes - this breaks block element detection
+          normalizedText = originalText;
+        }
+        
+        // Only update if the text actually changed
+        if (normalizedText !== originalText) {
+          textNode.textContent = normalizedText;
+        }
+      }
+    }
+  }
+
+  /**
+   * Normalize HTML formatting elements for better AsciiDoc conversion
+   */
+  private normalizeHtmlFormatting(document: Document): void {
+    // Convert <i> tags to _italic_ markdown-style for easier AsciiDoc conversion
+    const italicElements = Array.from(document.querySelectorAll('i'));
+    italicElements.forEach(italic => {
+      const textNode = document.createTextNode(`_${italic.textContent}_`);
+      italic.parentNode?.replaceChild(textNode, italic);
+    });
+
+    // Convert <b>, <strong> tags to *bold* markdown-style
+    const boldElements = Array.from(document.querySelectorAll('b, strong'));
+    boldElements.forEach(bold => {
+      const textNode = document.createTextNode(`*${bold.textContent}*`);
+      bold.parentNode?.replaceChild(textNode, bold);
+    });
+
+    // Convert <code> tags to `code` markdown-style
+    const codeElements = Array.from(document.querySelectorAll('code'));
+    codeElements.forEach(code => {
+      const textNode = document.createTextNode(`\`${code.textContent}\``);
+      code.parentNode?.replaceChild(textNode, code);
+    });
   }
 
   /**

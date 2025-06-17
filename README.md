@@ -39,6 +39,7 @@ Transform your technical documentation with intelligent conversion that preserve
 - 🚫 **Smart Condition Filtering** - Automatically excludes deprecated, discontinued, and print-only content
 - 🎨 **Zendesk Optimization** - Converts dropdowns to collapsible details, applies inline styling, and handles video placeholders
 - 📝 **List Continuation Support** - Proper handling of `madcap:continue="true"` for sequential numbering across all formats
+- 🛡️ **macOS File Filtering** - Automatically excludes macOS metadata files (`._*` and `.DS_Store`) during batch processing
 
 ---
 
@@ -115,7 +116,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 ## 🖥️ Web Interface
 
-The MadCap Converter now includes a modern **Next.js web interface** for users who prefer a graphical interface over the command-line MCP tools.
+The MadCap Converter includes a modern **Next.js web interface** for users who prefer a graphical interface over the command-line MCP tools.
 
 ### Features
 - **🎛️ Comprehensive Configuration**: Full access to all conversion options through an intuitive interface
@@ -126,14 +127,14 @@ The MadCap Converter now includes a modern **Next.js web interface** for users w
 
 ### Quick Start
 ```bash
-# Navigate to the UI directory
-cd ui
+# Build both server and UI
+npm run build:all
 
-# Install dependencies
-npm install
+# Start development UI
+npm run dev:ui
 
-# Start development server
-npm run dev
+# Or run both server and UI concurrently
+npm run dev:all
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to access the web interface.
@@ -889,6 +890,20 @@ Automatically excludes content based on MadCap conditions:
 - **Visibility**: hidden, internal, private, draft
 - **Print**: print-only, printonly
 
+### File Handling and Filtering
+The converter intelligently handles various file types and automatically filters out system files:
+
+**Automatic Exclusions:**
+- **macOS metadata files**: Files starting with `._` (e.g., `._General.flvar`, `._index.htm`)
+- **macOS system files**: `.DS_Store` files
+- **Files with excluded conditions**: Documents marked with deprecated, internal, or print-only conditions
+
+**Why This Matters:**
+- Prevents parsing errors from corrupt macOS metadata files
+- Ensures clean conversions without system file artifacts
+- Maintains cross-platform compatibility
+- Reduces conversion errors and warnings
+
 #### Style Conversion Mapping
 | MadCap Class | Markdown | AsciiDoc | Zendesk |
 |--------------|----------|----------|---------|
@@ -1168,38 +1183,80 @@ Welcome to {product_name} version {version_number}!
 madcap-converter/
 ├── src/
 │   ├── types/
-│   │   └── index.ts              # TypeScript interfaces
+│   │   └── index.ts                    # TypeScript interfaces
 │   ├── converters/
-│   │   ├── html-converter.ts     # HTML processing engine
-│   │   ├── word-converter.ts     # Word document handling
-│   │   ├── madcap-converter.ts   # MadCap to Markdown/AsciiDoc
-│   │   ├── zendesk-converter.ts  # MadCap to Zendesk HTML
-│   │   └── index.ts             # Converter exports
+│   │   ├── html-converter.ts           # HTML processing engine
+│   │   ├── word-converter.ts           # Word document handling
+│   │   ├── madcap-converter.ts         # MadCap to Markdown/AsciiDoc
+│   │   ├── zendesk-converter.ts        # MadCap to Zendesk HTML
+│   │   ├── asciidoc-converter.ts       # Enhanced AsciiDoc converter
+│   │   ├── citation-handler.ts         # Academic citation processing
+│   │   ├── enhanced-list-processor.ts  # Advanced list handling
+│   │   ├── math-notation-handler.ts    # Mathematical notation support
+│   │   ├── performance-optimizer.ts    # Performance enhancements
+│   │   ├── text-processor.ts           # Text formatting utilities
+│   │   └── index.ts                    # Converter exports
 │   ├── services/
-│   │   └── madcap-preprocessor.ts # Shared MadCap processing
-│   ├── document-service.ts       # Service coordination layer
-│   ├── batch-service.ts          # Folder processing service
-│   ├── toc-service.ts           # TOC extraction service
-│   └── index.ts                 # MCP server implementation
-├── build/                        # Compiled JavaScript
-├── CLAUDE.md                     # Claude Code guidance
-├── package.json
-├── tsconfig.json
-└── README.md
+│   │   ├── madcap-preprocessor.ts      # Shared MadCap processing
+│   │   ├── variable-extractor.ts       # Variable extraction service
+│   │   ├── toc-discovery.ts            # TOC discovery utilities
+│   │   ├── html-preprocessor.ts        # HTML cleanup service
+│   │   ├── input-validator.ts          # Input validation
+│   │   ├── link-validator.ts           # Link validation service
+│   │   ├── progress-reporter.ts        # Progress tracking
+│   │   └── error-handler.ts            # Error handling utilities
+│   ├── document-service.ts             # Service coordination layer
+│   ├── batch-service.ts                # Folder processing service
+│   ├── toc-service.ts                  # TOC extraction service
+│   └── index.ts                        # MCP server implementation
+├── app/                                # Next.js app directory
+│   ├── api/mcp/route.ts               # MCP API endpoint
+│   ├── layout.tsx                      # Root layout
+│   └── page.tsx                        # Home page
+├── components/                         # React components
+│   ├── madcap-converter-ui.tsx        # Main UI component
+│   └── ui/                            # Radix UI components
+├── lib/                               # Utility libraries
+│   ├── mcp-client.ts                  # MCP client wrapper
+│   └── utils.ts                       # General utilities
+├── tests/                             # Test files
+│   └── asciidoc-converter.test.ts     # AsciiDoc converter tests
+├── build/                             # Compiled server JavaScript
+├── .next/                             # Next.js build output
+├── CLAUDE.md                          # Claude Code guidance
+├── package.json                       # Project dependencies
+├── tsconfig.json                      # Server TypeScript config
+├── tsconfig.ui.json                   # UI TypeScript config
+├── next.config.js                     # Next.js configuration
+├── tailwind.config.js                 # Tailwind CSS config
+├── jest.config.js                     # Jest test configuration
+└── README.md                          # This file
 ```
 
 ### Development Scripts
 
 ```bash
-# Development workflow
-npm run dev         # Build and run with auto-restart
-npm run build       # Compile TypeScript
-npm start          # Run compiled server
-npm test           # Run test suite (when available)
+# Build commands
+npm run build          # Build server (TypeScript)
+npm run build:ui       # Build UI (Next.js)
+npm run build:all      # Build both server and UI
 
-# Quality checks
-npm run lint       # Code linting
-npm run typecheck  # TypeScript validation
+# Development workflow
+npm run dev           # Build and run MCP server
+npm run dev:ui        # Run UI in development mode
+npm run dev:all       # Run both server and UI concurrently
+
+# Production
+npm start             # Run compiled MCP server
+npm run start:ui      # Run UI in production mode
+npm run serve         # Run both in production mode
+
+# Testing and quality
+npm test              # Run test suite
+npm run test:watch    # Run tests in watch mode
+npm run test:coverage # Generate coverage report
+npm run lint          # Lint the UI code
+npm run clean         # Clean build artifacts
 ```
 
 ### Testing the Server
@@ -1286,6 +1343,20 @@ npm install
 | Zendesk Folder | 100 files | ~45s | ~300MB | Includes condition filtering |
 
 ---
+
+## 🚀 Recent Improvements
+
+### Performance & Reliability
+- **macOS File Filtering**: Automatic exclusion of `._*` metadata files prevents parsing errors
+- **Enhanced Variable Extraction**: Improved handling of malformed `.flvar` files with better error recovery
+- **Test Coverage**: Added comprehensive AsciiDoc converter tests for image handling
+- **Web UI Integration**: Full-featured Next.js interface now included in main project
+
+### Quality Enhancements
+- **AsciiDoc Formatting**: Improved spacing, image handling, and syntax compliance
+- **Cross-Reference Processing**: Better handling of relative paths and fragment identifiers
+- **List Continuation**: Proper support for `madcap:continue="true"` across all formats
+- **Variable Resolution**: More robust fallback handling for missing variable files
 
 ## 🤝 Contributing
 

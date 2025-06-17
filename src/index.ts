@@ -7,6 +7,8 @@ import { DocumentService } from './document-service.js';
 import { BatchService } from './batch-service.js';
 import { TocService } from './toc-service.js';
 import { TOCDiscoveryService } from './services/toc-discovery.js';
+import { LinkValidator } from './services/link-validator.js';
+import { InputValidator } from './services/input-validator.js';
 import { ConversionOptions } from './types/index.js';
 
 const ZendeskOptionsSchema = z.object({
@@ -119,6 +121,17 @@ const ConvertWithTOCStructureSchema = {
   variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
   asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options')
+};
+
+const ValidateLinksSchema = {
+  outputDir: z.string().describe('Path to converted documents directory'),
+  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Document format to validate')
+};
+
+const ValidateInputSchema = {
+  inputPath: z.string().optional().describe('File path to validate'),
+  inputDir: z.string().optional().describe('Directory path to validate'),
+  options: z.any().optional().describe('Conversion options to validate')
 };
 
 const AnalyzeFolderSchema = {
@@ -527,6 +540,80 @@ ${result.results.slice(0, 10).map(r => `  - ${r.outputPath}`).join('\n')}${resul
           {
             type: 'text',
             text: summary
+          }
+        ]
+      };
+    });
+
+    this.server.tool('validate_links', ValidateLinksSchema, async (args) => {
+      const linkValidator = new LinkValidator(args.outputDir, args.format);
+      const report = await linkValidator.validateDirectory(args.outputDir);
+      const formattedReport = LinkValidator.formatReport(report);
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: formattedReport
+          }
+        ]
+      };
+    });
+
+    this.server.tool('validate_input', ValidateInputSchema, async (args) => {
+      const results: string[] = [];
+
+      // Validate file path if provided
+      if (args.inputPath) {
+        const fileValidation = await InputValidator.validateFilePath(args.inputPath, 'read', 'input');
+        if (fileValidation.isValid) {
+          results.push(`✅ File path valid: ${args.inputPath}`);
+        } else {
+          results.push(`❌ File path invalid: ${fileValidation.errors.join('; ')}`);
+        }
+        
+        if (fileValidation.warnings.length > 0) {
+          results.push(`⚠️ Warnings: ${fileValidation.warnings.join('; ')}`);
+        }
+      }
+
+      // Validate directory path if provided
+      if (args.inputDir) {
+        const dirValidation = await InputValidator.validateDirectoryPath(args.inputDir, 'read');
+        if (dirValidation.isValid) {
+          results.push(`✅ Directory path valid: ${args.inputDir}`);
+        } else {
+          results.push(`❌ Directory path invalid: ${dirValidation.errors.join('; ')}`);
+        }
+        
+        if (dirValidation.warnings.length > 0) {
+          results.push(`⚠️ Warnings: ${dirValidation.warnings.join('; ')}`);
+        }
+      }
+
+      // Validate conversion options if provided
+      if (args.options) {
+        const optionsValidation = await InputValidator.validateConversionOptions(args.options);
+        if (optionsValidation.isValid) {
+          results.push(`✅ Conversion options valid`);
+        } else {
+          results.push(`❌ Conversion options invalid: ${optionsValidation.errors.join('; ')}`);
+        }
+        
+        if (optionsValidation.warnings.length > 0) {
+          results.push(`⚠️ Options warnings: ${optionsValidation.warnings.join('; ')}`);
+        }
+      }
+
+      if (results.length === 0) {
+        results.push('❓ No validation parameters provided. Specify inputPath, inputDir, or options to validate.');
+      }
+
+      return {
+        content: [
+          {
+            type: 'text',
+            text: `🔍 Input Validation Results:\n\n${results.join('\n')}`
           }
         ]
       };

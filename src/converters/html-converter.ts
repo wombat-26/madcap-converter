@@ -1,15 +1,15 @@
 import TurndownService from 'turndown';
 import { JSDOM } from 'jsdom';
-import { basename, extname } from 'path';
+import { basename, extname, relative, dirname } from 'path';
 import { DocumentConverter, ConversionOptions, ConversionResult } from '../types/index.js';
 import { MadCapPreprocessor } from '../services/madcap-preprocessor.js';
 import { HTMLPreprocessor } from '../services/html-preprocessor.js';
 import { TextProcessor } from './text-processor.js';
-import { AdvancedTableConverter } from './advanced-table-converter.js';
 import { EnhancedListProcessor } from './enhanced-list-processor.js';
 import { PerformanceOptimizer } from './performance-optimizer.js';
 import { MathNotationHandler } from './math-notation-handler.js';
 import { CitationHandler } from './citation-handler.js';
+import { VariableExtractor } from '../services/variable-extractor.js';
 
 export class HTMLConverter implements DocumentConverter {
   supportedInputTypes = ['html'];
@@ -17,17 +17,16 @@ export class HTMLConverter implements DocumentConverter {
   private madCapPreprocessor: MadCapPreprocessor;
   private htmlPreprocessor: HTMLPreprocessor;
   private textProcessor: TextProcessor;
-  private advancedTableConverter: AdvancedTableConverter;
   private enhancedListProcessor: EnhancedListProcessor;
   private performanceOptimizer: PerformanceOptimizer;
   private mathNotationHandler: MathNotationHandler;
   private citationHandler: CitationHandler;
+  private variableExtractor: VariableExtractor;
 
   constructor() {
     this.madCapPreprocessor = new MadCapPreprocessor();
     this.htmlPreprocessor = new HTMLPreprocessor();
     this.textProcessor = new TextProcessor();
-    this.advancedTableConverter = new AdvancedTableConverter();
     this.enhancedListProcessor = new EnhancedListProcessor();
     this.performanceOptimizer = new PerformanceOptimizer();
     this.mathNotationHandler = new MathNotationHandler();
@@ -335,9 +334,16 @@ export class HTMLConverter implements DocumentConverter {
         return result + '\n';
       }
     });
+    
+    this.variableExtractor = new VariableExtractor();
   }
 
   async convert(input: string, options: ConversionOptions): Promise<ConversionResult> {
+    // HTMLConverter only handles Markdown format
+    if (options.format === 'asciidoc') {
+      throw new Error('HTMLConverter does not support AsciiDoc format. Use AsciiDocConverter instead.');
+    }
+    
     // Clear variable extractor for new conversion to start fresh - disabled for now
     // NOTE: MadCapConverter will transfer variables after this clearing
     // this.madCapPreprocessor.clearVariableExtractor();
@@ -385,29 +391,30 @@ export class HTMLConverter implements DocumentConverter {
     const dom = new JSDOM(processedInput);
     const document = dom.window.document;
     
-    // CRITICAL FIX: Pre-process admonitions to ensure proper boundaries
-    if (options.format === 'asciidoc') {
-      this.preProcessAdmonitionsForBoundaries(document);
+    // Clear variable extractor for new conversion
+    this.variableExtractor.clear();
+    
+    // Extract variables if requested
+    if (options.variableOptions?.extractVariables) {
+      this.extractVariablesFromDocument(document);
     }
     
-    // Process mathematical notation before conversion (only for asciidoc and markdown)
-    if (this.mathNotationHandler.containsMathNotation(processedInput) && 
-        (options.format === 'asciidoc' || options.format === 'markdown')) {
-      this.mathNotationHandler.processMathInDocument(document, options.format);
+    // Process mathematical notation before conversion (only for markdown)
+    if (this.mathNotationHandler.containsMathNotation(processedInput)) {
+      this.mathNotationHandler.processMathInDocument(document, 'markdown');
     }
     
-    // Process citations and footnotes (only for asciidoc and markdown)
+    // Process citations and footnotes (only for markdown)
     let citationWarnings: string[] = [];
-    if (this.citationHandler.containsCitations(processedInput) && 
-        (options.format === 'asciidoc' || options.format === 'markdown')) {
-      const citationResult = this.citationHandler.processCitationsInDocument(document, options.format);
+    if (this.citationHandler.containsCitations(processedInput)) {
+      const citationResult = this.citationHandler.processCitationsInDocument(document, 'markdown');
       citationWarnings = citationResult.warnings;
       processedInput = document.body?.innerHTML || document.documentElement.innerHTML;
     }
     
     // Rewrite links to converted file extensions for batch processing
-    if (options.rewriteLinks && (options.format === 'markdown' || options.format === 'asciidoc')) {
-      this.rewriteDocumentLinks(document, options.format);
+    if (options.rewriteLinks) {
+      this.rewriteDocumentLinks(document);
     }
     
     const title = document.querySelector('title')?.textContent || 
@@ -423,35 +430,30 @@ export class HTMLConverter implements DocumentConverter {
       });
     }
 
-    let content: string;
+    // Convert to Markdown using Turndown
+    let content = this.turndownService.turndown(document.documentElement.outerHTML);
     
-    if (options.format === 'markdown') {
-      content = this.turndownService.turndown(document.documentElement.outerHTML);
-      // Fix over-escaped equals signs in formulas
-      content = this.fixFormulaEscaping(content);
-      // Fix callout formatting for Writerside compatibility
-      content = this.fixCalloutFormatting(content);
-      // Remove spaces before punctuation in Markdown too
-      content = this.removeSpacesBeforePunctuation(content, 'markdown');
-    } else {
-      content = this.convertToAsciiDoc(document, options);
-      // Clean up boundary markers from admonition processing - more comprehensive cleanup
-      content = content.replace(/<!--\s*BOUNDARY\s*-->/gi, '');
-      content = content.replace(/\n\s*\n\s*\n/g, '\n\n'); // Clean up excessive line breaks
-      // Remove spaces before punctuation in AsciiDoc too
-      content = this.removeSpacesBeforePunctuation(content, 'asciidoc');
-    }
+    // Fix over-escaped equals signs in formulas
+    content = this.fixFormulaEscaping(content);
+    // Fix callout formatting for Writerside compatibility
+    content = this.fixCalloutFormatting(content);
+    // Remove spaces before punctuation in Markdown
+    content = this.removeSpacesBeforePunctuation(content);
 
     const wordCount = content.split(/\s+/).filter(word => word.length > 0).length;
 
     // Generate variables file if extraction is enabled
     let variablesFile: string | undefined;
-    const extractedVariables: any[] = []; // TODO: Re-implement variable extraction
+    // Generate variables file if requested
+    const extractedVariables = this.variableExtractor.getVariables();
     
-    // Disabled variable extraction for now
-    // if (options.variableOptions?.extractVariables && options.variableOptions.variableFormat && extractedVariables.length > 0) {
-    //   variablesFile = variableExtractor.generateVariablesFile(options.variableOptions);
-    // }
+    if (options.variableOptions?.extractVariables && options.variableOptions.variableFormat && extractedVariables.length > 0) {
+      try {
+        variablesFile = this.variableExtractor.generateVariablesFile(options.variableOptions);
+      } catch (error) {
+        console.warn('Failed to generate variables file in HTMLConverter:', error);
+      }
+    }
 
     return {
       content,
@@ -500,8 +502,29 @@ export class HTMLConverter implements DocumentConverter {
     
     // Add variables file include if extraction is enabled
     if (options.variableOptions?.extractVariables && options.variableOptions.variableFormat === 'adoc') {
-      // Use standard variables.adoc filename as recommended in AsciiDoc best practices
-      result += `\n// Include variables file\ninclude::variables.adoc[]\n`;
+      // Calculate relative path to includes/variables.adoc based on output path
+      let variablesIncludePath = 'includes/variables.adoc';
+      
+      if (options.outputPath && options.outputDir) {
+        if (options.outputPath.startsWith('/')) {
+          // Absolute path - calculate relative to outputDir
+          const fileDir = dirname(options.outputPath);
+          const pathToRoot = relative(fileDir, options.outputDir);
+          if (pathToRoot) {
+            variablesIncludePath = `${pathToRoot}/includes/variables.adoc`;
+          }
+        } else {
+          // Relative path - calculate depth from path components
+          const pathParts = options.outputPath.split('/').filter(part => part !== '');
+          const depth = pathParts.length - 1; // Subtract 1 for the filename
+          if (depth > 0) {
+            const pathToRoot = '../'.repeat(depth);
+            variablesIncludePath = `${pathToRoot}includes/variables.adoc`;
+          }
+        }
+      }
+      
+      result += `\n// Include variables file\ninclude::${variablesIncludePath}[]\n`;
     }
     
     result += '\n\n';  // Double newline to ensure proper separation from content
@@ -698,47 +721,20 @@ export class HTMLConverter implements DocumentConverter {
         const childElement = child as Element;
         const childTag = childElement.tagName.toLowerCase();
         
+        // Extract plain text only - let nodeToAsciiDoc handle formatting
         if (childTag === 'strong' || childTag === 'b') {
-          text += `*${this.getElementText(childElement)}* `;
+          text += `${this.getElementText(childElement)} `;
         } else if (childTag === 'em' || childTag === 'i') {
-          text += `_${this.getElementText(childElement)}_ `;
+          text += `${this.getElementText(childElement)} `;
         } else if (childTag === 'a') {
-          const href = childElement.getAttribute('href');
+          // Extract plain text only - let nodeToAsciiDoc handle link formatting
           const linkText = this.getElementText(childElement);
-          if (href && linkText) {
-            if (href.startsWith('http') || href.startsWith('mailto:')) {
-              text += `link:${href}[${linkText}] `;
-            } else if (href.startsWith('#')) {
-              // For anchor-only links, use the cleaner <<anchor>> syntax in AsciiDoc
-              const anchor = href.substring(1);
-              text += `<<${anchor},${linkText}>> `;
-            } else {
-              let convertedHref = href;
-              const needsNormalization = convertedHref.includes(' ') || /[A-Z]/.test(convertedHref);
-              
-              if (needsNormalization) {
-                const [path, filename] = convertedHref.split('/').length > 1 
-                  ? [convertedHref.substring(0, convertedHref.lastIndexOf('/')), convertedHref.substring(convertedHref.lastIndexOf('/') + 1)]
-                  : ['', convertedHref];
-                const cleanFilename = filename
-                  .replace(/\.(htm|html)$/i, '') // Remove extension first
-                  .toLowerCase()
-                  .replace(/[^\w\s-]/g, '') // Remove special characters except spaces and hyphens
-                  .replace(/\s+/g, '-') // Replace spaces with hyphens
-                  .replace(/-+/g, '-') // Collapse multiple hyphens
-                  .replace(/^-+|-+$/g, '') // Remove leading/trailing hyphens
-                  + '.adoc';
-                convertedHref = path ? `${path}/${cleanFilename}` : cleanFilename;
-              } else {
-                convertedHref = convertedHref.replace(/\.htm(l?)$/, '.adoc');
-              }
-              text += `xref:${convertedHref}[${linkText}] `;
-            }
-          } else {
+          if (linkText) {
             text += linkText + ' ';
           }
         } else if (childTag === 'code') {
-          text += `\`${this.getElementText(childElement)}\` `;
+          // Extract plain text only - let nodeToAsciiDoc handle code formatting
+          text += `${this.getElementText(childElement)} `;
         } else {
           text += this.getElementText(childElement) + ' ';
         }
@@ -749,13 +745,8 @@ export class HTMLConverter implements DocumentConverter {
   }
 
   private convertTableToValidAsciiDoc(table: Element): string {
-    // Use advanced table converter for complex table handling
-    const warnings = this.advancedTableConverter.validateTableStructure(table as HTMLTableElement);
-    if (warnings.length > 0) {
-      console.warn('Table conversion warnings:', warnings);
-    }
-    
-    return this.advancedTableConverter.convertComplexTable(table as HTMLTableElement);
+    // Use simple table converter for basic table handling
+    return this.convertSimpleTable(table as HTMLTableElement);
   }
 
   private getPlainTextFromElement(element: Element): string {
@@ -1538,8 +1529,64 @@ export class HTMLConverter implements DocumentConverter {
   }
 
   private convertTableToAsciiDoc(table: Element): string {
-    // Use advanced table converter for all table processing
-    return this.advancedTableConverter.convertComplexTable(table as HTMLTableElement);
+    // Use simple table converter for all table processing
+    return this.convertSimpleTable(table as HTMLTableElement);
+  }
+
+  /**
+   * Convert HTML table to simple AsciiDoc table format
+   */
+  private convertSimpleTable(table: HTMLTableElement): string {
+    const rows = Array.from(table.querySelectorAll('tr'));
+    if (rows.length === 0) return '';
+    
+    let result = '';
+    
+    // Add caption if present
+    const caption = table.querySelector('caption');
+    if (caption) {
+      result += `.${caption.textContent?.trim() || ''}\n`;
+    }
+    
+    // Determine column count from first row
+    const firstRow = rows[0];
+    const colCount = firstRow ? firstRow.querySelectorAll('td, th').length : 0;
+    
+    if (colCount === 0) return '';
+    
+    // Generate simple equal-width column spec
+    const colSpec = Array(colCount).fill('1').join(',');
+    result += `[cols="${colSpec}"]\n`;
+    result += '|===\n';
+    
+    // Convert each row
+    rows.forEach(row => {
+      const cells = Array.from(row.querySelectorAll('td, th'));
+      cells.forEach(cell => {
+        const isHeader = cell.tagName.toLowerCase() === 'th';
+        const content = this.extractSimpleCellText(cell);
+        result += `|${isHeader ? ' ' : ''}${content}\n`;
+      });
+    });
+    
+    result += '|===\n\n';
+    return result;
+  }
+
+  /**
+   * Extract simple text content from table cell
+   */
+  private extractSimpleCellText(cell: Element): string {
+    // Simple text extraction without complex formatting
+    let content = cell.textContent || '';
+    
+    // Clean up whitespace and normalize
+    content = content.replace(/\s+/g, ' ').trim();
+    
+    // Escape pipe characters that would break table syntax
+    content = content.replace(/\|/g, '\\|');
+    
+    return content;
   }
 
   private nodeToAsciiDocForTable(element: Element): string {
@@ -2161,9 +2208,9 @@ export class HTMLConverter implements DocumentConverter {
     return result;
   }
 
-  private rewriteDocumentLinks(document: Document, format: 'markdown' | 'asciidoc'): void {
+  private rewriteDocumentLinks(document: Document): void {
     const links = document.querySelectorAll('a[href]');
-    const targetExtension = format === 'asciidoc' ? '.adoc' : '.md';
+    const targetExtension = '.md';
     
     links.forEach(link => {
       const href = link.getAttribute('href');
@@ -2261,25 +2308,13 @@ export class HTMLConverter implements DocumentConverter {
     return newLines.join('\n');
   }
 
-  private removeSpacesBeforePunctuation(text: string, format?: string): string {
-    // Remove spaces before common punctuation marks, but be careful not to break structure
-    // For AsciiDoc, be extra careful with periods as they're used for list markers
-    let result;
-    if (format === 'asciidoc') {
-      result = text
-        .replace(/([a-zA-Z0-9])\s+([,;!?])/g, '$1$2')    // Remove spaces before commas, semicolons, exclamation, question marks
-        .replace(/([a-zA-Z0-9])\s+(\.)\s+([a-zA-Z])/g, '$1$2 $3'); // Remove spaces before periods only in sentences (word . word)
-    } else {
-      result = text
-        .replace(/(\S)\s+([,;!?.])/g, '$1$2');    // For non-AsciiDoc, use original logic
-    }
+  private removeSpacesBeforePunctuation(text: string): string {
+    // Remove spaces before common punctuation marks for Markdown
+    let result = text
+      .replace(/(\S)\s+([,;!?.])/g, '$1$2');    // For Markdown, use original logic
     
-    // For AsciiDoc, handle colons more carefully to preserve document attributes
-    if (format === 'asciidoc') {
-      result = result.replace(/(\S)\s+(:)(?!\w)/g, '$1$2');  // Remove spaces before colons, but not when colon starts a line
-    } else {
-      result = result.replace(/\s+(:)/g, '$1');  // For other formats, simple colon handling
-    }
+    // For Markdown, simple colon handling
+    result = result.replace(/\s+(:)/g, '$1');
     
     return result
       .replace(/\s+(\))/g, '$1')        // Remove spaces before closing parenthesis
@@ -2940,9 +2975,7 @@ export class HTMLConverter implements DocumentConverter {
    * Get the variable extractor for transferring variables between converters
    */
   getVariableExtractor() {
-    // Disabled for now - TODO: Re-implement variable extraction
-    return null;
-    // return this.madCapPreprocessor.getVariableExtractor();
+    return this.variableExtractor;
   }
 
   /**
@@ -2999,5 +3032,89 @@ export class HTMLConverter implements DocumentConverter {
       .trim();
     
     return plainText ? plainText.split(' ').length : 0;
+  }
+
+  /**
+   * Extract variables from document for variable file generation
+   */
+  private extractVariablesFromDocument(document: Document): void {
+    // Look for MadCap variable elements
+    const variableElements = document.querySelectorAll(
+      'madcap\\:variable, MadCap\\:variable, [data-mc-variable], .mc-variable, [class*="mc-variable"]'
+    );
+    
+    variableElements.forEach(element => {
+      const variableName = element.getAttribute('name') ||
+                          element.getAttribute('data-mc-variable') ||
+                          this.extractVariableNameFromClass(element.className);
+      
+      const variableValue = element.textContent?.trim() || '';
+      
+      if (variableName && variableValue) {
+        try {
+          const extractedVariable = VariableExtractor.createExtractedVariable(
+            variableName,
+            variableValue,
+            'madcap'
+          );
+          this.variableExtractor.addVariable(extractedVariable);
+        } catch (error) {
+          console.warn(`Failed to extract variable ${variableName}:`, error);
+        }
+      }
+    });
+    
+    // Also look for variable placeholders in content like {VariableName}
+    const textNodes = this.getTextNodes(document.body || document.documentElement);
+    textNodes.forEach(textNode => {
+      const text = textNode.textContent || '';
+      const variableMatches = text.matchAll(/\{([^}]+)\}/g);
+      
+      for (const match of variableMatches) {
+        const variableName = match[1];
+        if (variableName && !variableName.includes(' ')) {
+          // Create placeholder variable for reference
+          try {
+            const extractedVariable = VariableExtractor.createExtractedVariable(
+              variableName,
+              `{${variableName}}`, // Keep as placeholder
+              'fallback'
+            );
+            this.variableExtractor.addVariable(extractedVariable);
+          } catch (error) {
+            console.warn(`Failed to extract placeholder variable ${variableName}:`, error);
+          }
+        }
+      }
+    });
+  }
+
+  /**
+   * Extract variable name from class attribute
+   */
+  private extractVariableNameFromClass(className: string): string | undefined {
+    // Look for mc-variable.VariableName pattern
+    const match = className.match(/mc-variable\.([^\s]+)/);
+    return match ? match[1] : undefined;
+  }
+
+  /**
+   * Get all text nodes from an element
+   */
+  private getTextNodes(element: Element): Text[] {
+    const textNodes: Text[] = [];
+    const walker = element.ownerDocument.createTreeWalker(
+      element,
+      4 // NodeFilter.SHOW_TEXT
+    );
+    
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.nodeType === 3) { // TEXT_NODE
+        textNodes.push(node as Text);
+      }
+    }
+    
+    return textNodes;
   }
 }
