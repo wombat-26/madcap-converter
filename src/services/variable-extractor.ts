@@ -175,11 +175,14 @@ export class VariableExtractor {
    * Sanitize variable name for AsciiDoc attributes
    */
   private sanitizeAsciiDocAttributeName(name: string): string {
-    // AsciiDoc attribute names must start with letter/underscore and contain only alphanumeric, hyphen, underscore
+    // AsciiDoc attribute names - use kebab-case for consistency with writerside-variable-converter
     return name
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .replace(/^[^a-zA-Z_]/, '_')
-      .toLowerCase();
+      .replace(/([A-Z])/g, '-$1')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/--+/g, '-')
+      .replace(/^-/, '')
+      .replace(/-$/, '');
   }
 
   /**

@@ -1,6 +1,7 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { extname, dirname, basename, join } from 'path';
 import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter, AsciiDocConverter } from './converters/index.js';
+import WritersideMarkdownConverter from './converters/writerside-markdown-converter.js';
 import { ConversionOptions, ConversionResult, DocumentConverter } from './types/index.js';
 import { errorHandler } from './services/error-handler.js';
 import { InputValidator } from './services/input-validator.js';
@@ -17,7 +18,9 @@ export class DocumentService {
       ['doc', new WordConverter()],
       ['madcap', new MadCapConverter()],
       ['xml', new MadCapConverter()],
-      ['zendesk', new ZendeskConverter()]
+      ['zendesk', new ZendeskConverter()],
+      ['asciidoc', new AsciiDocConverter()],
+      ['writerside-markdown', new WritersideMarkdownConverter()]
     ]);
   }
 
@@ -80,7 +83,7 @@ export class DocumentService {
       supportedTypes.push('flsnp'); // Add flsnp to supported types list
       throw new Error(`Unsupported file type: ${extension}. Supported types: ${supportedTypes.join(', ')}`);
     }
-    const format = actualOptions.format || 'markdown';
+    const format = actualOptions.format || 'asciidoc';
 
     let input: string | Buffer;
     
@@ -97,6 +100,16 @@ export class DocumentService {
           if (this.containsMadCapContent(input)) {
             inputType = 'madcap';
           }
+        } else if (format === 'asciidoc') {
+          // Use regular AsciiDoc converter for asciidoc format
+          converter = this.converters.get('asciidoc')!;
+          if (this.containsMadCapContent(input)) {
+            inputType = 'madcap';
+          }
+        } else if (format === 'writerside-markdown') {
+          // Use WritersideMarkdownConverter directly for Writerside format
+          converter = this.converters.get('writerside-markdown')!;
+          // Don't change inputType - let it handle HTML directly
         } else if (this.containsMadCapContent(input)) {
           inputType = 'madcap';
           converter = this.converters.get('xml')!; // Use MadCap converter
@@ -183,6 +196,9 @@ export class DocumentService {
     // Override converter selection for specific formats
     if (options.format === 'zendesk') {
       converter = this.converters.get('zendesk')!;
+    } else if (options.format === 'writerside-markdown') {
+      // Use WritersideMarkdownConverter for Writerside format
+      converter = this.converters.get('writerside-markdown')!;
     } else if (options.format === 'asciidoc' && options.inputType === 'html') {
       // Only use AsciiDocConverter directly for pure HTML content
       // MadCap content should go through MadCapConverter for proper preprocessing
@@ -198,6 +214,9 @@ export class DocumentService {
     // Override converter selection for specific formats
     if (options.format === 'zendesk') {
       converter = this.converters.get('zendesk')!;
+    } else if (options.format === 'writerside-markdown') {
+      // Use WritersideMarkdownConverter for Writerside format
+      converter = this.converters.get('writerside-markdown')!;
     } else if (options.format === 'asciidoc' && options.inputType === 'html') {
       // Only use AsciiDocConverter directly for pure HTML content
       // MadCap content should go through MadCapConverter for proper preprocessing
@@ -267,7 +286,7 @@ export class DocumentService {
         // Use includes directory for AsciiDoc variables following best practices
         return join(dir, 'includes', 'variables.adoc');
       case 'writerside':
-        return join(dir, 'variables.xml');
+        return join(dir, 'v.list');
       default:
         return join(dir, 'variables.txt');
     }

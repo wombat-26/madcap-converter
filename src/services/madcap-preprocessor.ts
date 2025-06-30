@@ -12,6 +12,7 @@ export class MadCapPreprocessor {
   private loadedSnippets: Set<string> = new Set();
   private snippetCache: Map<string, string> = new Map();
   private extractVariables: boolean = false;
+  private preserveVariables: boolean = false;
   private extractedVariables: Map<string, { name: string; value: string }> = new Map();
   
   // File content cache for performance
@@ -31,6 +32,13 @@ export class MadCapPreprocessor {
   }
 
   /**
+   * Set whether to preserve variable tags unchanged for later processing
+   */
+  setPreserveVariables(preserve: boolean): void {
+    this.preserveVariables = preserve;
+  }
+
+  /**
    * Get extracted variables from the last preprocessing
    */
   getExtractedVariables(): { name: string; value: string }[] {
@@ -40,7 +48,7 @@ export class MadCapPreprocessor {
   /**
    * Main preprocessing method - cleans up MadCap elements, resolves variables, processes snippets
    */
-  async preprocessMadCapContent(html: string, inputPath?: string): Promise<string> {
+  async preprocessMadCapContent(html: string, inputPath?: string, outputFormat?: string): Promise<string> {
     // Reset snippet loading cache for each conversion
     this.loadedSnippets.clear();
     
@@ -66,7 +74,7 @@ export class MadCapPreprocessor {
     await this.processMadCapElementsBatch(document, inputPath);
     
     // Clean up DOM structure for all converters
-    this.cleanupDOMStructure(document);
+    this.cleanupDOMStructure(document, outputFormat);
     
     return document.documentElement.outerHTML;
   }
@@ -264,7 +272,7 @@ export class MadCapPreprocessor {
         snippetTexts.push(element);
       } else if (tagName === 'madcap:dropdown') {
         dropDowns.push(element);
-      } else if (tagName === 'madcap:xref') {
+      } else if (tagName === 'madcap:xref' || tagName === 'MadCap:xref' || tagName.toLowerCase() === 'madcap:xref') {
         xrefs.push(element);
       } else if (tagName === 'madcap:variable' || tagName === 'MadCap:variable' || tagName === 'MADCAP:VARIABLE' || tagName.toLowerCase() === 'madcap:variable' || element.hasAttribute('data-mc-variable') || (element.hasAttribute('name') && (tagName.includes('variable') || element.className.includes('mc-variable')))) {
         variables.push(element);
@@ -280,6 +288,9 @@ export class MadCapPreprocessor {
     
     // Fallback: Process any remaining madcap:variable elements that weren't caught
     this.processRemainingVariables(document);
+    
+    // Fallback: Process any remaining xrefs that weren't caught (case-insensitive search)
+    this.processRemainingXrefs(document);
   }
 
   private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string): Promise<void> {
@@ -386,9 +397,29 @@ export class MadCapPreprocessor {
             this.snippetCache.set(snippetPath, snippetContent);
           }
           
-          // Replace element with processed snippet text
-          const textNode = element.ownerDocument.createTextNode(snippetContent.replace(/<[^>]*>/g, '').trim());
-          element.parentNode?.replaceChild(textNode, element);
+          // Parse snippet content and insert it properly
+          const snippetDom = new JSDOM(snippetContent, { contentType: 'text/html' });
+          const snippetBody = snippetDom.window.document.body;
+          
+          if (snippetBody && element.parentNode) {
+            // Create a document fragment to hold the snippet content
+            const fragment = element.ownerDocument.createDocumentFragment();
+            
+            // Import all children from the snippet body
+            const children = Array.from(snippetBody.childNodes);
+            for (const child of children) {
+              const importedNode = element.ownerDocument.importNode(child, true);
+              fragment.appendChild(importedNode);
+            }
+            
+            // Replace the snippet element with the fragment
+            element.parentNode.replaceChild(fragment, element);
+          } else {
+            // Fallback: create a span with the content
+            const span = element.ownerDocument.createElement('span');
+            span.innerHTML = snippetContent;
+            element.parentNode?.replaceChild(span, element);
+          }
           
         } catch (error) {
           console.warn(`Could not load snippet text ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
@@ -418,7 +449,6 @@ export class MadCapPreprocessor {
     // If the path already contains Resources/Snippets/, use it directly from Content root
     if (cleanSnippetSrc.startsWith('Resources/Snippets/')) {
       const snippetPath = join(projectRoot, 'Content', cleanSnippetSrc);
-      console.log(`Resolving snippet (with Resources/Snippets): ${snippetSrc} → ${snippetPath}`);
       return snippetPath;
     }
     
@@ -428,7 +458,6 @@ export class MadCapPreprocessor {
     // Construct the full snippet path
     const snippetPath = join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
     
-    console.log(`Resolving snippet (adding Resources/Snippets): ${snippetSrc} → ${snippetPath}`);
     return snippetPath;
   }
 
@@ -512,27 +541,24 @@ export class MadCapPreprocessor {
       );
       
       if (hotspot && body) {
-        // Create a proper heading structure for AsciiDoc conversion
+        // Create a proper structure for AsciiDoc collapsible conversion
         const fragment = dropDown.ownerDocument.createDocumentFragment();
         
-        // Create heading from hotspot text
-        const summaryText = hotspot.textContent?.trim() || 'More Information';
-        const heading = dropDown.ownerDocument.createElement('h3');
-        heading.textContent = summaryText;
-        heading.className = 'dropdown-heading';
-        fragment.appendChild(heading);
+        // Create a container that can be detected and converted to collapsible block
+        const collapsibleContainer = dropDown.ownerDocument.createElement('div');
+        collapsibleContainer.className = 'madcap-dropdown collapsible-block';
         
-        // Create content container with a line break
-        const contentDiv = dropDown.ownerDocument.createElement('div');
-        contentDiv.className = 'dropdown-content';
+        // Store the title in a data attribute for AsciiDoc conversion
+        const summaryText = hotspot.textContent?.trim() || 'More Information';
+        collapsibleContainer.setAttribute('data-title', summaryText);
         
         // Move all body content to the container
         const bodyContent = Array.from(body.childNodes);
         bodyContent.forEach(child => {
-          contentDiv.appendChild(child.cloneNode(true));
+          collapsibleContainer.appendChild(child.cloneNode(true));
         });
         
-        fragment.appendChild(contentDiv);
+        fragment.appendChild(collapsibleContainer);
         
         // Replace the entire dropDown with the fragment
         dropDown.parentNode?.replaceChild(fragment, dropDown);
@@ -548,11 +574,29 @@ export class MadCapPreprocessor {
       if (href) {
         const link = element.ownerDocument.createElement('a');
         // Convert .htm to .html for output consistency (handles both .htm and .htm#anchor)
-        const convertedHref = href.includes('.htm') ? href.replace(/\.htm(#|$)/, '.html$1') : href;
+        let convertedHref = href;
+        if (href.includes('.htm')) {
+          convertedHref = href.replace(/\.htm(#|$)/, '.html$1');
+        }
+        
         link.setAttribute('href', convertedHref);
         link.textContent = linkText || `See ${convertedHref}`;
+        
+        // Copy any additional attributes that might be useful
+        const attributes = element.attributes;
+        for (let i = 0; i < attributes.length; i++) {
+          const attr = attributes[i];
+          if (attr.name !== 'href' && attr.name !== 'MadCap:href' && attr.name !== 'madcap:href') {
+            // Skip MadCap-specific attributes but preserve others like class, id, etc.
+            if (!attr.name.toLowerCase().startsWith('madcap:')) {
+              link.setAttribute(attr.name, attr.value);
+            }
+          }
+        }
+        
         element.parentNode?.replaceChild(link, element);
       } else {
+        // If no href, just replace with text content
         const textNode = element.ownerDocument.createTextNode(linkText);
         element.parentNode?.replaceChild(textNode, element);
       }
@@ -561,6 +605,11 @@ export class MadCapPreprocessor {
 
   private processVariables(variables: Element[]): void {
     variables.forEach(element => {
+      // If preserveVariables is true, skip processing and leave the variable tags intact
+      if (this.preserveVariables) {
+        return;
+      }
+
       const variableName = element.getAttribute('name') ||
                           element.getAttribute('data-mc-variable') || 
                           this.extractVariableName(element.className);
@@ -600,6 +649,11 @@ export class MadCapPreprocessor {
   }
 
   private processRemainingVariables(document: Document): void {
+    // If preserveVariables is true, skip processing
+    if (this.preserveVariables) {
+      return;
+    }
+
     // Use CSS selector to find any remaining variable elements that weren't caught
     // This handles namespace issues with JSDOM
     const remainingVariables = document.querySelectorAll('madcap\\:variable, MadCap\\:variable, MADCAP\\:VARIABLE');
@@ -633,6 +687,49 @@ export class MadCapPreprocessor {
         element.parentNode?.replaceChild(textNode, element);
       }
     });
+  }
+
+  private processRemainingXrefs(document: Document): void {
+    // Use CSS selector to find any remaining xref elements that weren't caught
+    // This handles namespace issues with JSDOM and case variations
+    const remainingXrefs = document.querySelectorAll('madcap\\:xref, MadCap\\:xref, MADCAP\\:XREF');
+    
+    if (remainingXrefs.length > 0) {
+      remainingXrefs.forEach(element => {
+        const href = element.getAttribute('href');
+        const linkText = element.textContent?.trim() || '';
+        
+        if (href) {
+          const link = element.ownerDocument.createElement('a');
+          // Convert .htm to .html for output consistency (handles both .htm and .htm#anchor)
+          let convertedHref = href;
+          if (href.includes('.htm')) {
+            convertedHref = href.replace(/\.htm(#|$)/, '.html$1');
+          }
+          
+          link.setAttribute('href', convertedHref);
+          link.textContent = linkText || `See ${convertedHref}`;
+          
+          // Copy any additional attributes that might be useful
+          const attributes = element.attributes;
+          for (let i = 0; i < attributes.length; i++) {
+            const attr = attributes[i];
+            if (attr.name !== 'href' && attr.name !== 'MadCap:href' && attr.name !== 'madcap:href') {
+              // Skip MadCap-specific attributes but preserve others like class, id, etc.
+              if (!attr.name.toLowerCase().startsWith('madcap:')) {
+                link.setAttribute(attr.name, attr.value);
+              }
+            }
+          }
+          
+          element.parentNode?.replaceChild(link, element);
+        } else {
+          // If no href, just replace with text content
+          const textNode = element.ownerDocument.createTextNode(linkText);
+          element.parentNode?.replaceChild(textNode, element);
+        }
+      });
+    }
   }
 
   private convertMadCapElements(document: Document): void {
@@ -742,7 +839,7 @@ export class MadCapPreprocessor {
       // Dynamically find all .flvar files in the project directory
       try {
         const files = await readdirAsync(projectPath);
-        const flvarFiles = files.filter(file => file.endsWith('.flvar'));
+        const flvarFiles = files.filter(file => file.endsWith('.flvar') && !file.startsWith('._'));
         
         // Load variable files in parallel
         const variablePromises = flvarFiles.map(async (fileName) => {
@@ -820,11 +917,14 @@ export class MadCapPreprocessor {
    * Convert MadCap variable name to AsciiDoc attribute name format
    */
   private convertToAsciiDocAttributeName(variableName: string): string {
-    // AsciiDoc attribute names must start with letter/underscore and contain only alphanumeric, hyphen, underscore
+    // AsciiDoc attribute names - use kebab-case for consistency with writerside-variable-converter
     return variableName
-      .replace(/[^a-zA-Z0-9_-]/g, '_')
-      .replace(/^[^a-zA-Z_]/, '_')
-      .toLowerCase();
+      .replace(/([A-Z])/g, '-$1')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/--+/g, '-')
+      .replace(/^-/, '')
+      .replace(/-$/, '');
   }
 
   private async readFileWithCache(filePath: string): Promise<string> {
@@ -855,15 +955,18 @@ export class MadCapPreprocessor {
    * Clean up DOM structure using pure JSDOM operations for all converters
    * This centralizes DOM manipulation that was previously scattered across converters
    */
-  private cleanupDOMStructure(document: Document): void {
+  private cleanupDOMStructure(document: Document, outputFormat?: string): void {
     // Fix malformed list nesting (sublists as siblings → children)
     this.fixListNesting(document);
+    
+    // Ensure W3C XHTML compliance
+    this.ensureW3CCompliance(document);
     
     // Separate mixed content in paragraphs  
     this.separateMixedContent(document);
     
     // Normalize block structure and remove empty paragraphs
-    this.normalizeBlockStructure(document);
+    this.normalizeBlockStructure(document, outputFormat);
   }
 
   /**
@@ -871,48 +974,401 @@ export class MadCapPreprocessor {
    * Uses pure JSDOM operations to restructure the DOM
    */
   private fixListNesting(document: Document): void {
-    // Find all list items that should have sublists as children
+    // Find all lists in the document
     const allLists = Array.from(document.querySelectorAll('ol, ul'));
     
+    // Process each list to fix nesting issues
     for (const list of allLists) {
-      const listItems = Array.from(list.querySelectorAll(':scope > li'));
+      const parent = list.parentElement;
       
-      for (let i = 0; i < listItems.length; i++) {
-        const currentLi = listItems[i];
-        let nextSibling = currentLi.nextElementSibling;
+      // Skip if this list is already properly nested inside an li
+      if (parent && parent.tagName.toLowerCase() === 'li') {
+        continue;
+      }
+      
+      // Check if this list should be nested under a previous sibling list item
+      const previousSibling = list.previousElementSibling;
+      
+      if (previousSibling) {
+        // Case 1: Previous sibling is a list containing items that should parent this list
+        if (previousSibling.tagName.toLowerCase() === 'ol' || previousSibling.tagName.toLowerCase() === 'ul') {
+          const lastItem = previousSibling.querySelector(':scope > li:last-child');
+          if (lastItem && this.shouldNestList(lastItem)) {
+            lastItem.appendChild(list);
+            continue;
+          }
+        }
         
-        // Check if the next sibling is a list that should be nested
-        while (nextSibling && (nextSibling.tagName.toLowerCase() === 'ol' || nextSibling.tagName.toLowerCase() === 'ul')) {
-          const currentText = currentLi.textContent?.trim() || '';
-          
-          // If current li ends with colon, nest the following list
-          if (currentText.endsWith(':')) {
-            const listToMove = nextSibling;
-            nextSibling = nextSibling.nextElementSibling; // Get next before moving
-            currentLi.appendChild(listToMove);
-          } else {
-            break;
+        // Case 2: Previous sibling is any element that suggests this list should be nested
+        // This handles cases where MadCap outputs lists as siblings when they should be nested
+        if (previousSibling.tagName.toLowerCase() === 'p' || previousSibling.tagName.toLowerCase() === 'div') {
+          // Look for the nearest previous list item that could be the parent
+          let searchElement = previousSibling.previousElementSibling;
+          while (searchElement) {
+            if (searchElement.tagName.toLowerCase() === 'ol' || searchElement.tagName.toLowerCase() === 'ul') {
+              const lastItem = searchElement.querySelector(':scope > li:last-child');
+              if (lastItem) {
+                // Check if there are no other list items or headings between this list and the potential parent
+                let hasIntermediateBlockingElements = false;
+                let checkElement = searchElement.nextElementSibling;
+                while (checkElement && checkElement !== list) {
+                  const tagName = checkElement.tagName.toLowerCase();
+                  if (tagName === 'li' || ['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
+                    hasIntermediateBlockingElements = true;
+                    break;
+                  }
+                  checkElement = checkElement.nextElementSibling;
+                }
+                
+                if (!hasIntermediateBlockingElements) {
+                  lastItem.appendChild(list);
+                  break;
+                }
+              }
+            }
+            searchElement = searchElement.previousElementSibling;
           }
         }
       }
     }
+    
+    // Second pass: Fix lists that are direct siblings of list items (MadCap pattern)
+    const allListItems = Array.from(document.querySelectorAll('li'));
+    
+    for (const listItem of allListItems) {
+      // Check for direct siblings of the list item
+      let nextSibling = listItem.nextElementSibling;
+      
+      // Only nest lists that appear to be sub-lists, not separate document-level lists
+      // Check if the next sibling is a list that should be nested
+      if (nextSibling && (nextSibling.tagName.toLowerCase() === 'ol' || nextSibling.tagName.toLowerCase() === 'ul')) {
+        // Check if this looks like a genuine sub-list vs a separate document section
+        const shouldNest = this.shouldNestSiblingList(listItem, nextSibling);
+        
+        if (shouldNest) {
+          const listToMove = nextSibling;
+          nextSibling = nextSibling.nextElementSibling; // Save next before moving
+          
+          // Nest this sub-list under the list item
+          listItem.appendChild(listToMove);
+        }
+      }
+      
+      // **MadCap specific fix**: Check if this li is the last child of its parent list,
+      // and if the next sibling of the parent list is a lower-alpha/lower-roman list
+      const parentList = listItem.parentElement;
+      if (parentList && (parentList.tagName.toLowerCase() === 'ol' || parentList.tagName.toLowerCase() === 'ul')) {
+        // Check if this is the last li in the parent list
+        const isLastChild = listItem.nextElementSibling === null;
+        
+        if (isLastChild) {
+          // Check if the parent list has a sibling that's a styled sub-list
+          const parentNextSibling = parentList.nextElementSibling;
+          
+          if (parentNextSibling && (parentNextSibling.tagName.toLowerCase() === 'ol' || parentNextSibling.tagName.toLowerCase() === 'ul')) {
+            const style = parentNextSibling.getAttribute('style') || '';
+            const isSubList = style.includes('lower-alpha') || style.includes('lower-roman') || style.includes('upper-alpha');
+            
+            if (isSubList) {
+              // This styled list should be nested under the last li of the previous list
+              const listToMove = parentNextSibling;
+              listItem.appendChild(listToMove);
+            }
+          }
+        }
+      }
+    }
+    
+    // Third pass: Fix orphaned paragraphs that should be nested under list items
+    this.fixOrphanedParagraphs(document);
+  }
+  
+  /**
+   * Fix paragraphs that appear as siblings to list items but should be nested under them
+   * This handles MadCap's pattern where explanatory text appears outside list items
+   */
+  private fixOrphanedParagraphs(document: Document): void {
+    // Find all lists and process their direct children to fix orphaned paragraphs
+    const allLists = Array.from(document.querySelectorAll('ol, ul'));
+    
+    for (const list of allLists) {
+      // Skip lists that have already been processed (marked with a data attribute)
+      if (list.hasAttribute('data-orphaned-paragraphs-fixed')) {
+        continue;
+      }
+      
+      // Convert orphaned paragraphs into list items or attach them as continuation content
+      let children = Array.from(list.children);
+      let lastListItem: Element | null = null;
+      let i = 0;
+      
+      while (i < children.length) {
+        const child = children[i];
+        const tagName = child.tagName.toLowerCase();
+        
+        if (tagName === 'li') {
+          lastListItem = child;
+          i++;
+        } else if (tagName === 'p' || tagName === 'div') {
+          const text = child.textContent?.trim() || '';
+          
+          // Skip empty elements
+          if (text.length === 0) {
+            i++;
+            continue;
+          }
+          
+          const isActionItem = this.looksLikeActionItem(text);
+          const isExplanatory = this.isExplanatoryText(text);
+          
+          if (isActionItem) {
+            // Convert this paragraph into a list item
+            const newListItem = child.ownerDocument.createElement('li');
+            newListItem.appendChild(child.cloneNode(true));
+            list.replaceChild(newListItem, child);
+            
+            // Update references
+            lastListItem = newListItem;
+            children = Array.from(list.children);
+            i++;
+          } else if (isExplanatory && lastListItem) {
+            // Attach explanatory text to the previous list item
+            child.remove();
+            lastListItem.appendChild(child);
+            
+            // Refresh the children array since we modified the DOM
+            children = Array.from(list.children);
+            // Don't increment i since we removed an element
+          } else {
+            // Default: attach to previous list item if available
+            if (lastListItem) {
+              child.remove();
+              lastListItem.appendChild(child);
+              children = Array.from(list.children);
+              // Don't increment i since we removed an element
+            } else {
+              i++;
+            }
+          }
+        } else {
+          i++;
+        }
+      }
+      
+      
+      // Mark this list as processed to prevent duplicate processing
+      list.setAttribute('data-orphaned-paragraphs-fixed', 'true');
+    }
+  }
+  
+  /**
+   * Determine whether a list should be nested under a list item or remain separate
+   */
+  private shouldNestSiblingList(listItem: Element, candidateList: Element): boolean {
+    // Don't nest if there are headings between the list item and the candidate list
+    // This indicates the candidate list is a new document section
+    let sibling = listItem.nextElementSibling;
+    while (sibling && sibling !== candidateList) {
+      const tagName = sibling.tagName.toLowerCase();
+      if (['h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName)) {
+        return false; // Heading indicates new section
+      }
+      sibling = sibling.nextElementSibling;
+    }
+    
+    // **MadCap Flare specific fix**: Check for style-based list hierarchy
+    const candidateStyle = candidateList.getAttribute('style') || '';
+    const parentList = listItem.parentElement;
+    const parentStyle = parentList?.getAttribute('style') || '';
+    
+    // MadCap hierarchy patterns:
+    // numbered (no style) → lower-alpha → lower-roman
+    if (candidateStyle.includes('lower-alpha')) {
+      // lower-alpha lists should nest under numbered lists (no style) or upper-alpha
+      if (!parentStyle.includes('lower-alpha') && !parentStyle.includes('lower-roman')) {
+        return true;
+      }
+    }
+    
+    if (candidateStyle.includes('lower-roman')) {
+      // lower-roman lists should nest under lower-alpha lists
+      if (parentStyle.includes('lower-alpha')) {
+        return true;
+      }
+    }
+    
+    if (candidateStyle.includes('upper-alpha')) {
+      // upper-alpha lists should nest under numbered lists
+      if (!parentStyle.includes('lower-alpha') && !parentStyle.includes('upper-alpha') && !parentStyle.includes('lower-roman')) {
+        return true;
+      }
+    }
+    
+    // Check for MadCap class-based hierarchy indicators
+    const candidateClass = candidateList.className || '';
+    if (candidateClass.includes('sub-list') || candidateClass.includes('nested')) {
+      return true;
+    }
+    
+    // Don't nest if the list item's parent list and candidate list are both top-level
+    // and appear to be separate document sections
+    if (parentList && parentList.parentElement) {
+      const grandparent = parentList.parentElement;
+      
+      // If both lists are direct children of body or main content, they're likely separate sections
+      if (grandparent.tagName.toLowerCase() === 'body') {
+        // Check if the candidate list has substantial content (suggests it's a main section)
+        const candidateListItems = candidateList.querySelectorAll('li');
+        if (candidateListItems.length >= 5) { // Increased threshold for MadCap
+          // Very large lists are likely separate document sections
+          return false;
+        }
+      }
+    }
+    
+    // Check if the list item text suggests it introduces a sub-list
+    const listItemText = listItem.textContent?.trim().toLowerCase() || '';
+    const introducesSublist = /\b(include|contains|such as|following|these|consist|comprise|on the|page)\b/.test(listItemText) ||
+                             listItemText.endsWith(':') ||
+                             listItemText.endsWith(';') ||
+                             listItemText.includes('step');
+    
+    // If text suggests sub-list and it's not a large separate section, nest it
+    return introducesSublist;
+  }
+
+  /**
+   * Check if there are more list items coming up in the children array
+   */
+  private hasUpcomingListItems(children: Element[], startIndex: number): boolean {
+    for (let i = startIndex; i < children.length; i++) {
+      const tagName = children[i].tagName.toLowerCase();
+      if (tagName === 'li') {
+        return true;
+      } else if (tagName === 'ol' || tagName === 'ul' || tagName.match(/^h[1-6]$/)) {
+        // Stop at other lists or headers
+        break;
+      }
+    }
+    return false;
+  }
+  
+  /**
+   * Determine if text looks like explanatory content that should be nested under a list item
+   */
+  private isExplanatoryText(text: string): boolean {
+    const lowerText = text.toLowerCase();
+    
+    // Common patterns for explanatory text that should be nested
+    const explanatoryPatterns = [
+      /^the .+ (is|are) displayed/i,
+      /^a .+ (is|are) (displayed|shown)/i,
+      /^this (opens|displays|shows)/i,
+      /^the following/i,
+      /^you (can|will|should) now/i,
+      /^the system (will|displays)/i,
+      /^a (dialog|window|panel|popup|prompt) (is|appears)/i,
+      /^the (dialog|window|panel|popup|prompt) (is|appears)/i,
+      /^the activity's .+ (is|are) displayed/i,
+      /^a security .+ (is|are) displayed/i
+    ];
+    
+    return explanatoryPatterns.some(pattern => pattern.test(text));
+  }
+  
+  /**
+   * Determine if text looks like an action item that should be a separate list item
+   */
+  private looksLikeActionItem(text: string): boolean {
+    const lowerText = text.toLowerCase();
+    
+    // Patterns that suggest this should be a separate action step
+    const actionPatterns = [
+      /^(click|select|choose|press|open|close|enter|type|fill)/i,
+      /^(go to|navigate to|switch to)/i,
+      /^(add|delete|remove|create|edit|modify)/i,
+      /^(save|submit|cancel|confirm)/i,
+      /^(enable|disable|activate|deactivate)/i,
+      /^(drag|drop|move|copy|paste)/i,
+      /^(upload|download|import|export)/i,
+      /^(login|logout|sign in|sign out)/i,
+      /^(review|check|verify|validate)/i
+    ];
+    
+    return actionPatterns.some(pattern => pattern.test(text));
+  }
+  
+  /**
+   * Determine if a list item should contain a nested list based on its content
+   */
+  private shouldNestList(listItem: Element): boolean {
+    // Check the last block-level element in the list item
+    const blockElements = listItem.querySelectorAll('p, div');
+    
+    if (blockElements.length > 0) {
+      // Check the last paragraph or div
+      const lastBlock = blockElements[blockElements.length - 1];
+      const blockText = lastBlock.textContent?.trim() || '';
+      
+      // Check if it ends with a colon (common pattern for lists that should have sublists)
+      if (blockText.endsWith(':')) {
+        return true;
+      }
+    } else {
+      // No block elements, check direct text content
+      // Get only direct text nodes, not nested content
+      const directText = Array.from(listItem.childNodes)
+        .filter(node => node.nodeType === 3) // TEXT_NODE
+        .map(node => node.textContent?.trim() || '')
+        .join(' ')
+        .trim();
+        
+      if (directText.endsWith(':')) {
+        return true;
+      }
+    }
+    
+    // Additional heuristics for MadCap patterns
+    // Check if the list item contains introductory phrases that typically precede sublists
+    const itemText = listItem.textContent?.toLowerCase() || '';
+    const introductoryPatterns = [
+      'follow these steps',
+      'following steps',
+      'do the following',
+      'as follows',
+      'includes',
+      'contains',
+      'consists of',
+      'comprised of'
+    ];
+    
+    return introductoryPatterns.some(pattern => itemText.includes(pattern));
   }
 
   /**
    * Separate mixed content in paragraphs (images + text) into separate elements
    * This creates clean DOM structure for converters to work with
+   * Skip paragraphs that only contain inline icons to preserve their structure
    */
   private separateMixedContent(document: Document): void {
     const paragraphs = Array.from(document.querySelectorAll('p'));
     
     for (const para of paragraphs) {
-      const hasImage = para.querySelector('img') !== null;
+      const images = Array.from(para.querySelectorAll('img'));
       const hasText = Array.from(para.childNodes).some(node => 
         node.nodeType === 3 && node.textContent?.trim() !== ''
       );
       
       // Only process paragraphs with both images and meaningful text
-      if (hasImage && hasText) {
+      if (images.length > 0 && hasText) {
+        // Check if all images are inline icons - if so, don't split the paragraph
+        const allImagesAreInline = images.every(img => !this.isBlockImage(img));
+        
+        if (allImagesAreInline) {
+          // Skip splitting if all images are inline - keep the paragraph intact
+          continue;
+        }
+        
         this.splitMixedContentParagraph(para);
       }
     }
@@ -927,8 +1383,22 @@ export class MadCapPreprocessor {
     if (!parent) return;
     
     const children = Array.from(para.childNodes);
-    let currentTextContent = '';
+    let currentPara: Element | null = null;
     const elementsToInsert: Node[] = [];
+    
+    // Helper to create or get current paragraph
+    const ensureCurrentPara = () => {
+      if (!currentPara) {
+        currentPara = para.ownerDocument.createElement('p');
+        elementsToInsert.push(currentPara);
+      }
+      return currentPara;
+    };
+    
+    // Helper to flush current paragraph
+    const flushCurrentPara = () => {
+      currentPara = null;
+    };
     
     for (const child of children) {
       if (child.nodeType === 3) { // TEXT_NODE
@@ -936,12 +1406,9 @@ export class MadCapPreprocessor {
         if (text) {
           // Check if this text starts with a bullet point pattern
           const bulletMatch = text.match(/^(\s*\*\s+)(.*)/);
-          if (bulletMatch && currentTextContent.trim()) {
-            // We found a bullet point - flush accumulated text first
-            const textPara = para.ownerDocument.createElement('p');
-            textPara.innerHTML = currentTextContent.trim();
-            elementsToInsert.push(textPara);
-            currentTextContent = '';
+          if (bulletMatch && currentPara && (currentPara as Element).childNodes.length > 0) {
+            // We found a bullet point - flush accumulated content first
+            flushCurrentPara();
             
             // Create a list item for the bullet point
             const ul = para.ownerDocument.createElement('ul');
@@ -950,42 +1417,32 @@ export class MadCapPreprocessor {
             ul.appendChild(li);
             elementsToInsert.push(ul);
           } else {
-            currentTextContent += text + ' ';
+            // Add text to current paragraph
+            const p = ensureCurrentPara();
+            p.appendChild(child.cloneNode(true));
           }
         }
       } else if (child.nodeType === 1) { // ELEMENT_NODE
         const element = child as Element;
         
         if (element.tagName.toLowerCase() === 'img') {
-          // Flush accumulated text before the image
-          if (currentTextContent.trim()) {
-            const textPara = para.ownerDocument.createElement('p');
-            textPara.innerHTML = currentTextContent.trim();
-            elementsToInsert.push(textPara);
-            currentTextContent = '';
-          }
-          
-          // Create standalone paragraph for the image if it's a block image
           if (this.isBlockImage(element)) {
+            // Block image - needs its own paragraph
+            flushCurrentPara();
             const imgPara = para.ownerDocument.createElement('p');
             imgPara.appendChild(element.cloneNode(true));
             elementsToInsert.push(imgPara);
           } else {
-            // For inline images, include in the next text block
-            currentTextContent += element.outerHTML + ' ';
+            // Inline image - add to current paragraph
+            const p = ensureCurrentPara();
+            p.appendChild(element.cloneNode(true));
           }
         } else {
-          // Other elements become part of text content
-          currentTextContent += element.outerHTML + ' ';
+          // Other elements - add to current paragraph
+          const p = ensureCurrentPara();
+          p.appendChild(element.cloneNode(true));
         }
       }
-    }
-    
-    // Flush any remaining text
-    if (currentTextContent.trim()) {
-      const textPara = para.ownerDocument.createElement('p');
-      textPara.innerHTML = currentTextContent.trim();
-      elementsToInsert.push(textPara);
     }
     
     // Replace the original paragraph with the separated elements
@@ -1046,21 +1503,27 @@ export class MadCapPreprocessor {
   /**
    * Normalize block structure and remove problematic empty paragraphs
    */
-  private normalizeBlockStructure(document: Document): void {
+  private normalizeBlockStructure(document: Document, outputFormat?: string): void {
     // Skip text node whitespace normalization - it breaks block element detection
     // this.normalizeTextNodeWhitespace(document);
     
-    // Remove empty paragraphs that don't contain images
+    // Remove empty paragraphs that don't contain images or variables
     const emptyParagraphs = Array.from(document.querySelectorAll('p')).filter(p => {
       const text = p.textContent?.trim() || '';
       const hasImage = p.querySelector('img') !== null;
-      return text.length === 0 && !hasImage;
+      const hasVariables = p.querySelector('MadCap\\:variable, madcap\\:variable') !== null;
+      return text.length === 0 && !hasImage && !hasVariables;
     });
     
     emptyParagraphs.forEach(p => p.remove());
     
-    // Convert common HTML formatting to clean structure for AsciiDoc
-    this.normalizeHtmlFormatting(document);
+    // Convert common HTML formatting to clean structure
+    // Skip this for formats that handle their own formatting
+    const skipFormats = ['zendesk', 'markdown', 'enhanced-markdown', 'madcap-markdown', 'pandoc-markdown', 'writerside-markdown'];
+    if (outputFormat && !skipFormats.includes(outputFormat)) {
+      // Only apply for AsciiDoc and other formats that need it
+      this.normalizeHtmlFormatting(document);
+    }
     
     // Ensure proper spacing between block elements
     const blockElements = Array.from(document.querySelectorAll('p, ul, ol, dl, blockquote, h1, h2, h3, h4, h5, h6'));
@@ -1145,6 +1608,143 @@ export class MadCapPreprocessor {
     codeElements.forEach(code => {
       const textNode = document.createTextNode(`\`${code.textContent}\``);
       code.parentNode?.replaceChild(textNode, code);
+    });
+  }
+
+  /**
+   * Ensure W3C XHTML compliance for the processed document
+   */
+  private ensureW3CCompliance(document: Document): void {
+    // Fix self-closing tags for XHTML compliance
+    this.fixSelfClosingTags(document);
+    
+    // Ensure proper list nesting for W3C compliance
+    this.ensureProperListNesting(document);
+    
+    // Fix invalid HTML structures
+    this.fixInvalidNesting(document);
+    
+    // Ensure proper attributes and encoding
+    this.normalizeAttributes(document);
+  }
+
+  /**
+   * Fix self-closing tags to be XHTML compliant
+   */
+  private fixSelfClosingTags(document: Document): void {
+    // Fix img tags
+    const images = Array.from(document.querySelectorAll('img'));
+    images.forEach(img => {
+      // Ensure all required attributes are present
+      if (!img.getAttribute('alt')) {
+        img.setAttribute('alt', img.getAttribute('title') || '');
+      }
+      // JSDOM will handle self-closing syntax in serialization
+    });
+
+    // Fix br tags, hr tags, input tags, etc.
+    const voidElements = ['br', 'hr', 'input', 'meta', 'link', 'area', 'base', 'col', 'embed', 'source', 'track', 'wbr'];
+    voidElements.forEach(tagName => {
+      const elements = Array.from(document.querySelectorAll(tagName));
+      elements.forEach(element => {
+        // JSDOM handles void elements correctly in XHTML mode
+        // Just ensure they don't have text content
+        if (element.textContent) {
+          element.textContent = '';
+        }
+      });
+    });
+  }
+
+  /**
+   * Ensure lists are properly nested according to W3C standards
+   */
+  private ensureProperListNesting(document: Document): void {
+    // Find all lists that are direct children of list items
+    const allLists = Array.from(document.querySelectorAll('li > ol, li > ul'));
+    
+    allLists.forEach(list => {
+      const listItem = list.parentElement as Element;
+      
+      // Ensure the list is at the end of the list item
+      // W3C requires: text content first, then nested lists
+      const listItemChildren = Array.from(listItem.childNodes);
+      const listIndex = listItemChildren.indexOf(list);
+      
+      // Move all text and inline content before the list
+      const contentBeforeList: Node[] = [];
+      const contentAfterList: Node[] = [];
+      
+      listItemChildren.forEach((child, index) => {
+        if (index < listIndex && child.nodeType === 3 && child.textContent?.trim()) {
+          // Text content before list - keep it
+          contentBeforeList.push(child);
+        } else if (index > listIndex) {
+          // Content after list - should be moved before
+          contentAfterList.push(child);
+        }
+      });
+      
+      // Reorganize: content first, then lists
+      contentAfterList.forEach(node => {
+        listItem.insertBefore(node, list);
+      });
+    });
+  }
+
+  /**
+   * Fix invalid HTML nesting structures
+   */
+  private fixInvalidNesting(document: Document): void {
+    // Fix block elements inside inline elements
+    const inlineElements = ['span', 'a', 'em', 'strong', 'i', 'b', 'code', 'small'];
+    const blockElements = ['p', 'div', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'ul', 'ol', 'li', 'blockquote', 'pre'];
+    
+    inlineElements.forEach(inlineTag => {
+      const inlineEls = Array.from(document.querySelectorAll(inlineTag));
+      
+      inlineEls.forEach(inlineEl => {
+        blockElements.forEach(blockTag => {
+          const blockChild = inlineEl.querySelector(blockTag);
+          if (blockChild) {
+            // Invalid: block element inside inline element
+            // Solution: Split the inline element or restructure
+            console.warn(`W3C Compliance: Found ${blockTag} inside ${inlineTag}, restructuring...`);
+            
+            // Move the block element outside and split the inline element
+            const parent = inlineEl.parentElement;
+            if (parent) {
+              parent.insertBefore(blockChild, inlineEl.nextSibling);
+            }
+          }
+        });
+      });
+    });
+  }
+
+  /**
+   * Normalize attributes for XHTML compliance
+   */
+  private normalizeAttributes(document: Document): void {
+    // Ensure all attributes are properly quoted and lowercase
+    const allElements = Array.from(document.querySelectorAll('*'));
+    
+    allElements.forEach(element => {
+      // Convert attribute names to lowercase
+      const attributes = Array.from(element.attributes);
+      attributes.forEach(attr => {
+        if (attr.name !== attr.name.toLowerCase()) {
+          element.setAttribute(attr.name.toLowerCase(), attr.value);
+          element.removeAttribute(attr.name);
+        }
+      });
+      
+      // Ensure boolean attributes are properly formatted for XHTML
+      ['checked', 'disabled', 'readonly', 'selected', 'multiple'].forEach(boolAttr => {
+        if (element.hasAttribute(boolAttr)) {
+          element.setAttribute(boolAttr, boolAttr);
+        }
+      });
     });
   }
 

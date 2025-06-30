@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en-us">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Create a New Activity</title>
+</head>
+<body>
+﻿<!--?xml version="1.0" encoding="utf-8"?-->
+
+    
+    
+        <h1 class="zendesk-heading" style="margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600;">Create a New Activity</h1>
+        <p>To create a new activity, follow these steps:</p>
+        <ol data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+            <li>
+                <p>In Uptempo, click _Activities _in the navigation sidebar.</p>
+            </li>
+            <li>
+                <p>In the Activities section, click _Create Activity. _The button is available on both the _Timeline_ and _Summary_ views:</p>
+                <p>
+                    <img src="../Images/Screens/CreateActivity.png" title="c" alt="" class="zendesk-image-large" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">
+                </p>
+                <p>The _Create Activity_ setup assistant opens with the _Type_ page displayed.</p>
+                <div class="note">
+                    <p><span class="noteInDiv">Note:</span>&nbsp;</p>
+                    <p>You can also create a new activity directly under an existing activity, which will automatically set that activity as the new activity's parent. For details, see <a href="01-02-3 CreateActivityAddUnder.html">Create New Activities Directly Under Existing Activities</a>.</p>
+                </div>
+            </li>
+            <li>
+                <p>On the _Type_ page:</p>
+            <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                <li>
+                    <p>Use the _Activity type _list to select the type of activity you want to create from the available options. You can also type a keyword into the field to search for matching options.</p>
+                </li>
+                <li>
+                    <p>Use the _Parent_ list to select the activity under which you want to create this new activity in the hierarchy. You can also type a keyword into the field to search for matching options.</p>
+                    <p><span class="noteInDiv">Note:</span> Depending on the rules set up in your Uptempo environment, selecting a parent activity may be optional for some activity types.</p>
+                </li>
+                <li>
+                    <p>Click _Next_.</p>
+                    <p>The _Details_ page is displayed.</p>
+                </li>
+            </ol></li>
+            
+            <li>
+                <p>On the _Details_ page:</p>
+                <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                    <li>
+                        <p>Enter a name for your new activity into the _Name_ field.</p>
+                    </li>
+                    <li>
+                        <p>Optional: To set the date range when this activity will be in-market, use the _In-market Dates_ fields to choose a start and end date.</p>
+                    </li>
+                    <li>
+                        <p>Depending on the activity type you selected, additional attribute fields may be displayed. Complete any other attributes as needed: if an attribute is marked with an asterisk (*), it is required and you must select or enter a value before you can proceed.</p>
+                        <div class="snippet-boundary"><p><span class="noteInDiv">Note:</span> If you see the icons</p><p><img src="../../Images/GUI-Elemente/Controlling attribute.png" alt="" class="zendesk-png-icon" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> and</p><p><img src="../../Images/GUI-Elemente/Dependent attribute.png" alt="" class="zendesk-png-icon" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> next to an attribute name, then these attributes are part of a dependency. Hover over the icon to see information about which other attribute is part of the dependency:</p><p><img src="../../Images/GUI-Elemente/Dependent attribute Tooltip.png" alt="" class="zendesk-png-icon" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> <br> The options that you can select in the dependent attribute are controlled by the value of the controlling attribute. If no option is selected for the controlling attribute, then no options are valid for the dependent attribute. If the controlling attribute is a multi-select field, the available dependent options will be the combination of the valid options for each selected controlling option.</p></div></li>
+                    <li>
+                        <p>Click _Next_.</p>
+                        <p>The _Budget_ page is displayed.</p>
+                    </li>
+                </ol>
+            </li>
+            <li>
+                <p>On the _Budget_ page:</p>
+                <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                    <li>
+                        <p>Optional: To enter a cost estimate for this activity, use the Estimated Costs field. For instructions, see <a href="01-00 Activities.html#Estimating">Estimating Activity Costs</a>.</p>
+                    </li>
+                    <li>
+                        <p>Optional: To connect this activity to an investment, click _Add funding source_. For instructions, see <a href="#Connecting">Connecting Existing Activities to Financial Items</a>.</p>
+                    </li>
+                    <li>
+                        <p>Click _Next_.</p>
+                        <p>The _Impact_ page is displayed.</p>
+                        <div class="note">
+                            <p><span class="noteInDiv">Note:</span>
+                            </p>
+                            <p>
+                                The specification of attributes can have an influence on the calculation of the performance plan data. We therefore recommend that you first edit all attributes of the activity on the Details tab. Only then calculate the performance plan data.</p>
+                        </div>
+                    </li>
+                </ol>
+            </li>
+            <li>
+                <p>On the _Impact_ page:</p>
+                <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                    <li>
+                        <p>Optional: If the parent activity you selected on the _Type_ page allows child activites with performance data (or if the activity you're creating does not have a parent), you can configure the performance data here. For instructions, see <a href="#Configur">Configuring Planned Impact</a>.</p>
+                    </li>
+                    <li>
+                        <p>If no additional steps are displayed after the _Impact_ step, skip to step 8.</p>
+                    </li>
+                    <li>
+                        <p>If a _Workflow_ step is available, click _Next_. </p>
+                        <p>The _Workflow_ step is displayed.</p>
+                    </li>
+                </ol>
+            </li>
+            <li>
+                <p>On the Workflow step: </p>
+                <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                    <li>
+                        <p>Optional:&nbsp;If the activity is linked with a workflow, decide when the workflow will be started:</p>
+                        <ul data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+                            <li>
+                                <p>If the workflow is to be started with the creation of the activity, select the _Automatically create the workflow_ checkbox. </p>
+                            </li>
+                            <li>
+                                <p>If the workflow is to be started at a later time, clear the _Automatically create the workflow_ checkbox.</p>
+                            </li>
+                        </ul>
+                    </li>
+                </ol>
+            </li>
+            <li>
+                <p>Click _Submit _to finish creating the activity.</p>
+                <p>The _Create Activity_ panel closes, and the new activity's _Details_ panel opens automatically.</p>
+            </li>
+        </ol>
+        <p>You have successfully created the activity. You can now make changes to the new activity in the _Details_ panel, or close the panel if you want to do something else.</p>
+        <h3 class="dropdown-heading zendesk-heading" style="margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600;">Connecting Activities to Financial Items</h3><div class="dropdown-content">
+                <p>You can connect activities at various levels (plan, campaign, program, etc.) to one or multiple investments in _Uptempo Spend_. You can do this either as part of creating an activity, or on an existing activity.</p>
+                <p>To connect activities to investments, follow these steps:</p>
+                <ol data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+                    <li>
+                        <p>On the activity where you want to connect investments, open the _Budget_ page:</p>
+                        <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                            <li>
+                                <p>While creating a new activity, go to the _Budget_ page in the _Create Activity_ panel.</p>
+                            </li>
+                            <li>
+                                <p>For an existing activity, go to the _Activities_ section and click on the activity in the hierarchy to open its _Details_ panel, then click the _Budget_ tab.</p>
+                            </li>
+                        </ol>
+                    </li>
+                    <li>
+                        <p>Click _Add Funding Source_.</p>
+                        <p>
+                            <img src="../Images/Screens/AddFundingSourceNewActivity.png" alt="" class="zendesk-image-large" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">
+                        </p>
+                        <p>The _Select Investment Item_ dialog is displayed.</p>
+                    </li>
+                    <li>
+                        <p>Select the budget you want to use from the _Select Budget_ lists. You can also use the search box to search for the budget you want.</p>
+                        <p>The _Investment Item_ list appears:</p>
+                        <p>
+                            <img src="../Images/Screens/InvestItem.png" alt="" class="zendesk-image-large" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">
+                            <br>
+                        </p>
+                    </li>
+                    <li>
+                        <p>In the _Investment Item_ list, find the investment you want to connect. Click an investment item's</p><p><img src="../Images/GUI-Elemente/Link Activity.png" class="zendesk-png-icon" alt="" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> _Link_ button to connect it to the activity.</p>
+                        <div class="note">
+                            <p><span class="noteInDiv">Note:</span> </p>
+                            <p>The</p><p><img src="../Images/GUI-Elemente/Link Activity.png" class="zendesk-png-icon" alt="" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> _Link_ button may be unavailable for some investment items to indicate that they can't be connected to the activity. Whether an investment can be connected to a particular activity is controlled by the rules that have been set up in your Uptempo environment.</p>
+                        </div>
+                        <p>The _Select Investment Item_ dialog closes. You are returned to the activity's _Budget_ page, which now contains additional subsections that display spend data for the connected investment:</p>
+                        <p>
+                            <img src="../Images/Screens/BudgetTabConnectedSpend.png" alt="" class="zendesk-image-large" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">
+                        </p>
+                        <p><span class="noteInDiv">Note:</span>
+                        </p>
+                        <p>The subsections that are displayed correspond to the spend data categories that are configured in _Uptempo Spend_: by default, these are _Planned_, _Expected_, _Committed_, and _Actual_. In your environment, some of these subsections may not be visible, or they may have different names.</p>
+                    </li>
+                    <li>
+                        <p>Click on a subsection to expand it and see the details of the connected investment:</p>
+                        <p>
+                            <img src="../Images/Screens/FundingSourceDetails.png" alt="" class="zendesk-image-large" style="max-width: 100%; height: auto; border: 1px solid #ddd; margin: 10px 0;">
+                        </p>
+                        <ul data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+                            <li>
+                                <p>To disconnect the investment from the activity, click</p><p><img src="../Images/GUI-Elemente/CloseCircle.png" class="zendesk-png-icon" alt="" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> _Disconnect_ .</p>
+                            </li>
+                            <li>
+                                <p>To view the details of the investment in _Uptempo Spend_ , click</p><p><img src="../Images/GUI-Elemente/SearchCircle.png" class="zendesk-png-icon" alt="" style="width: 1em; height: 1em; display: inline-block; vertical-align: middle; max-width: 24px; max-height: 24px;"> _Search_ .</p>
+                            </li>
+                        </ul>
+                    </li>
+                    <li>
+                        <p>Optional: To connect additional investments to the activity, click _Add funding source_ again and repeat steps 3 and 4.</p>
+                        <p>Any further investments you connect are also displayed on the activity's _Budget_ page.</p>
+                    </li>
+                    <li>
+                        <p>Finish up:</p>
+                        <ul data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+                            <li>
+                                <p>If you're creating a new activity, finish creating the activity and click _Submit _to apply your changes.</p>
+                            </li>
+                            <li>
+                                <p>If you're editing an existing activity, close the activity's _Details_ tab to apply your changes.</p>
+                            </li>
+                        </ul>
+                    </li>
+                </ol>
+                <p>The selected investments are now connected to the activity, and will be visible in spend reports and budgeting overviews.</p>
+            </div>
+        <h3 class="dropdown-heading zendesk-heading" style="margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600;">Configuring Planned Impact</h3><div class="dropdown-content">
+                <div class="snippet-boundary"><p>If the activity is a point where plan performance data is to be captured:</p><ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+            <li>
+                <p>Add the number of requests the activity is expected to generate.</p>
+            <p>Based on the funnel settings, the planned revenue projection is calculated.</p></li>
+            
+            <li>
+                <p>In case you want to edit the distribution: </p>
+                <ol style="margin: 0.5em 0; padding-left: 1.5em;" data-orphaned-paragraphs-fixed="true" class="zendesk-list">
+                    <li>
+                        <p>Select _Monthly_ or _Quarterly_ (distribution) in the _Distribute Results_ dropdown.</p>
+                    <p>The months or quarters with the planned inquiries are displayed.</p></li>
+                    
+                    <li>
+                        <p>Click _Edit distribution_.</p>
+                    <p>The fields per month/quarter are editable.</p></li>
+                    
+                    <li>
+                        <p>Edit the number of inquiries per time range as desired.</p>
+                    </li>
+                </ol>
+            <p>
+                <span class="noteInDiv">Note:</span>&nbsp;Editing the month/quarter fields will override the number in the _Planned Inquiries_ field.</p></li>
+            
+        </ol></div></div>
+        <h3 class="dropdown-heading zendesk-heading" style="margin-top: 1.5em; margin-bottom: 0.5em; font-weight: 600;">Related tasks</h3><div class="dropdown-content">
+                <ul data-orphaned-paragraphs-fixed="true" class="zendesk-list" style="margin: 0.5em 0; padding-left: 1.5em;">
+                    <li>
+                        <p>
+                            <madcap:xref href="01-02-3 CreateActivityAddUnder.htm">Create New Activities Directly Under Existing Activities</madcap:xref>
+                        </p>
+                    </li>
+                </ul>
+            </div>
+        
+    
+
+</body>
+</html>

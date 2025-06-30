@@ -1,0 +1,126 @@
+= Enhanced Converter Test Document
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+This document tests all the enhanced features of our improved AsciiDoc converter.
+
+=== Complex List Structures
+
+Testing proper list nesting and continuation markers:
+
+. Main step one with description
+. Main step two with substeps:
+.. Substep 2a with detailed explanation
+.. Substep 2b containing an image:
+
+image::../Images/Screens/example-screenshot.png[Example Screenshot]
+
++
+This image should maintain list structure with proper continuation.
+
+.. Substep 2c with a note:
+
+[NOTE]
+
+====
+
+This note should be properly formatted within the list structure with correct indentation and continuation markers.
+====
+
+. Main step three with mixed content:
++
+Some explanatory text after the list marker.
+
++
+image:../Images/GUI-Elemente/important-icon.png[Important Icon,18] This paragraph contains an inline icon.
+
+[WARNING]
+====
+
+This warning should be properly continued within the list.
+====
+
+
+=== Advanced Table Structures
+
+Testing enhanced table conversion with formatting preservation:
+
+.Enhanced Table Features Test
+[cols="2,1,3,4"]
+
+|===
+|Feature
+|^Status
+|>Priority
+|Description
+
+|s*List Processing*
+|^e✅ _Complete_
+|>High
+|mProper nesting with `continuation markers`
+|s*Table Enhancement*
+|^e🔄 _In Progress_
+|>High
+|Advanced formatting with link:#features[links]
+|2+s*Path Resolution*
+|>Medium
+|Smart path detection and normalization
+
+|===
+
+=== Image Path Resolution Tests
+
+Testing various image path patterns:
+
+Block image with standard path:
+
+image::../Images/Screenshots/main-interface.png[Main Interface Screenshot]
+
+Inline icon: image:../Images/Icons/warning.png[Warning,18] with text around it.
+
+Image with complex path: image:../Images/GUI/button-save.png[Save Button]
+
+=== Validation Test Cases
+
+Testing various validation scenarios:
+
+* First item
+* +
+* Second item (this + should be detected as orphaned)
+
+
+=== Variable Processing
+
+Testing variable references: {CompanyName} should be processed correctly.
+
+Another variable: [%=ProductVersion%] should also be handled.
+
+=== Enhanced Admonitions
+
+[NOTE]
+====
+
+This is a complex note with *formatting* and >.
+
+It also contains multiple paragraphs to test proper spacing and formatting preservation.
+====
+
+TIP: This is a semantic admonition that should be properly converted.
+
+==== Expandable Section Title
+
+This content should be converted to a collapsible block in AsciiDoc.
+
+*** List item within dropdown
+*** Another list item
+
+
+[cols="5,5"]
+
+|===
+|Cell without proper table structure
+|Another cell with \| unescaped pipe
+
+|===

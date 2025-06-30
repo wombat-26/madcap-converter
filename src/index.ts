@@ -5,6 +5,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod';
 import { DocumentService } from './document-service.js';
 import { BatchService } from './batch-service.js';
+import { WritersideBatchService } from './services/writerside-batch-service.js';
 import { TocService } from './toc-service.js';
 import { TOCDiscoveryService } from './services/toc-discovery.js';
 import { LinkValidator } from './services/link-validator.js';
@@ -29,7 +30,18 @@ const VariableOptionsSchema = z.object({
   extractVariables: z.boolean().optional().describe('Extract MadCap variables to separate file instead of flattening to text (default: false)'),
   variableFormat: z.enum(['adoc', 'writerside']).optional().describe('Format for variables file (adoc = AsciiDoc attributes, writerside = XML)'),
   variablesOutputPath: z.string().optional().describe('Custom path for variables file (default: auto-generated)'),
-  preserveVariableStructure: z.boolean().optional().describe('Preserve namespace grouping in variables file (default: false)')
+  preserveVariableStructure: z.boolean().optional().describe('Preserve namespace grouping in variables file (default: false)'),
+  skipFileGeneration: z.boolean().optional().describe('Skip generating variables file (for batch processing, default: false)'),
+  
+  // Enhanced variable handling options
+  variableMode: z.enum(['flatten', 'include', 'reference']).optional().describe('How to handle variables in content: flatten = replace with values, include = generate includes, reference = convert to target format references (default: reference)'),
+  nameConvention: z.enum(['camelCase', 'snake_case', 'kebab-case', 'original']).optional().describe('Variable naming convention (default: original)'),
+  instanceName: z.string().optional().describe('Instance name for Writerside conditional variables'),
+  variablePrefix: z.string().optional().describe('Prefix for variable names to avoid conflicts'),
+  includePatterns: z.array(z.string()).optional().describe('Filter variables by name patterns (regex)'),
+  excludePatterns: z.array(z.string()).optional().describe('Exclude variables by name patterns (regex)'),
+  flvarFiles: z.array(z.string()).optional().describe('Explicit list of FLVAR files to process'),
+  autoDiscoverFLVAR: z.boolean().optional().describe('Automatically find FLVAR files in project (default: true)')
 }).optional();
 
 const AsciiDocOptionsSchema = z.object({
@@ -44,16 +56,60 @@ const AsciiDocOptionsSchema = z.object({
   useBookDoctype: z.boolean().optional().describe('Set doctype to "book" for multi-chapter documents (default: true)')
 }).optional();
 
+const WritersideOptionsSchema = z.object({
+  // Project structure options
+  createProject: z.boolean().optional().describe('Generate complete Writerside project structure (default: false)'),
+  projectName: z.string().optional().describe('Name for the Writerside project (auto-detected if not provided)'),
+  
+  // Instance configuration
+  generateInstances: z.boolean().optional().describe('Auto-generate instances based on MadCap conditions (default: true)'),
+  instanceMapping: z.record(z.string()).optional().describe('Map MadCap conditions to specific instance names'),
+  
+  // Content enhancement options
+  enableProcedureBlocks: z.boolean().optional().describe('Convert step-by-step content to Writerside procedure blocks (default: true)'),
+  enableCollapsibleBlocks: z.boolean().optional().describe('Convert expandable content to collapsible blocks (default: true)'),
+  enableTabs: z.boolean().optional().describe('Convert tabbed content to tab groups (default: true)'),
+  enableSummaryCards: z.boolean().optional().describe('Convert summary content to card layouts (default: true)'),
+  enableSemanticMarkup: z.boolean().optional().describe('Use Writerside semantic elements for enhanced content (default: true)'),
+  
+  // TOC and navigation
+  generateTOC: z.boolean().optional().describe('Generate tree files from MadCap TOC files (default: true)'),
+  organizeByTOC: z.boolean().optional().describe('Use TOC structure for content organization (default: true)'),
+  preserveTopicHierarchy: z.boolean().optional().describe('Maintain hierarchical topic structure (default: true)'),
+  
+  // Variable and conditional content
+  convertVariables: z.boolean().optional().describe('Convert MadCap variables to Writerside format (default: true)'),
+  convertConditions: z.boolean().optional().describe('Convert MadCap conditions to Writerside filters (default: true)'),
+  mergeSnippets: z.boolean().optional().describe('Convert MadCap snippets to Writerside includes (default: true)'),
+  
+  // Build configuration
+  buildConfig: z.object({
+    primaryColor: z.string().optional().describe('Theme primary color (e.g., "blue", "red", "green")'),
+    headerLogo: z.string().optional().describe('Header logo file path'),
+    favicon: z.string().optional().describe('Favicon file path'),
+    webRoot: z.string().optional().describe('Web root URL for published documentation'),
+    enableSearch: z.boolean().optional().describe('Enable search functionality (default: true)'),
+    enableSitemap: z.boolean().optional().describe('Generate sitemap for SEO (default: true)'),
+    enableAnalytics: z.boolean().optional().describe('Enable analytics integration (default: false)')
+  }).optional().describe('Build configuration options for Writerside'),
+  
+  // Advanced options
+  generateStarterContent: z.boolean().optional().describe('Create overview and getting started topics (default: true)'),
+  optimizeForMobile: z.boolean().optional().describe('Optimize content for mobile viewing (default: true)'),
+  includeMetadata: z.boolean().optional().describe('Include topic metadata and labels (default: true)')
+}).optional();
+
 const ConvertDocumentSchema = {
   input: z.string().describe('Input content (HTML, file path, or base64 encoded content)'),
   inputType: z.enum(['html', 'word', 'madcap']).describe('Type of input document: html (standard HTML), word (Microsoft Word document), madcap (MadCap Flare unpublished source)'),
-  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
+  format: z.enum(['asciidoc', 'writerside-markdown', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
   outputPath: z.string().optional().describe('Output file path (if not provided, returns content only)'),
   variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
   asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
+  writersideOptions: WritersideOptionsSchema.describe('Writerside-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
@@ -65,12 +121,13 @@ const ConvertDocumentSchema = {
 const ConvertFileSchema = {
   inputPath: z.string().describe('Path to the input file'),
   outputPath: z.string().describe('Path for the output file'),
-  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
+  format: z.enum(['asciidoc', 'writerside-markdown', 'zendesk']).describe('Output format'),
   preserveFormatting: z.boolean().optional().describe('Whether to preserve formatting'),
   extractImages: z.boolean().optional().describe('Whether to extract and reference images'),
   variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
   asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
+  writersideOptions: WritersideOptionsSchema.describe('Writerside-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
@@ -84,7 +141,7 @@ const GetSupportedFormatsSchema = {};
 const ConvertFolderSchema = {
   inputDir: z.string().describe('Path to input directory containing documents'),
   outputDir: z.string().describe('Path to output directory for converted documents'),
-  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
+  format: z.enum(['asciidoc', 'writerside-markdown', 'zendesk']).describe('Output format'),
   recursive: z.boolean().optional().describe('Process subdirectories recursively (default: true)'),
   preserveStructure: z.boolean().optional().describe('Preserve directory structure (default: true)'),
   copyImages: z.boolean().optional().describe('Copy referenced images (default: true)'),
@@ -98,6 +155,7 @@ const ConvertFolderSchema = {
   variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
   asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
+  writersideOptions: WritersideOptionsSchema.describe('Writerside-specific conversion options'),
   // Legacy individual parameters for backward compatibility
   sectionId: z.string().optional().describe('Zendesk section ID (legacy - use zendeskOptions)'),
   locale: z.string().optional().describe('Zendesk locale (legacy - use zendeskOptions)'),
@@ -113,19 +171,20 @@ const DiscoverTOCsSchema = {
 const ConvertWithTOCStructureSchema = {
   projectPath: z.string().describe('Path to MadCap Flare project directory'),
   outputDir: z.string().describe('Path to output directory for converted documents'),
-  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Output format'),
+  format: z.enum(['asciidoc', 'writerside-markdown', 'zendesk']).describe('Output format'),
   generateMasterDoc: z.boolean().optional().describe('Generate master document from TOCs (default: true)'),
   copyImages: z.boolean().optional().describe('Copy referenced images (default: true)'),
   preserveFormatting: z.boolean().optional().describe('Preserve formatting (default: true)'),
   extractImages: z.boolean().optional().describe('Extract images from documents (default: true)'),
   variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables'),
   zendeskOptions: ZendeskOptionsSchema.describe('Zendesk-specific conversion options'),
-  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options')
+  asciidocOptions: AsciiDocOptionsSchema.describe('AsciiDoc-specific conversion options'),
+  writersideOptions: WritersideOptionsSchema.describe('Writerside-specific conversion options')
 };
 
 const ValidateLinksSchema = {
   outputDir: z.string().describe('Path to converted documents directory'),
-  format: z.enum(['markdown', 'asciidoc', 'zendesk']).describe('Document format to validate')
+  format: z.enum(['asciidoc', 'writerside-markdown', 'zendesk']).describe('Document format to validate')
 };
 
 const ValidateInputSchema = {
@@ -148,19 +207,34 @@ const GenerateMasterDocSchema = {
   fltocPath: z.string().describe('Path to MadCap .fltoc file'),
   contentBasePath: z.string().describe('Base path to Content folder'),
   outputPath: z.string().describe('Output path for master document'),
-  format: z.enum(['markdown', 'asciidoc']).optional().describe('Output format (default: asciidoc)')
+  format: z.enum(['asciidoc', 'writerside-markdown']).optional().describe('Output format (default: asciidoc)')
+};
+
+const ConvertToWritersideProjectSchema = {
+  inputDir: z.string().describe('Path to MadCap Flare project directory'),
+  outputDir: z.string().describe('Path to output directory for Writerside project'),
+  projectName: z.string().optional().describe('Name for the Writerside project (auto-detected from directory if not provided)'),
+  createProject: z.boolean().optional().describe('Generate complete Writerside project structure (default: true)'),
+  generateInstances: z.boolean().optional().describe('Auto-generate instances based on MadCap conditions (default: true)'),
+  copyImages: z.boolean().optional().describe('Copy referenced images (default: true)'),
+  generateTOC: z.boolean().optional().describe('Generate tree files from MadCap TOC files (default: true)'),
+  generateStarterContent: z.boolean().optional().describe('Create overview and getting started topics (default: true)'),
+  writersideOptions: WritersideOptionsSchema.describe('Writerside-specific conversion options'),
+  variableOptions: VariableOptionsSchema.describe('Variable extraction options for MadCap variables')
 };
 
 class MadCapConverterServer {
   private server: McpServer;
   private documentService: DocumentService;
   private batchService: BatchService;
+  private writersideBatchService: WritersideBatchService;
   private tocService: TocService;
   private tocDiscoveryService: TOCDiscoveryService;
 
   constructor() {
     this.documentService = new DocumentService();
     this.batchService = new BatchService();
+    this.writersideBatchService = new WritersideBatchService();
     this.tocService = new TocService();
     this.tocDiscoveryService = new TOCDiscoveryService();
     
@@ -286,7 +360,7 @@ class MadCapConverterServer {
         content: [
           {
             type: 'text',
-            text: `Supported input formats: ${formats.join(', ')}\n\nSupported output formats: markdown, asciidoc, zendesk`
+            text: `Supported input formats: ${formats.join(', ')}\n\nSupported output formats: markdown, asciidoc, enhanced-asciidoc, optimized-asciidoc, zendesk, pandoc-asciidoc, pandoc-markdown, enhanced-markdown, madcap-markdown, writerside-markdown`
           }
         ]
       };
@@ -323,7 +397,8 @@ class MadCapConverterServer {
         generateMasterDoc: args.generateMasterDoc ?? false,
         variableOptions: args.variableOptions,
         zendeskOptions,
-        asciidocOptions: args.asciidocOptions
+        asciidocOptions: args.asciidocOptions,
+        writersideOptions: args.writersideOptions
       };
 
       const result = await this.batchService.convertFolder(
@@ -618,6 +693,100 @@ ${result.results.slice(0, 10).map(r => `  - ${r.outputPath}`).join('\n')}${resul
         ]
       };
     });
+
+    this.server.tool('convert_to_writerside_project', ConvertToWritersideProjectSchema, async (args) => {
+      try {
+        const options = {
+          createProject: args.createProject ?? true,
+          projectName: args.projectName,
+          generateInstances: args.generateInstances ?? true,
+          copyImages: args.copyImages ?? true,
+          generateTOC: args.generateTOC ?? true,
+          generateStarterContent: args.generateStarterContent ?? true,
+          format: 'writerside-markdown' as const,
+          inputType: 'madcap' as const,
+          recursive: true,
+          preserveStructure: true,
+          variableOptions: args.variableOptions,
+          writersideOptions: args.writersideOptions
+        };
+
+        const result = await this.writersideBatchService.convertToWritersideProject(
+          args.inputDir,
+          args.outputDir,
+          options
+        );
+
+        const summary = [
+          `📁 **Writerside Project Created Successfully**`,
+          ``,
+          `**Project Details:**`,
+          `- Source: ${args.inputDir}`,
+          `- Output: ${args.outputDir}`,
+          `- Project name: ${options.projectName || 'Auto-detected'}`,
+          ``,
+          `**Conversion Results:**`,
+          `- Total files processed: ${result.totalFiles}`,
+          `- Successfully converted: ${result.convertedFiles}`,
+          `- Skipped files: ${result.skippedFiles}`,
+          `- Errors: ${result.errors.length}`,
+          ``,
+          `**Generated Files:**`,
+          `- Configuration files: ${result.configFiles.length}`,
+          `- Tree files: ${result.treeFiles.length}`,
+          `- Variable files: ${result.variableFiles.length}`,
+          `- Instances: ${result.instances.length}`,
+          ``
+        ];
+
+        if (result.instances.length > 0) {
+          summary.push(`**Instances Created:**`);
+          result.instances.forEach(instance => {
+            summary.push(`- ${instance.name} (${instance.id})`);
+          });
+          summary.push(``);
+        }
+
+        if (result.warnings.length > 0) {
+          summary.push(`**⚠️ Warnings:**`);
+          result.warnings.forEach(warning => {
+            summary.push(`- ${warning}`);
+          });
+          summary.push(``);
+        }
+
+        if (result.errors.length > 0) {
+          summary.push(`**❌ Errors:**`);
+          result.errors.forEach(error => {
+            summary.push(`- ${error.file}: ${error.error}`);
+          });
+          summary.push(``);
+        }
+
+        summary.push(`**✅ Writerside project ready!**`);
+        summary.push(`Open the project directory in IntelliJ IDEA with the Writerside plugin to continue.`);
+
+        return {
+          content: [
+            {
+              type: 'text',
+              text: summary.join('\n')
+            }
+          ]
+        };
+
+      } catch (error) {
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        return {
+          content: [
+            {
+              type: 'text', 
+              text: `❌ **Writerside project conversion failed**\n\nError: ${errorMessage}`
+            }
+          ]
+        };
+      }
+    });
   }
 
   private countTocEntries(entries: any[]): number {
@@ -654,5 +823,47 @@ ${result.results.slice(0, 10).map(r => `  - ${r.outputPath}`).join('\n')}${resul
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const server = new MadCapConverterServer();
-  server.run().catch(console.error);
+  
+  // Graceful shutdown handlers
+  let isShuttingDown = false;
+  
+  const gracefulShutdown = (signal: string) => {
+    if (isShuttingDown) return;
+    isShuttingDown = true;
+    
+    console.log(`Received ${signal}, shutting down gracefully...`);
+    
+    // Give time for any ongoing operations to complete
+    setTimeout(() => {
+      console.log('Shutdown complete');
+      process.exit(0);
+    }, 1000);
+  };
+  
+  // Handle various termination signals
+  process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+  process.on('SIGINT', () => gracefulShutdown('SIGINT'));
+  process.on('SIGHUP', () => gracefulShutdown('SIGHUP'));
+  
+  // Handle uncaught exceptions
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+    if (!isShuttingDown) {
+      gracefulShutdown('uncaughtException');
+    }
+  });
+  
+  process.on('unhandledRejection', (reason, promise) => {
+    console.error('Unhandled rejection at:', promise, 'reason:', reason);
+    if (!isShuttingDown) {
+      gracefulShutdown('unhandledRejection');
+    }
+  });
+  
+  server.run().catch((error) => {
+    console.error('Server error:', error);
+    if (!isShuttingDown) {
+      gracefulShutdown('serverError');
+    }
+  });
 }

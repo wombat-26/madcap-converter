@@ -1,0 +1,55 @@
+= Complex List and HTML Artifact Test
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+This document tests  AsciiDoc conversion with &special& HTML entities.
+
+Here's a complex nested list structure:
+
+. First level item with "quoted text"
++
+Additional paragraph in first item
+
+
+[loweralpha]
+
+.. Nested alpha item a
+.. Nested alpha item b
++
+With a paragraph
+
+
+[NOTE]
+====
+
+This is a note inside a list
+====
+
+.. Nested alpha item c
++
+... Third level numeric
+... Another third level
+. Second first-level item
++
+With multiple paragraphs
+
++
+This is the second paragraph
+
+** Bullet point one
+** Bullet point two
++
+*** Nested bullet
+*** Another nested bullet
+. Third item with *bold* and _italic_ text
+
+
+Text after the list with  and other artifacts.
+
+[WARNING]
+====
+
+Check for HTML entities:  ©®
+====

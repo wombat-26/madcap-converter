@@ -8,7 +8,7 @@ export class ZendeskConverter implements DocumentConverter {
   
   // Safe HTML tags allowed by Zendesk
   private readonly SAFE_HTML_TAGS = [
-    'p', 'br', 'strong', 'em', 'u', 'ol', 'ul', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+    'p', 'br', 'strong', 'em', 'i', 'u', 'ol', 'ul', 'li', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
     'blockquote', 'pre', 'code', 'a', 'img', 'table', 'thead', 'tbody', 'tr', 'th', 'td',
     'div', 'span', 'hr', 'sub', 'sup', 'small', 'del', 'ins', 'kbd', 'svg', 'path', 'g', 'circle',
     'rect', 'line', 'polygon', 'polyline', 'ellipse', 'defs', 'use'
@@ -37,7 +37,7 @@ export class ZendeskConverter implements DocumentConverter {
     let processedInput = input;
     if (options.inputType === 'madcap' || this.madcapPreprocessor.containsMadCapContent(input)) {
       // Use shared MadCap preprocessing
-      processedInput = await this.madcapPreprocessor.preprocessMadCapContent(input, options.inputPath);
+      processedInput = await this.madcapPreprocessor.preprocessMadCapContent(input, options.inputPath, 'zendesk');
     }
 
     // Parse HTML content

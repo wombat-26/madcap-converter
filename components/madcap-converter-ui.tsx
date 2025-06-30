@@ -29,7 +29,7 @@ import {
   AlertTriangle,
   X
 } from 'lucide-react'
-import { MCPClient, ConversionOptions, ZendeskOptions, BatchConversionOptions, VariableExtractionOptions, AsciidocOptions } from '@/lib/mcp-client'
+import { MCPClient, ConversionOptions, ZendeskOptions, BatchConversionOptions, VariableExtractionOptions, AsciidocOptions, WritersideOptions, WritersideProjectOptions } from '@/lib/mcp-client'
 
 interface ConversionState {
   isConverting: boolean
@@ -49,7 +49,7 @@ interface NotificationState {
 
 export function MadCapConverterUI() {
   // Basic Options
-  const [format, setFormat] = useState<'markdown' | 'asciidoc' | 'zendesk'>('zendesk')
+  const [format, setFormat] = useState<'asciidoc' | 'writerside-markdown' | 'zendesk'>('asciidoc')
   const [inputType, setInputType] = useState<'html' | 'word' | 'madcap'>('madcap')
   const [extractImages, setExtractImages] = useState(true)
 
@@ -72,9 +72,20 @@ export function MadCapConverterUI() {
   // Variable Extraction Options
   const [variableOptions, setVariableOptions] = useState<VariableExtractionOptions>({
     extractVariables: false,
-    variableFormat: 'adoc',
+    variableFormat: format === 'writerside-markdown' ? 'writerside' : 'adoc',
     variablesOutputPath: '',
-    preserveVariableStructure: false
+    preserveVariableStructure: false,
+    skipFileGeneration: false,
+    
+    // Enhanced variable handling
+    variableMode: 'reference',
+    nameConvention: 'original',
+    instanceName: '',
+    variablePrefix: '',
+    includePatterns: [],
+    excludePatterns: [],
+    flvarFiles: [],
+    autoDiscoverFLVAR: true
   })
 
   // AsciiDoc Options
@@ -87,7 +98,17 @@ export function MadCapConverterUI() {
     useLinkedTitleFromTOC: true,
     includeChapterBreaks: true,
     includeTOCLevels: 3,
-    useBookDoctype: true
+    useBookDoctype: true,
+    
+    // Enhanced validation options (enabled by default for better output)
+    enableValidation: true,
+    validationStrictness: 'normal',
+    autoColumnWidths: true,
+    preserveTableFormatting: true,
+    tableFrame: 'all',
+    tableGrid: 'all',
+    enableSmartPathResolution: true,
+    validateImagePaths: false
   })
 
   // Zendesk Options
@@ -105,6 +126,37 @@ export function MadCapConverterUI() {
     cssOutputPath: ''
   })
 
+  // Writerside Options
+  const [writersideOptions, setWritersideOptions] = useState<WritersideOptions>({
+    createProject: true,
+    projectName: '',
+    generateInstances: true,
+    instanceMapping: {},
+    enableProcedureBlocks: true,
+    enableCollapsibleBlocks: true,
+    enableTabs: true,
+    enableSummaryCards: true,
+    enableSemanticMarkup: true,
+    generateTOC: true,
+    organizeByTOC: true,
+    preserveTopicHierarchy: true,
+    convertVariables: true,
+    convertConditions: true,
+    mergeSnippets: true,
+    buildConfig: {
+      primaryColor: 'blue',
+      headerLogo: '',
+      favicon: '',
+      webRoot: '',
+      enableSearch: true,
+      enableSitemap: true,
+      enableAnalytics: false
+    },
+    generateStarterContent: true,
+    optimizeForMobile: true,
+    includeMetadata: true
+  })
+
   // UI State
   const [conversionState, setConversionState] = useState<ConversionState>({
     isConverting: false
@@ -113,7 +165,7 @@ export function MadCapConverterUI() {
   const [isDragOverTarget, setIsDragOverTarget] = useState(false)
   const [notifications, setNotifications] = useState<NotificationState[]>([])
 
-  const mcpClient = new MCPClient('/api/mcp')
+  const [mcpClient] = useState(() => new MCPClient('/api/mcp'))
 
   // Notification management
   const addNotification = useCallback((notification: Omit<NotificationState, 'id'>) => {
@@ -137,6 +189,14 @@ export function MadCapConverterUI() {
   const removeNotification = useCallback((id: string) => {
     setNotifications(prev => prev.filter(notification => notification.id !== id))
   }, [])
+
+  // Auto-update variable format when output format changes
+  useEffect(() => {
+    setVariableOptions(prev => ({
+      ...prev,
+      variableFormat: format === 'writerside-markdown' ? 'writerside' : 'adoc'
+    }));
+  }, [format]);
 
   // Check for path conflicts and show warnings
   useEffect(() => {
@@ -383,9 +443,10 @@ export function MadCapConverterUI() {
         inputType,
         preserveFormatting: true,  // Always preserve formatting
         extractImages,
-        variableOptions: (format === 'asciidoc' || format === 'markdown') && variableOptions.extractVariables ? variableOptions : undefined,
+        variableOptions: (format === 'asciidoc' || format === 'writerside-markdown') && variableOptions.extractVariables ? variableOptions : undefined,
         zendeskOptions: format === 'zendesk' ? zendeskOptions : undefined,
-        asciidocOptions: format === 'asciidoc' ? asciidocOptions : undefined
+        asciidocOptions: format === 'asciidoc' ? asciidocOptions : undefined,
+        writersideOptions: format === 'writerside-markdown' ? writersideOptions : undefined
       }
 
       console.log('Converting file with cleaned paths:', { 
@@ -403,7 +464,7 @@ export function MadCapConverterUI() {
         error: error instanceof Error ? error.message : 'Unknown error' 
       })
     }
-  }, [format, inputType, extractImages, variableOptions, zendeskOptions, asciidocOptions, inputPath, outputPath, mcpClient])
+  }, [format, inputType, extractImages, variableOptions, zendeskOptions, asciidocOptions, writersideOptions, inputPath, outputPath, mcpClient])
 
   const handleFolderConversion = useCallback(async () => {
     setConversionState({ isConverting: true })
@@ -413,31 +474,54 @@ export function MadCapConverterUI() {
       const cleanInputPath = inputPath.replace(/\\\s/g, ' ')
       const cleanOutputPath = outputPath.replace(/\\\s/g, ' ')
       
-      const options: BatchConversionOptions = {
-        format,
-        // Don't include inputType for folder conversion - let the server auto-detect
-        preserveFormatting: true,  // Always preserve formatting
-        extractImages,
-        recursive,
-        preserveStructure,
-        copyImages,
-        renameFiles,
-        includePatterns: includePatterns.length > 0 ? includePatterns : undefined,
-        excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
-        useTOCStructure,
-        generateMasterDoc,
-        variableOptions: (format === 'asciidoc' || format === 'markdown') && variableOptions.extractVariables ? variableOptions : undefined,
-        zendeskOptions: format === 'zendesk' ? zendeskOptions : undefined,
-        asciidocOptions: format === 'asciidoc' ? asciidocOptions : undefined
-      }
+      // Use Writerside project conversion for writerside-markdown format
+      if (format === 'writerside-markdown') {
+        const writersideProjectOptions: WritersideProjectOptions = {
+          projectName: writersideOptions.projectName,
+          createProject: writersideOptions.createProject,
+          generateInstances: writersideOptions.generateInstances,
+          copyImages,
+          generateTOC: writersideOptions.generateTOC,
+          generateStarterContent: writersideOptions.generateStarterContent,
+          writersideOptions,
+          variableOptions: variableOptions.extractVariables ? variableOptions : undefined
+        }
 
-      console.log('Converting folder with options:', JSON.stringify(options, null, 2))
-      console.log('Input path (original):', inputPath)
-      console.log('Input path (cleaned):', cleanInputPath)
-      console.log('Output path (original):', outputPath)
-      console.log('Output path (cleaned):', cleanOutputPath)
-      const result = await mcpClient.convertFolder(cleanInputPath, cleanOutputPath, options)
-      setConversionState({ isConverting: false, result })
+        console.log('Converting to Writerside project with options:', JSON.stringify(writersideProjectOptions, null, 2))
+        console.log('Input path (original):', inputPath)
+        console.log('Input path (cleaned):', cleanInputPath)
+        console.log('Output path (original):', outputPath)
+        console.log('Output path (cleaned):', cleanOutputPath)
+        const result = await mcpClient.convertToWritersideProject(cleanInputPath, cleanOutputPath, writersideProjectOptions)
+        setConversionState({ isConverting: false, result })
+      } else {
+        // Use regular batch conversion for other formats
+        const options: BatchConversionOptions = {
+          format,
+          // Don't include inputType for folder conversion - let the server auto-detect
+          preserveFormatting: true,  // Always preserve formatting
+          extractImages,
+          recursive,
+          preserveStructure,
+          copyImages,
+          renameFiles,
+          includePatterns: includePatterns.length > 0 ? includePatterns : undefined,
+          excludePatterns: excludePatterns.length > 0 ? excludePatterns : undefined,
+          useTOCStructure,
+          generateMasterDoc,
+          variableOptions: format === 'asciidoc' && variableOptions.extractVariables ? variableOptions : undefined,
+          zendeskOptions: format === 'zendesk' ? zendeskOptions : undefined,
+          asciidocOptions: format === 'asciidoc' ? asciidocOptions : undefined
+        }
+
+        console.log('Converting folder with options:', JSON.stringify(options, null, 2))
+        console.log('Input path (original):', inputPath)
+        console.log('Input path (cleaned):', cleanInputPath)
+        console.log('Output path (original):', outputPath)
+        console.log('Output path (cleaned):', cleanOutputPath)
+        const result = await mcpClient.convertFolder(cleanInputPath, cleanOutputPath, options)
+        setConversionState({ isConverting: false, result })
+      }
     } catch (error) {
       setConversionState({ 
         isConverting: false, 
@@ -447,7 +531,7 @@ export function MadCapConverterUI() {
   }, [
     format, extractImages, recursive, 
     preserveStructure, copyImages, renameFiles, includePatterns, excludePatterns, 
-    useTOCStructure, generateMasterDoc, variableOptions, zendeskOptions, asciidocOptions, inputPath, outputPath, mcpClient
+    useTOCStructure, generateMasterDoc, variableOptions, zendeskOptions, asciidocOptions, writersideOptions, inputPath, outputPath, mcpClient
   ])
 
   const handleAnalyzeFolder = useCallback(async () => {
@@ -734,22 +818,22 @@ export function MadCapConverterUI() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="zendesk">
-                        <div className="flex items-center gap-2">
-                          <Globe className="w-4 h-4" />
-                          Zendesk HTML
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="markdown">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4" />
-                          Markdown
-                        </div>
-                      </SelectItem>
                       <SelectItem value="asciidoc">
                         <div className="flex items-center gap-2">
                           <Code className="w-4 h-4" />
                           AsciiDoc
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="writerside-markdown">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="w-4 h-4 text-cyan-500" />
+                          Markdown (Writerside)
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="zendesk">
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-4 h-4" />
+                          Zendesk HTML
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -966,7 +1050,7 @@ export function MadCapConverterUI() {
           </Card>
 
           {/* Variable Extraction Options */}
-          {(format === 'asciidoc' || format === 'markdown') && (
+          {(format === 'asciidoc' || format === 'writerside-markdown') && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1037,7 +1121,7 @@ export function MadCapConverterUI() {
                         placeholder="Leave empty for auto-generated path"
                       />
                       <div className="text-xs text-muted-foreground">
-                        If empty, will generate: filename-variables.{variableOptions.variableFormat === 'writerside' ? 'xml' : 'adoc'}
+                        If empty, will generate: {variableOptions.variableFormat === 'writerside' ? 'variables.xml (Writerside v.list format)' : 'includes/variables.adoc (AsciiDoc attributes)'}
                       </div>
                     </div>
 
@@ -1055,6 +1139,162 @@ export function MadCapConverterUI() {
                           preserveVariableStructure: checked 
                         }))}
                       />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="variable-mode">Variable Mode</Label>
+                      <Select 
+                        value={variableOptions.variableMode || 'reference'} 
+                        onValueChange={(value: 'flatten' | 'include' | 'reference') => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          variableMode: value 
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="reference">
+                            <div className="space-y-1">
+                              <div>Reference</div>
+                              <div className="text-xs text-muted-foreground">Convert to target format references (%var% or :attr:)</div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="flatten">
+                            <div className="space-y-1">
+                              <div>Flatten</div>
+                              <div className="text-xs text-muted-foreground">Replace with actual values in content</div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="include">
+                            <div className="space-y-1">
+                              <div>Include</div>
+                              <div className="text-xs text-muted-foreground">Generate include statements for variables file</div>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="name-convention">Variable Naming Convention</Label>
+                      <Select 
+                        value={variableOptions.nameConvention || 'original'} 
+                        onValueChange={(value: 'camelCase' | 'snake_case' | 'kebab-case' | 'original') => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          nameConvention: value 
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="original">Original Names</SelectItem>
+                          <SelectItem value="camelCase">camelCase</SelectItem>
+                          <SelectItem value="snake_case">snake_case</SelectItem>
+                          <SelectItem value="kebab-case">kebab-case</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="variable-prefix">Variable Prefix (Optional)</Label>
+                      <Input
+                        id="variable-prefix"
+                        value={variableOptions.variablePrefix || ''}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          variablePrefix: e.target.value 
+                        }))}
+                        placeholder="e.g., madcap-"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Add a prefix to all variable names to avoid naming conflicts
+                      </div>
+                    </div>
+
+                    {variableOptions.variableFormat === 'writerside' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="instance-name">Instance Name (Writerside)</Label>
+                        <Input
+                          id="instance-name"
+                          value={variableOptions.instanceName || ''}
+                          onChange={(e) => setVariableOptions(prev => ({ 
+                            ...prev, 
+                            instanceName: e.target.value 
+                          }))}
+                          placeholder="Optional instance name for conditional variables"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          For Writerside conditional variables (instance attribute)
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label>Auto-discover FLVAR Files</Label>
+                        <div className="text-sm text-muted-foreground">
+                          Automatically find and process .flvar files in the project structure
+                        </div>
+                      </div>
+                      <Switch
+                        checked={variableOptions.autoDiscoverFLVAR !== false}
+                        onCheckedChange={(checked) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          autoDiscoverFLVAR: checked 
+                        }))}
+                      />
+                    </div>
+
+                    {!variableOptions.autoDiscoverFLVAR && (
+                      <div className="space-y-2">
+                        <Label htmlFor="flvar-files">Explicit FLVAR Files</Label>
+                        <Input
+                          id="flvar-files"
+                          value={(variableOptions.flvarFiles || []).join(', ')}
+                          onChange={(e) => setVariableOptions(prev => ({ 
+                            ...prev, 
+                            flvarFiles: e.target.value.split(',').map(f => f.trim()).filter(f => f.length > 0)
+                          }))}
+                          placeholder="/path/to/file1.flvar, /path/to/file2.flvar"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          Comma-separated list of .flvar file paths to process when auto-discovery is disabled
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="include-patterns">Include Patterns (Optional)</Label>
+                      <Input
+                        id="include-patterns"
+                        value={(variableOptions.includePatterns || []).join(', ')}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          includePatterns: e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0)
+                        }))}
+                        placeholder="CompanyName, Product.*, Version.*"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Regex patterns to include specific variables (comma-separated)
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="exclude-patterns">Exclude Patterns (Optional)</Label>
+                      <Input
+                        id="exclude-patterns"
+                        value={(variableOptions.excludePatterns || []).join(', ')}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          excludePatterns: e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0)
+                        }))}
+                        placeholder="deprecated.*, test.*, temp.*"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Regex patterns to exclude specific variables (comma-separated)
+                      </div>
                     </div>
                   </>
                 )}
@@ -1462,6 +1702,281 @@ export function MadCapConverterUI() {
             </Card>
           )}
 
+          {/* Writerside Project Options */}
+          {format === 'writerside-markdown' && (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2">
+                  <FileCode className="w-5 h-5" />
+                  Writerside Project Options
+                </CardTitle>
+                <CardDescription>
+                  Configure JetBrains Writerside project generation settings
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <Accordion type="single" collapsible className="w-full" defaultValue="writerside-basic">
+                  <AccordionItem value="writerside-basic">
+                    <AccordionTrigger>Project Structure</AccordionTrigger>
+                    <AccordionContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Create Complete Project</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Generate full Writerside project structure with configuration files
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.createProject || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            createProject: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="project-name">Project Name</Label>
+                        <Input
+                          id="project-name"
+                          value={writersideOptions.projectName || ''}
+                          onChange={(e) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            projectName: e.target.value 
+                          }))}
+                          placeholder="Leave empty for auto-detection"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Generate Starter Content</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Create overview and getting started topics
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.generateStarterContent || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            generateStarterContent: checked 
+                          }))}
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="writerside-instances">
+                    <AccordionTrigger>Instances & Conditions</AccordionTrigger>
+                    <AccordionContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Auto-Generate Instances</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Create instances based on MadCap conditions
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.generateInstances || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            generateInstances: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Convert Conditions</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Map MadCap conditions to Writerside filters
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.convertConditions || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            convertConditions: checked 
+                          }))}
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="writerside-content">
+                    <AccordionTrigger>Content Processing</AccordionTrigger>
+                    <AccordionContent className="space-y-4">
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Semantic Markup</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Use Writerside semantic elements for enhanced content
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.enableSemanticMarkup || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            enableSemanticMarkup: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Procedure Blocks</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Convert step-by-step content to procedure blocks
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.enableProcedureBlocks || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            enableProcedureBlocks: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Collapsible Blocks</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Convert expandable content to collapsible blocks
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.enableCollapsibleBlocks || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            enableCollapsibleBlocks: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Tab Groups</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Convert tabbed content to Writerside tab groups
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.enableTabs || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            enableTabs: checked 
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Merge Snippets</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Convert MadCap snippets to Writerside includes
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.mergeSnippets || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            mergeSnippets: checked 
+                          }))}
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+
+                  <AccordionItem value="writerside-build">
+                    <AccordionTrigger>Build Configuration</AccordionTrigger>
+                    <AccordionContent className="space-y-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="primary-color">Primary Color</Label>
+                        <Select 
+                          value={writersideOptions.buildConfig?.primaryColor || 'blue'} 
+                          onValueChange={(value) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            buildConfig: { ...prev.buildConfig, primaryColor: value }
+                          }))}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="blue">Blue</SelectItem>
+                            <SelectItem value="green">Green</SelectItem>
+                            <SelectItem value="red">Red</SelectItem>
+                            <SelectItem value="purple">Purple</SelectItem>
+                            <SelectItem value="orange">Orange</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="header-logo">Header Logo Path</Label>
+                        <Input
+                          id="header-logo"
+                          value={writersideOptions.buildConfig?.headerLogo || ''}
+                          onChange={(e) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            buildConfig: { ...prev.buildConfig, headerLogo: e.target.value }
+                          }))}
+                          placeholder="path/to/logo.png"
+                        />
+                      </div>
+
+                      <div className="space-y-2">
+                        <Label htmlFor="web-root">Web Root URL</Label>
+                        <Input
+                          id="web-root"
+                          value={writersideOptions.buildConfig?.webRoot || ''}
+                          onChange={(e) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            buildConfig: { ...prev.buildConfig, webRoot: e.target.value }
+                          }))}
+                          placeholder="https://docs.example.com"
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Search</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Enable search functionality in the documentation
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.buildConfig?.enableSearch || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            buildConfig: { ...prev.buildConfig, enableSearch: checked }
+                          }))}
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between">
+                        <div className="space-y-0.5">
+                          <Label>Enable Sitemap</Label>
+                          <div className="text-sm text-muted-foreground">
+                            Generate sitemap for SEO
+                          </div>
+                        </div>
+                        <Switch
+                          checked={writersideOptions.buildConfig?.enableSitemap || false}
+                          onCheckedChange={(checked) => setWritersideOptions(prev => ({ 
+                            ...prev, 
+                            buildConfig: { ...prev.buildConfig, enableSitemap: checked }
+                          }))}
+                        />
+                      </div>
+                    </AccordionContent>
+                  </AccordionItem>
+                </Accordion>
+              </CardContent>
+            </Card>
+          )}
+
           {/* Action Buttons */}
           <div className="flex gap-4">
             <Button 
@@ -1567,22 +2082,22 @@ export function MadCapConverterUI() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="zendesk">
-                        <div className="flex items-center gap-2">
-                          <Globe className="w-4 h-4" />
-                          Zendesk HTML
-                        </div>
-                      </SelectItem>
-                      <SelectItem value="markdown">
-                        <div className="flex items-center gap-2">
-                          <FileCode className="w-4 h-4" />
-                          Markdown
-                        </div>
-                      </SelectItem>
                       <SelectItem value="asciidoc">
                         <div className="flex items-center gap-2">
                           <Code className="w-4 h-4" />
                           AsciiDoc
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="writerside-markdown">
+                        <div className="flex items-center gap-2">
+                          <FileCode className="w-4 h-4" />
+                          Markdown (Writerside)
+                        </div>
+                      </SelectItem>
+                      <SelectItem value="zendesk">
+                        <div className="flex items-center gap-2">
+                          <Globe className="w-4 h-4" />
+                          Zendesk HTML
                         </div>
                       </SelectItem>
                     </SelectContent>
@@ -1621,7 +2136,7 @@ export function MadCapConverterUI() {
           </div>
 
           {/* Variable Extraction Options for Single File */}
-          {(format === 'asciidoc' || format === 'markdown') && (
+          {(format === 'asciidoc' || format === 'writerside-markdown') && (
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
@@ -1692,7 +2207,7 @@ export function MadCapConverterUI() {
                         placeholder="Leave empty for auto-generated path"
                       />
                       <div className="text-xs text-muted-foreground">
-                        If empty, will generate: filename-variables.{variableOptions.variableFormat === 'writerside' ? 'xml' : 'adoc'}
+                        If empty, will generate: {variableOptions.variableFormat === 'writerside' ? 'variables.xml (Writerside v.list format)' : 'includes/variables.adoc (AsciiDoc attributes)'}
                       </div>
                     </div>
 
@@ -1710,6 +2225,162 @@ export function MadCapConverterUI() {
                           preserveVariableStructure: checked 
                         }))}
                       />
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="variable-mode">Variable Mode</Label>
+                      <Select 
+                        value={variableOptions.variableMode || 'reference'} 
+                        onValueChange={(value: 'flatten' | 'include' | 'reference') => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          variableMode: value 
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="reference">
+                            <div className="space-y-1">
+                              <div>Reference</div>
+                              <div className="text-xs text-muted-foreground">Convert to target format references (%var% or :attr:)</div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="flatten">
+                            <div className="space-y-1">
+                              <div>Flatten</div>
+                              <div className="text-xs text-muted-foreground">Replace with actual values in content</div>
+                            </div>
+                          </SelectItem>
+                          <SelectItem value="include">
+                            <div className="space-y-1">
+                              <div>Include</div>
+                              <div className="text-xs text-muted-foreground">Generate include statements for variables file</div>
+                            </div>
+                          </SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="name-convention">Variable Naming Convention</Label>
+                      <Select 
+                        value={variableOptions.nameConvention || 'original'} 
+                        onValueChange={(value: 'camelCase' | 'snake_case' | 'kebab-case' | 'original') => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          nameConvention: value 
+                        }))}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="original">Original Names</SelectItem>
+                          <SelectItem value="camelCase">camelCase</SelectItem>
+                          <SelectItem value="snake_case">snake_case</SelectItem>
+                          <SelectItem value="kebab-case">kebab-case</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="variable-prefix">Variable Prefix (Optional)</Label>
+                      <Input
+                        id="variable-prefix"
+                        value={variableOptions.variablePrefix || ''}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          variablePrefix: e.target.value 
+                        }))}
+                        placeholder="e.g., madcap-"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Add a prefix to all variable names to avoid naming conflicts
+                      </div>
+                    </div>
+
+                    {variableOptions.variableFormat === 'writerside' && (
+                      <div className="space-y-2">
+                        <Label htmlFor="instance-name">Instance Name (Writerside)</Label>
+                        <Input
+                          id="instance-name"
+                          value={variableOptions.instanceName || ''}
+                          onChange={(e) => setVariableOptions(prev => ({ 
+                            ...prev, 
+                            instanceName: e.target.value 
+                          }))}
+                          placeholder="Optional instance name for conditional variables"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          For Writerside conditional variables (instance attribute)
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-between">
+                      <div className="space-y-0.5">
+                        <Label>Auto-discover FLVAR Files</Label>
+                        <div className="text-sm text-muted-foreground">
+                          Automatically find and process .flvar files in the project structure
+                        </div>
+                      </div>
+                      <Switch
+                        checked={variableOptions.autoDiscoverFLVAR !== false}
+                        onCheckedChange={(checked) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          autoDiscoverFLVAR: checked 
+                        }))}
+                      />
+                    </div>
+
+                    {!variableOptions.autoDiscoverFLVAR && (
+                      <div className="space-y-2">
+                        <Label htmlFor="flvar-files">Explicit FLVAR Files</Label>
+                        <Input
+                          id="flvar-files"
+                          value={(variableOptions.flvarFiles || []).join(', ')}
+                          onChange={(e) => setVariableOptions(prev => ({ 
+                            ...prev, 
+                            flvarFiles: e.target.value.split(',').map(f => f.trim()).filter(f => f.length > 0)
+                          }))}
+                          placeholder="/path/to/file1.flvar, /path/to/file2.flvar"
+                        />
+                        <div className="text-xs text-muted-foreground">
+                          Comma-separated list of .flvar file paths to process when auto-discovery is disabled
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="include-patterns">Include Patterns (Optional)</Label>
+                      <Input
+                        id="include-patterns"
+                        value={(variableOptions.includePatterns || []).join(', ')}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          includePatterns: e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0)
+                        }))}
+                        placeholder="CompanyName, Product.*, Version.*"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Regex patterns to include specific variables (comma-separated)
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="exclude-patterns">Exclude Patterns (Optional)</Label>
+                      <Input
+                        id="exclude-patterns"
+                        value={(variableOptions.excludePatterns || []).join(', ')}
+                        onChange={(e) => setVariableOptions(prev => ({ 
+                          ...prev, 
+                          excludePatterns: e.target.value.split(',').map(p => p.trim()).filter(p => p.length > 0)
+                        }))}
+                        placeholder="deprecated.*, test.*, temp.*"
+                      />
+                      <div className="text-xs text-muted-foreground">
+                        Regex patterns to exclude specific variables (comma-separated)
+                      </div>
                     </div>
                   </>
                 )}

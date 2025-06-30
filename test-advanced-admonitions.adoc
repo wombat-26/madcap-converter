@@ -1,0 +1,222 @@
+= Create a New Activity
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+To create a new activity, follow these steps:
+
+. In Uptempo, click _Activities _in the navigation sidebar.
+. In the Activities section, click _Create Activity. _The button is available on both the _Timeline_ and _Summary_ views:
++
++
+image::../Images/Screens/CreateActivity.png[CreateActivity
+
+]
++
++
+The _Create Activity_ setup assistant opens with the _Type_ page displayed
++
++
+[NOTE]
+====
+You can also create a new activity directly under an existing activity, which will automatically set that activity as the new activity's parent. For details, see Create New Activities Directly Under Existing Activities
+====
+
+. On the _Type_ page:
+
+[loweralpha]
+. Use the _Activity type _list to select the type of activity you want to create from the available options. You can also type a keyword into the field to search for matching options.
+. Use the _Parent_ list to select the activity under which you want to create this new activity in the hierarchy. You can also type a keyword into the field to search for matching options.
++
+[NOTE]
++
+====
+Depending on the rules set up in your Uptempo environment, selecting a parent activity may be optional for some activity types.
+====
+. Click _Next_.
++
++
+The _Details_ page is displayed. On the _Details_ page:
+
+[loweralpha]
+. Enter a name for your new activity into the _Name_ field.
+. Optional: To set the date range when this activity will be in-market, use the _In-market Dates_ fields to choose a start and end date.
+. Depending on the activity type you selected, additional attribute fields may be displayed. Complete any other attributes as needed: if an attribute is marked with an asterisk (*), it is required and you must select or enter a value before you can proceed.
++
+[NOTE]
++
+====
+If you see the icons
+====
+
+image:../Images/GUI-Elemente/Controlling attribute.png[Controlling Attribute]and
+
+image:../Images/GUI-Elemente/Dependent attribute.png[Dependent Attribute]next to an attribute name, then these attributes are part of a dependency. Hover over the icon to see information about which other attribute is part of the dependency:
+
+image:../Images/GUI-Elemente/Dependent attribute Tooltip.png[Dependent Attribute Tooltip]+The options that you can select in the dependent attribute are controlled by the value of the controlling attribute. If no option is selected for the controlling attribute, then no options are valid for the dependent attribute. If the controlling attribute is a multi-select field, the available dependent options will be the combination of the valid options for each selected controlling option
+. Click _Next_.
++
++
+The _Budget_ page is displayed. On the _Budget_ page:
+
+[loweralpha]
+. Optional: To enter a cost estimate for this activity, use the Estimated Costs field. For instructions, see xref:01-00-activities.adoc#estimating[Estimating Activity Costs].
+. Optional: To connect this activity to an investment, click _Add funding source_. For instructions, see <<Connecting,Connecting Existing Activities to Financial Items>>.
+. Click _Next_.
++
++
+The _Impact_ page is displayed
++
++
+[NOTE]
+====
+The specification of attributes can have an influence on the calculation of the performance plan data. We therefore recommend that you first edit all attributes of the activity on the Details tab. Only then calculate the performance plan data. On the _Impact_ page:
+====
+
+[loweralpha]
+. Optional: If the parent activity you selected on the _Type_ page allows child activites with performance data (or if the activity you're creating does not have a parent), you can configure the performance data here. For instructions, see <<Configur,Configuring Planned Impact>>.
+. If no additional steps are displayed after the _Impact_ step, skip to step 8.
+. If a _Workflow_ step is available, click _Next_.
++
++
+The _Workflow_ step is displayed. On the Workflow step:
+
+[loweralpha]
+. Optional: If the activity is linked with a workflow, decide when the workflow will be started:
+
+*** If the workflow is to be started with the creation of the activity, select the _Automatically create the workflow_ checkbox.
++
+*** If the workflow is to be started at a later time, clear the _Automatically create the workflow_ checkbox.. Click _Submit _to finish creating the activity.
++
++
+The _Create Activity_ panel closes, and the new activity's _Details_ panel opens automatically
+
+
+You have successfully created the activity. You can now make changes to the new activity in the _Details_ panel, or close the panel if you want to do something else.
+
+
+.Connecting Activities to Financial Items
+[%collapsible]
+====
+
+You can connect activities at various levels (plan, campaign, program, etc.) to one or multiple investments in _Uptempo Spend_. You can do this either as part of creating an activity, or on an existing activity.
+
+To connect activities to investments, follow these steps:
+
+.. On the activity where you want to connect investments, open the _Budget_ page:
+
+[loweralpha]
+. While creating a new activity, go to the _Budget_ page in the _Create Activity_ panel.
+. For an existing activity, go to the _Activities_ section and click on the activity in the hierarchy to open its _Details_ panel, then click the _Budget_ tab... Click _Add Funding Source_.
++
++
+image::../Images/Screens/AddFundingSourceNewActivity.png[AddFundingSourceNewActivity
+
+]
++
++
+The _Select Investment Item_ dialog is displayed
+.. Select the budget you want to use from the _Select Budget_ lists. You can also use the search box to search for the budget you want.
++
++
+The _Investment Item_ list appears:
++
++
+image::../Images/Screens/InvestItem.png[InvestItem
+
+]
+
+.. In the _Investment Item_ list, find the investment you want to connect. Click an investment item's
++
++
+image:../Images/GUI-Elemente/Link Activity.png[Link Activity,18]_Link_ button to connect it to the activity
++
++
+[NOTE]
+====
+The _Link_ button may be unavailable for some investment items to indicate that they can't be connected to the activity. Whether an investment can be connected to a particular activity is controlled by the rules that have been set up in your Uptempo environment
++
++
+The _Select Investment Item_ dialog closes. You are returned to the activity's _Budget_ page, which now contains additional subsections that display spend data for the connected investment:
++
++
+image::../Images/Screens/BudgetTabConnectedSpend.png[BudgetTabConnectedSpend
+
+]
++
++
+The subsections that are displayed correspond to the spend data categories that are configured in _Uptempo Spend_: by default, these are _Planned_, _Expected_, _Committed_, and _Actual_. In your environment, some of these subsections may not be visible, or they may have different names
+====
+
+.. Click on a subsection to expand it and see the details of the connected investment:
++
++
+image::../Images/Screens/FundingSourceDetails.png[FundingSourceDetails
+
+]
+
+*** To disconnect the investment from the activity, click
++
++
+image:../Images/GUI-Elemente/CloseCircle.png[CloseCircle,18]_Disconnect_
++
+*** To view the details of the investment in _Uptempo Spend_ , click
++
++
+image:../Images/GUI-Elemente/SearchCircle.png[SearchCircle,18]_Search_.. Optional: To connect additional investments to the activity, click _Add funding source_ again and repeat steps 3 and 4.
++
++
+Any further investments you connect are also displayed on the activity's _Budget_ page
+.. Finish up:
+
+*** If you're creating a new activity, finish creating the activity and click _Submit _to apply your changes.
++
+*** If you're editing an existing activity, close the activity's _Details_ tab to apply your changes.
+
+The selected investments are now connected to the activity, and will be visible in spend reports and budgeting overviews.
+
+
+====
+
+
+.Configuring Planned Impact
+[%collapsible]
+====
+
+If the activity is a point where plan performance data is to be captured:
+
+[loweralpha]
+. Add the number of requests the activity is expected to generate.
++
++
+Based on the funnel settings, the planned revenue projection is calculated
+. In case you want to edit the distribution:
+
+.... Select _Monthly_ or _Quarterly_ (distribution) in the _Distribute Results_ dropdown.
++
++
+The months or quarters with the planned inquiries are displayed
+.... Click _Edit distribution_.
++
++
+The fields per month/quarter are editable
+.... Edit the number of inquiries per time range as desired.
++
+[NOTE]
++
+====
+Editing the month/quarter fields will override the number in the _Planned Inquiries_ field.
+====
+
+
+====
+
+
+.Related tasks
+[%collapsible]
+====
+
+** Create New Activities Directly Under Existing Activities
+
+====

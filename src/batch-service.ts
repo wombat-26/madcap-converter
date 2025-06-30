@@ -17,6 +17,7 @@ export interface BatchConversionOptions extends Partial<ConversionOptions> {
   excludePatterns?: string[];
   useTOCStructure?: boolean; // Use TOC hierarchy instead of file structure
   generateMasterDoc?: boolean; // Generate master document from TOCs
+  writersideOptions?: import('./types/index.js').WritersideOptions; // Writerside project options
 }
 
 export interface BatchConversionResult {
@@ -51,6 +52,40 @@ export class BatchService {
     outputDir: string,
     options: BatchConversionOptions = {}
   ): Promise<BatchConversionResult> {
+    // Check if we should use WritersideBatchService for Writerside project generation
+    if (options.format === 'writerside-markdown' && options.writersideOptions?.createProject) {
+      // Use WritersideBatchService for complete Writerside project generation
+      const { WritersideBatchService } = await import('./services/writerside-batch-service.js');
+      const writersideService = new WritersideBatchService();
+      
+      const writersideResult = await writersideService.convertToWritersideProject(
+        inputDir,
+        outputDir,
+        {
+          ...options,
+          ...options.writersideOptions,
+          format: 'writerside-markdown' as const,
+          inputType: 'madcap' as const
+        }
+      );
+      
+      // Convert WritersideBatchResult to BatchConversionResult
+      return {
+        totalFiles: writersideResult.totalFiles,
+        convertedFiles: writersideResult.convertedFiles,
+        skippedFiles: writersideResult.skippedFiles,
+        errors: writersideResult.errors,
+        skippedFilesList: writersideResult.errors.map(e => ({ file: e.file, reason: e.error })),
+        results: writersideResult.results,
+        filenameMapping: options.renameFiles ? new Map<string, string>() : undefined,
+        tocStructure: writersideResult.tocStructure ? {
+          totalTOCs: writersideResult.instances.length,
+          discoveredFiles: writersideResult.totalFiles,
+          masterDocumentPath: undefined
+        } : undefined
+      };
+    }
+
     const result: BatchConversionResult = {
       totalFiles: 0,
       convertedFiles: 0,
@@ -108,9 +143,16 @@ export class BatchService {
   }
 
   private shouldIncludeFile(filename: string, options: BatchConversionOptions): boolean {
+    const basename = filename.split('/').pop() || filename;
+    
+    // Exclude macOS metadata files
+    if (basename.startsWith('._') || basename === '.DS_Store') {
+      return false;
+    }
+    
     if (options.excludePatterns) {
       for (const pattern of options.excludePatterns) {
-        if (filename.includes(pattern)) {
+        if (this.matchesPattern(basename, pattern)) {
           return false;
         }
       }
@@ -118,7 +160,7 @@ export class BatchService {
     
     if (options.includePatterns) {
       for (const pattern of options.includePatterns) {
-        if (filename.includes(pattern)) {
+        if (this.matchesPattern(basename, pattern)) {
           return true;
         }
       }
@@ -126,6 +168,17 @@ export class BatchService {
     }
     
     return true;
+  }
+
+  private matchesPattern(filename: string, pattern: string): boolean {
+    // Handle basic glob patterns like *.htm, *.html, etc.
+    if (pattern.startsWith('*')) {
+      const extension = pattern.slice(1); // Remove the *
+      return filename.endsWith(extension);
+    }
+    
+    // Handle exact matches or substring matches
+    return filename.includes(pattern);
   }
 
   private async generateOutputPath(relativePath: string, outputDir: string, format: string, inputPath?: string, renameFiles?: boolean): Promise<string> {
@@ -143,6 +196,8 @@ export class BatchService {
         extension = '.html';
         break;
       case 'markdown':
+      case 'madcap-markdown':
+      case 'writerside-markdown':
       default:
         extension = '.md';
         break;
@@ -200,7 +255,7 @@ export class BatchService {
         let hasChanges = false;
 
         // Update links based on format
-        if (format === 'markdown') {
+        if (format === 'writerside-markdown') {
           // Update Markdown links: [text](path) and [text](path#anchor)
           updatedContent = content.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (match, text, url) => {
             const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
@@ -507,7 +562,7 @@ export class BatchService {
     switch (format) {
       case 'adoc':
         // Use includes directory for AsciiDoc variables following best practices
-        return join(dir, 'includes', 'includes.adoc');
+        return join(dir, 'includes', 'variables.adoc');
       case 'writerside':
         return join(dir, 'variables.xml');
       default:
@@ -540,7 +595,7 @@ export class BatchService {
       // Create TOC-based conversion plan
       const conversionPlan = await this.tocService.createTOCBasedPlan(
         tocDiscovery.tocStructures.map(ts => ts.structure),
-        options.format as 'markdown' | 'asciidoc' | 'zendesk' || 'markdown'
+        options.format as 'asciidoc' | 'writerside-markdown' | 'zendesk' || 'asciidoc'
       );
       
       // Creating ${conversionPlan.folderStructure.length} directories based on TOC hierarchy
@@ -579,7 +634,7 @@ export class BatchService {
         const masterDocPath = await this.generateMasterDocumentFromActualFiles(
           outputDir,
           result,
-          options.format as 'markdown' | 'asciidoc' | 'zendesk' || 'markdown',
+          options.format as 'asciidoc' | 'writerside-markdown' | 'zendesk' || 'asciidoc',
           options
         );
         if (result.tocStructure) {
@@ -631,9 +686,8 @@ export class BatchService {
     
     // Extract all variables from .flvar files in the Flare project
     if (batchVariableExtractor) {
-      console.log('Extracting variables from all .flvar files in the project...');
-      await batchVariableExtractor.extractAllVariablesFromProject(inputDir);
-      console.log(`Found ${batchVariableExtractor.getVariables().length} variables from .flvar files`);
+      const projectRoot = this.findProjectRoot(inputDir);
+      await batchVariableExtractor.extractAllVariablesFromProject(projectRoot);
     }
     
     // Process each file according to TOC mapping
@@ -699,10 +753,22 @@ export class BatchService {
         // Ensure output directory exists
         await this.ensureDirectoryExists(dirname(finalOutputPath));
         
+        // Calculate variables file path for include directives
+        let calculatedVariablesPath: string | undefined;
+        if (options.variableOptions?.extractVariables) {
+          if (options.variableOptions.variablesOutputPath) {
+            calculatedVariablesPath = options.variableOptions.variablesOutputPath;
+          } else if (options.format === 'writerside-markdown' && options.variableOptions.variableFormat === 'writerside') {
+            calculatedVariablesPath = join(outputDir, 'v.list');
+          } else {
+            calculatedVariablesPath = join(outputDir, 'includes', 'variables.adoc');
+          }
+        }
+
         const conversionOptions: ConversionOptions = {
-          format: options.format || 'markdown',
+          format: options.format || 'asciidoc',
           inputPath: actualInputPath,
-          outputPath: relative(outputDir, finalOutputPath), // Add relative output path for variables include
+          outputPath: finalOutputPath, // Use absolute path for proper relative calculation
           inputType: this.determineInputType(extname(actualInputPath).toLowerCase().slice(1)),
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
@@ -710,6 +776,7 @@ export class BatchService {
           rewriteLinks: true,
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
+            variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
             skipFileGeneration: true // Prevent individual files from generating variables files
           } : undefined,
           zendeskOptions: options.zendeskOptions
@@ -745,7 +812,7 @@ export class BatchService {
           }
           
           // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
-          if ((options.format === 'zendesk' || options.format === 'asciidoc') && !imageDirectoriesCopied) {
+          if ((options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') && !imageDirectoriesCopied) {
             await this.copyImageDirectories(inputDir, outputDir);
             imageDirectoriesCopied = true;
           }
@@ -774,14 +841,25 @@ export class BatchService {
     if (batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten) {
       const variablesFile = batchVariableExtractor.generateVariablesFile(options.variableOptions);
       if (variablesFile) {
-        // Create includes directory and save variables there
-        const includesDir = join(outputDir, 'includes');
-        await this.ensureDirectoryExists(includesDir);
-        const variablesPath = options.variableOptions.variablesOutputPath || 
-                             join(includesDir, 'includes.adoc');
+        let variablesPath: string;
+        
+        if (options.variableOptions.variablesOutputPath) {
+          // Use custom path if provided
+          variablesPath = options.variableOptions.variablesOutputPath;
+        } else if (options.format === 'writerside-markdown' && options.variableOptions.variableFormat === 'writerside') {
+          // For Writerside format, save to v.list in project root
+          variablesPath = join(outputDir, 'v.list');
+        } else {
+          // For AsciiDoc and other formats, save to includes directory
+          const includesDir = join(outputDir, 'includes');
+          await this.ensureDirectoryExists(includesDir);
+          variablesPath = join(includesDir, 'variables.adoc');
+        }
+        
+        // Ensure directory exists for the variables file
+        await this.ensureDirectoryExists(dirname(variablesPath));
         await writeFile(variablesPath, variablesFile, 'utf8');
-        // Log combined variables info
-        console.log(`Generated combined variables file with ${batchVariableExtractor.getVariables().length} unique variables`);
+        // Generated combined variables file at ${variablesPath}
       }
     }
     
@@ -899,10 +977,10 @@ export class BatchService {
     inputDir: string,
     outputDir: string,
     tocStructures: Array<{ path: string; structure: import('./toc-service.js').TocStructure }>,
-    format: 'markdown' | 'asciidoc' | 'zendesk',
+    format: 'asciidoc' | 'writerside-markdown' | 'zendesk',
     options: BatchConversionOptions
   ): Promise<string> {
-    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    const extension = (format === 'asciidoc') ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
     const masterPath = join(outputDir, `master${extension}`);
     
     if (format === 'asciidoc' && options.asciidocOptions?.generateAsBook && tocStructures.length > 0) {
@@ -925,10 +1003,10 @@ export class BatchService {
   private async generateMasterDocumentFromActualFiles(
     outputDir: string,
     result: BatchConversionResult,
-    format: 'markdown' | 'asciidoc' | 'zendesk',
+    format: 'asciidoc' | 'writerside-markdown' | 'zendesk',
     options: BatchConversionOptions
   ): Promise<string> {
-    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    const extension = (format === 'asciidoc') ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
     const masterPath = join(outputDir, `master${extension}`);
     
     if (format === 'asciidoc') {
@@ -1020,16 +1098,16 @@ export class BatchService {
   private async generateSimpleFileListMaster(
     outputDir: string,
     result: BatchConversionResult,
-    format: 'markdown' | 'zendesk'
+    format: 'writerside-markdown' | 'zendesk'
   ): Promise<string> {
-    const title = format === 'markdown' ? '# Documentation' : '<h1>Documentation</h1>';
+    const title = format === 'writerside-markdown' ? '# Documentation' : '<h1>Documentation</h1>';
     let content = `${title}\n\n`;
     
     for (const { outputPath } of result.results) {
       const relativePath = relative(outputDir, outputPath);
       const fileName = basename(outputPath);
       
-      if (format === 'markdown') {
+      if (format === 'writerside-markdown') {
         content += `- [${fileName}](${relativePath})\n`;
       } else {
         content += `<a href="${relativePath}">${fileName}</a><br>\n`;
@@ -1133,9 +1211,9 @@ export class BatchService {
   private async generateSimpleMasterDocument(
     outputDir: string,
     tocStructures: import('./toc-service.js').TocStructure[],
-    format: 'markdown' | 'asciidoc' | 'zendesk'
+    format: 'asciidoc' | 'writerside-markdown' | 'zendesk'
   ): Promise<string> {
-    const extension = format === 'asciidoc' ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
+    const extension = (format === 'asciidoc') ? '.adoc' : format === 'zendesk' ? '.html' : '.md';
     
     // Find all actually converted files
     const convertedFiles = await this.findConvertedFiles(outputDir, extension);
@@ -1714,29 +1792,34 @@ export class BatchService {
     
     // Extract all variables from .flvar files in the Flare project
     if (batchVariableExtractor) {
-      console.log('Extracting variables from all .flvar files in the project...');
-      await batchVariableExtractor.extractAllVariablesFromProject(inputDir);
-      console.log(`Found ${batchVariableExtractor.getVariables().length} variables from .flvar files`);
+      const projectRoot = this.findProjectRoot(inputDir);
+      await batchVariableExtractor.extractAllVariablesFromProject(projectRoot);
     }
 
-    for (const inputPath of files) {
-      try {
-        // Check if file should be skipped due to MadCap conditions (applies to all formats)
-        const content = await readFile(inputPath, 'utf8');
-        if (this.containsMadCapContent(content)) {
-          // Use appropriate converter's skip check based on format
-          const shouldSkip = options.format === 'zendesk' 
-            ? ZendeskConverter.shouldSkipFile(content)
-            : MadCapConverter.shouldSkipFile(content);
-            
-          if (shouldSkip) {
-            const reason = `MadCap conditions indicate content should be skipped (Black, Red, Gray, deprecated, paused, print-only, etc.)`;
-            // SKIPPED: ${inputPath} - ${reason}
-            result.skippedFiles++;
-            result.skippedFilesList.push({ file: inputPath, reason });
-            continue;
+    // Process files in batches to prevent memory exhaustion
+    const BATCH_SIZE = 10; // Process 10 files at a time
+    
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      const batch = files.slice(i, i + BATCH_SIZE);
+      
+      for (const inputPath of batch) {
+        try {
+          // Check if file should be skipped due to MadCap conditions (applies to all formats)
+          const content = await readFile(inputPath, 'utf8');
+          if (this.containsMadCapContent(content)) {
+            // Use appropriate converter's skip check based on format
+            const shouldSkip = options.format === 'zendesk' 
+              ? ZendeskConverter.shouldSkipFile(content)
+              : MadCapConverter.shouldSkipFile(content);
+              
+            if (shouldSkip) {
+              const reason = `MadCap conditions indicate content should be skipped (Black, Red, Gray, deprecated, paused, print-only, etc.)`;
+              // SKIPPED: ${inputPath} - ${reason}
+              result.skippedFiles++;
+              result.skippedFilesList.push({ file: inputPath, reason });
+              continue;
+            }
           }
-        }
 
         const relativePath = relative(inputDir, inputPath);
         const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
@@ -1752,10 +1835,22 @@ export class BatchService {
           await this.ensureDirectoryExists(dirname(outputPath));
         }
 
+        // Calculate variables file path for include directives
+        let calculatedVariablesPath: string | undefined;
+        if (options.variableOptions?.extractVariables) {
+          if (options.variableOptions.variablesOutputPath) {
+            calculatedVariablesPath = options.variableOptions.variablesOutputPath;
+          } else if (options.format === 'writerside-markdown' && options.variableOptions.variableFormat === 'writerside') {
+            calculatedVariablesPath = join(outputDir, 'v.list');
+          } else {
+            calculatedVariablesPath = join(outputDir, 'includes', 'variables.adoc');
+          }
+        }
+
         const conversionOptions: ConversionOptions = {
-          format: options.format || 'markdown',
+          format: options.format || 'asciidoc',
           inputPath: inputPath,
-          outputPath: relative(outputDir, outputPath), // Add relative output path for variables include
+          outputPath: outputPath, // Use absolute path for proper relative calculation
           inputType: this.determineInputType(extname(inputPath).toLowerCase().slice(1)),
           preserveFormatting: options.preserveFormatting ?? true,
           extractImages: options.extractImages ?? true,
@@ -1763,6 +1858,7 @@ export class BatchService {
           rewriteLinks: true,  // Enable link rewriting for batch conversions
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
+            variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
             skipFileGeneration: true // Prevent individual files from generating variables files
           } : undefined,
           zendeskOptions: options.zendeskOptions
@@ -1798,7 +1894,7 @@ export class BatchService {
           }
           
           // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
-          if ((options.format === 'zendesk' || options.format === 'asciidoc') && !imageDirectoriesCopied) {
+          if ((options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') && !imageDirectoriesCopied) {
             await this.copyImageDirectories(inputDir, outputDir);
             imageDirectoriesCopied = true;
           }
@@ -1820,6 +1916,15 @@ export class BatchService {
         });
       }
     }
+    
+    // Force garbage collection after each batch to prevent memory buildup
+    if (global.gc) {
+      global.gc();
+    }
+    
+    // Small delay to prevent overwhelming the system
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
 
     result.skippedFiles = result.totalFiles - result.convertedFiles - result.errors.length;
     
@@ -1848,14 +1953,25 @@ export class BatchService {
     if (batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten) {
       const variablesFile = batchVariableExtractor.generateVariablesFile(options.variableOptions);
       if (variablesFile) {
-        // Create includes directory and save variables there
-        const includesDir = join(outputDir, 'includes');
-        await this.ensureDirectoryExists(includesDir);
-        const variablesPath = options.variableOptions.variablesOutputPath || 
-                             join(includesDir, 'includes.adoc');
+        let variablesPath: string;
+        
+        if (options.variableOptions.variablesOutputPath) {
+          // Use custom path if provided
+          variablesPath = options.variableOptions.variablesOutputPath;
+        } else if (options.format === 'writerside-markdown' && options.variableOptions.variableFormat === 'writerside') {
+          // For Writerside format, save to v.list in project root
+          variablesPath = join(outputDir, 'v.list');
+        } else {
+          // For AsciiDoc and other formats, save to includes directory
+          const includesDir = join(outputDir, 'includes');
+          await this.ensureDirectoryExists(includesDir);
+          variablesPath = join(includesDir, 'variables.adoc');
+        }
+        
+        // Ensure directory exists for the variables file
+        await this.ensureDirectoryExists(dirname(variablesPath));
         await writeFile(variablesPath, variablesFile, 'utf8');
-        // Log combined variables info
-        console.log(`Generated combined variables file with ${batchVariableExtractor.getVariables().length} unique variables`);
+        // Generated combined variables file at ${variablesPath}
       }
     }
     
@@ -1865,5 +1981,22 @@ export class BatchService {
     }
     
     return result;
+  }
+
+  /**
+   * Find the MadCap project root from a content directory path
+   */
+  private findProjectRoot(inputDir: string): string {
+    // Find the project root by looking for the Content directory in the path
+    const pathParts = inputDir.split('/');
+    const contentIndex = pathParts.findIndex(part => part === 'Content');
+    
+    if (contentIndex > 0) {
+      // Return the path before the Content directory
+      return pathParts.slice(0, contentIndex).join('/');
+    }
+    
+    // If no Content directory found, assume the input is already the project root
+    return inputDir;
   }
 }

@@ -1,5 +1,5 @@
 export interface ConversionOptions {
-  format: 'markdown' | 'asciidoc' | 'zendesk';
+  format: 'asciidoc' | 'writerside-markdown' | 'zendesk';
   inputType: 'html' | 'word' | 'madcap';
   preserveFormatting?: boolean; // Always defaults to true - formatting is always preserved
   extractImages?: boolean;
@@ -10,6 +10,7 @@ export interface ConversionOptions {
   zendeskOptions?: ZendeskConversionOptions;
   variableOptions?: VariableExtractionOptions;
   asciidocOptions?: AsciiDocConversionOptions;
+  writersideOptions?: WritersideConversionOptions;
   validateLinks?: boolean;
 }
 
@@ -23,6 +24,64 @@ export interface AsciiDocConversionOptions {
   includeChapterBreaks?: boolean; // Add chapter breaks between major sections
   includeTOCLevels?: number; // Number of heading levels to include in TOC (1-6, default: 3)
   useBookDoctype?: boolean; // Set doctype to 'book' for multi-chapter documents
+  
+  // Enhanced validation options
+  enableValidation?: boolean; // Enable AsciiDoc syntax validation (default: true)
+  validationStrictness?: 'strict' | 'normal' | 'lenient'; // Validation strictness level (default: 'normal')
+  
+  // Enhanced table options
+  autoColumnWidths?: boolean; // Enable automatic column width calculation (default: true)
+  preserveTableFormatting?: boolean; // Preserve cell formatting in tables (default: true)
+  tableFrame?: 'all' | 'topbot' | 'sides' | 'none'; // Table frame style (default: 'all')
+  tableGrid?: 'all' | 'rows' | 'cols' | 'none'; // Table grid style (default: 'all')
+  
+  // Enhanced path resolution options
+  enableSmartPathResolution?: boolean; // Enable intelligent path resolution (default: true)
+  validateImagePaths?: boolean; // Validate image file existence (default: false)
+  customImagePaths?: string[]; // Additional search paths for images
+}
+
+export interface WritersideConversionOptions {
+  // Project structure options
+  createProject?: boolean; // Generate complete Writerside project structure
+  projectName?: string; // Name for the Writerside project
+  
+  // Instance configuration
+  generateInstances?: boolean; // Auto-generate instances based on conditions
+  instanceMapping?: { [condition: string]: string }; // Map MadCap conditions to instances
+  
+  // Content enhancement options
+  enableProcedureBlocks?: boolean; // Convert step-by-step content to procedure blocks
+  enableCollapsibleBlocks?: boolean; // Convert expandable content to collapsible blocks
+  enableTabs?: boolean; // Convert tabbed content to tab groups
+  enableSummaryCards?: boolean; // Convert summary content to card layouts
+  enableSemanticMarkup?: boolean; // Use Writerside semantic elements
+  
+  // TOC and navigation
+  generateTOC?: boolean; // Generate tree files from MadCap TOCs
+  organizeByTOC?: boolean; // Use TOC structure for content organization
+  preserveTopicHierarchy?: boolean; // Maintain hierarchical topic structure
+  
+  // Variable and conditional content
+  convertVariables?: boolean; // Convert MadCap variables to Writerside format
+  convertConditions?: boolean; // Convert MadCap conditions to Writerside filters
+  mergeSnippets?: boolean; // Convert MadCap snippets to includes
+  
+  // Build configuration
+  buildConfig?: {
+    primaryColor?: string; // Theme primary color
+    headerLogo?: string; // Header logo path
+    favicon?: string; // Favicon path
+    webRoot?: string; // Web root URL
+    enableSearch?: boolean; // Enable search functionality
+    enableSitemap?: boolean; // Generate sitemap
+    enableAnalytics?: boolean; // Enable analytics
+  };
+  
+  // Advanced options
+  generateStarterContent?: boolean; // Create overview and getting started topics
+  optimizeForMobile?: boolean; // Optimize content for mobile viewing
+  includeMetadata?: boolean; // Include topic metadata and labels
 }
 
 export interface VariableExtractionOptions {
@@ -31,6 +90,16 @@ export interface VariableExtractionOptions {
   variableFormat?: 'adoc' | 'writerside'; // Format for variables file
   preserveVariableStructure?: boolean; // Keep namespace/grouping structure
   skipFileGeneration?: boolean; // Skip generating variables file (for batch processing)
+  
+  // New variable handling options
+  variableMode?: 'flatten' | 'include' | 'reference'; // How to handle variables in content
+  nameConvention?: 'camelCase' | 'snake_case' | 'kebab-case' | 'original'; // Variable naming convention
+  instanceName?: string; // Instance name for Writerside conditional variables
+  variablePrefix?: string; // Prefix for variable names to avoid conflicts
+  includePatterns?: string[]; // Filter variables by name patterns (regex)
+  excludePatterns?: string[]; // Exclude variables by name patterns (regex)
+  flvarFiles?: string[]; // Explicit list of FLVAR files to process
+  autoDiscoverFLVAR?: boolean; // Automatically find FLVAR files in project (default: true)
 }
 
 export interface ZendeskConversionOptions {
@@ -97,9 +166,13 @@ export interface BatchConversionOptions extends ConversionOptions {
   excludePatterns?: string[];
   useTOCStructure?: boolean;
   generateMasterDoc?: boolean;
+  
+  // Writerside-specific batch options
+  writersideOptions?: WritersideConversionOptions;
 }
 
 // Re-export new types with correct names for backward compatibility
 export type AsciidocOptions = AsciiDocConversionOptions;
 export type VariableOptions = VariableExtractionOptions;
 export type ZendeskOptions = ZendeskConversionOptions;
+export type WritersideOptions = WritersideConversionOptions;

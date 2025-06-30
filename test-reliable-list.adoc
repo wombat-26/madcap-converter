@@ -1,0 +1,15 @@
+= Test Document
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+To create a new activity, follow these steps:
+
+. First item with text.
+. Second item with nested alpha list:
++
+[loweralpha]
+. Alpha item 1
+. Alpha item 2
+. Third item continues the main list.

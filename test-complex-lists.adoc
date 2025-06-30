@@ -1,0 +1,20 @@
+= Complex List Test
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+. First item
++
+With a paragraph
+. Second item
++
+First paragraph
+
++
+Second paragraph
+
+** Bullet one
+** Bullet two
+*** Nested bullet
+. Third item

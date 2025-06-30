@@ -22,6 +22,17 @@ export interface VariableExtractionOptions {
   variableFormat?: 'adoc' | 'writerside';
   variablesOutputPath?: string;
   preserveVariableStructure?: boolean;
+  skipFileGeneration?: boolean;
+  
+  // Enhanced variable handling options
+  variableMode?: 'flatten' | 'include' | 'reference';
+  nameConvention?: 'camelCase' | 'snake_case' | 'kebab-case' | 'original';
+  instanceName?: string;
+  variablePrefix?: string;
+  includePatterns?: string[];
+  excludePatterns?: string[];
+  flvarFiles?: string[];
+  autoDiscoverFLVAR?: boolean;
 }
 
 export interface AsciidocOptions {
@@ -34,16 +45,73 @@ export interface AsciidocOptions {
   includeChapterBreaks?: boolean;
   includeTOCLevels?: number;
   useBookDoctype?: boolean;
+  
+  // Enhanced validation options
+  enableValidation?: boolean;
+  validationStrictness?: 'strict' | 'normal' | 'lenient';
+  
+  // Enhanced table options
+  autoColumnWidths?: boolean;
+  preserveTableFormatting?: boolean;
+  tableFrame?: 'all' | 'topbot' | 'sides' | 'none';
+  tableGrid?: 'all' | 'rows' | 'cols' | 'none';
+  
+  // Enhanced path resolution options
+  enableSmartPathResolution?: boolean;
+  validateImagePaths?: boolean;
+  customImagePaths?: string[];
+}
+
+export interface WritersideOptions {
+  createProject?: boolean;
+  projectName?: string;
+  generateInstances?: boolean;
+  instanceMapping?: { [condition: string]: string };
+  enableProcedureBlocks?: boolean;
+  enableCollapsibleBlocks?: boolean;
+  enableTabs?: boolean;
+  enableSummaryCards?: boolean;
+  enableSemanticMarkup?: boolean;
+  generateTOC?: boolean;
+  organizeByTOC?: boolean;
+  preserveTopicHierarchy?: boolean;
+  convertVariables?: boolean;
+  convertConditions?: boolean;
+  mergeSnippets?: boolean;
+  buildConfig?: {
+    primaryColor?: string;
+    headerLogo?: string;
+    favicon?: string;
+    webRoot?: string;
+    enableSearch?: boolean;
+    enableSitemap?: boolean;
+    enableAnalytics?: boolean;
+  };
+  generateStarterContent?: boolean;
+  optimizeForMobile?: boolean;
+  includeMetadata?: boolean;
+}
+
+export interface WritersideProjectOptions {
+  projectName?: string;
+  createProject?: boolean;
+  generateInstances?: boolean;
+  copyImages?: boolean;
+  generateTOC?: boolean;
+  generateStarterContent?: boolean;
+  writersideOptions?: WritersideOptions;
+  variableOptions?: VariableExtractionOptions;
 }
 
 export interface ConversionOptions {
-  format: 'markdown' | 'asciidoc' | 'zendesk';
+  format: 'markdown' | 'asciidoc' | 'zendesk' | 'pandoc-asciidoc' | 'pandoc-markdown' | 'enhanced-markdown' | 'madcap-markdown' | 'writerside-markdown';
   inputType?: 'html' | 'word' | 'madcap';
   preserveFormatting?: boolean;
   extractImages?: boolean;
   variableOptions?: VariableExtractionOptions;
   zendeskOptions?: ZendeskOptions;
   asciidocOptions?: AsciidocOptions;
+  writersideOptions?: WritersideOptions;
 }
 
 export interface ZendeskOptions {
@@ -73,30 +141,80 @@ export interface BatchConversionOptions extends ConversionOptions {
 
 export class MCPClient {
   private apiEndpoint: string;
+  private isHealthy: boolean = false;
 
   constructor(apiEndpoint: string = '/api/mcp') {
     this.apiEndpoint = apiEndpoint;
+    this.checkHealth();
+  }
+  
+  private async checkHealth(): Promise<boolean> {
+    try {
+      const healthEndpoint = this.apiEndpoint.replace('/mcp', '/health');
+      const response = await fetch(healthEndpoint);
+      this.isHealthy = response.ok;
+      return this.isHealthy;
+    } catch {
+      this.isHealthy = false;
+      return false;
+    }
+  }
+  
+  async testConnection(): Promise<boolean> {
+    try {
+      const result = await this.listTools();
+      return !!(result.result && result.result.tools);
+    } catch {
+      return false;
+    }
   }
 
   private async sendRequest(request: MCPRequest): Promise<MCPResponse> {
-    try {
-      const response = await fetch(this.apiEndpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
-      });
+    const maxRetries = 3;
+    const retryDelay = 1000;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 300000); // 5 minute timeout
+        
+        const response = await fetch(this.apiEndpoint, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(request),
+          signal: controller.signal
+        });
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => '');
+          throw new Error(`HTTP error! status: ${response.status}, message: ${errorText}`);
+        }
+
+        const data = await response.json();
+        return data;
+      } catch (error) {
+        const isLastAttempt = attempt === maxRetries;
+        const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+        
+        // Don't retry on abort errors (timeout)
+        if (errorMessage.includes('abort')) {
+          throw new Error(`MCP request timed out after 5 minutes`);
+        }
+        
+        if (isLastAttempt) {
+          throw new Error(`MCP request failed after ${maxRetries} attempts: ${errorMessage}`);
+        }
+        
+        console.warn(`MCP request attempt ${attempt} failed: ${errorMessage}. Retrying in ${retryDelay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, retryDelay));
       }
-
-      const data = await response.json();
-      return data;
-    } catch (error) {
-      throw new Error(`MCP request failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
+    
+    throw new Error('Unexpected error in sendRequest');
   }
 
   async listTools() {
@@ -218,6 +336,24 @@ export class MCPClient {
         name: "convert_with_toc_structure",
         arguments: {
           projectPath,
+          outputDir,
+          ...options
+        }
+      }
+    };
+
+    return this.sendRequest(request);
+  }
+
+  async convertToWritersideProject(inputDir: string, outputDir: string, options: WritersideProjectOptions) {
+    const request: MCPRequest = {
+      jsonrpc: "2.0",
+      id: 9,
+      method: "tools/call",
+      params: {
+        name: "convert_to_writerside_project",
+        arguments: {
+          inputDir,
           outputDir,
           ...options
         }

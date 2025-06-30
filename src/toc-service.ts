@@ -373,7 +373,7 @@ export class TocService {
    */
   async createTOCBasedPlan(
     tocStructures: TocStructure[],
-    outputFormat: 'markdown' | 'asciidoc' | 'zendesk'
+    outputFormat: 'asciidoc' | 'writerside-markdown' | 'zendesk'
   ): Promise<TOCBasedConversionPlan> {
     const fileMapping = new Map<string, string>();
     const folderStructure = new Set<string>();
@@ -485,13 +485,13 @@ export class TocService {
   /**
    * Gets the file extension for the output format
    */
-  private getExtensionForFormat(format: 'markdown' | 'asciidoc' | 'zendesk'): string {
+  private getExtensionForFormat(format: 'asciidoc' | 'writerside-markdown' | 'zendesk'): string {
     switch (format) {
       case 'asciidoc':
         return '.adoc';
       case 'zendesk':
         return '.html';
-      case 'markdown':
+      case 'writerside-markdown':
       default:
         return '.md';
     }

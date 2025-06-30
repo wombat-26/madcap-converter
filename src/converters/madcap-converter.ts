@@ -27,8 +27,8 @@ export class MadCapConverter implements DocumentConverter {
       this.madcapPreprocessor.setExtractVariables(true);
     }
     
-    // Use shared MadCap preprocessing
-    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(input, options.inputPath);
+    // Use shared MadCap preprocessing with output format
+    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(input, options.inputPath, options.format);
     
     // Get extracted variables from preprocessor
     const extractedVars = this.madcapPreprocessor.getExtractedVariables();
@@ -62,8 +62,13 @@ export class MadCapConverter implements DocumentConverter {
     if (options.format === 'asciidoc') {
       result = await this.asciidocConverter.convert(finalHtml, options);
       converterVariableExtractor = this.asciidocConverter.getVariableExtractor();
+    } else if (options.format === 'zendesk') {
+      // Import and use ZendeskConverter directly for zendesk format
+      const { ZendeskConverter } = await import('./zendesk-converter.js');
+      const zendeskConverter = new ZendeskConverter();
+      result = await zendeskConverter.convert(finalHtml, options);
     } else {
-      // For markdown, zendesk, and other formats, use HTMLConverter
+      // For markdown and other formats, use HTMLConverter
       result = await this.htmlConverter.convert(finalHtml, options);
       // HTMLConverter also has variable extraction capabilities
       if (typeof (this.htmlConverter as any).getVariableExtractor === 'function') {
