@@ -13,10 +13,12 @@ Transform your technical documentation with intelligent conversion that preserve
 - **Microsoft Word** (.docx, .doc) - Complete document structure with styles and images
 - **MadCap Flare Source Project** - Specialized processing for technical documentation with full MadCap element support
 
-### Triple Output Formats
-- **Markdown** - GitHub-flavored Markdown with tables, code blocks, and task lists
-- **AsciiDoc** - Professional documentation format with advanced features and proper syntax validation
+### Multiple Output Formats
+- **AsciiDoc** - Professional documentation format with clean, syntax-compliant output
+- **Writerside Markdown** - CommonMark 0.31.2 compliant markdown optimized for JetBrains Writerside
 - **Zendesk HTML** - Help Center optimized HTML with collapsible sections, styled callouts, and inline CSS
+
+**Note**: While the codebase contains additional converter implementations (enhanced-markdown, madcap-markdown, etc.), the current type system restricts output to these three primary formats.
 
 ### MCP Integration
 - **Claude Desktop Compatible** - Seamless integration with AI workflows
@@ -40,6 +42,14 @@ Transform your technical documentation with intelligent conversion that preserve
 - 🎨 **Zendesk Optimization** - Converts dropdowns to collapsible details, applies inline styling, and handles video placeholders
 - 📝 **List Continuation Support** - Proper handling of `madcap:continue="true"` for sequential numbering across all formats
 - 🛡️ **macOS File Filtering** - Automatically excludes macOS metadata files (`._*` and `.DS_Store`) during batch processing
+
+### Enhanced Quality & Validation Features ✨
+- 🔍 **AsciiDoc Syntax Validation** - Comprehensive validation layer with orphaned continuation marker detection, broken list structure analysis, and invalid table syntax checking
+- 📊 **Advanced Table Processing** - Smart column width calculation, cell formatting preservation, and support for complex table features (colspan, rowspan, alignment)
+- 🛤️ **Intelligent Path Resolution** - Cross-platform path normalization, smart project structure detection, and alternative path searching with file existence validation
+- 🔄 **Enhanced Variable Processing** - Multi-project support, missing variable detection with suggestions, and improved error handling with configurable fallback strategies
+- ⚙️ **Configurable Validation Strictness** - Choose from strict, normal, or lenient validation modes with detailed error reporting and line-by-line suggestions
+- 🏗️ **Robust Error Handling** - Graceful fallbacks to legacy methods ensure conversion always succeeds, even when enhanced features encounter issues
 
 ---
 
@@ -153,6 +163,8 @@ The web interface communicates directly with the MCP server, providing the same 
 
 ### 🔨 Available Tools
 
+The MCP server provides 12 tools for document conversion and project management:
+
 #### `convert_document`
 Convert content directly from string input.
 
@@ -161,7 +173,7 @@ Convert content directly from string input.
 |-----------|------|----------|-------------|
 | `input` | string | ✅ | Input content (HTML string or base64 for Word docs) |
 | `inputType` | enum | ✅ | Type: `html`, `word`, `madcap` |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
+| `format` | enum | ✅ | Output: `asciidoc`, `writerside-markdown`, `zendesk` |
 | `preserveFormatting` | boolean | ❌ | Preserve original formatting (default: true) |
 | `extractImages` | boolean | ❌ | Extract and reference images (default: false) |
 | `outputPath` | string | ❌ | Save to file (returns content only if omitted) |
@@ -176,7 +188,7 @@ Convert documents from file system paths with advanced MadCap processing.
 |-----------|------|----------|-------------|
 | `inputPath` | string | ✅ | Path to source file |
 | `outputPath` | string | ✅ | Path for converted output |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
+| `format` | enum | ✅ | Output: `asciidoc`, `writerside-markdown`, `zendesk` |
 | `preserveFormatting` | boolean | ❌ | Preserve original formatting (default: true) |
 | `extractImages` | boolean | ❌ | Extract images to files (default: false) |
 | `variableOptions` | object | ❌ | Variable extraction settings (see Variable Options below) |
@@ -190,7 +202,7 @@ Batch convert entire folder structures with link rewriting and structure preserv
 |-----------|------|----------|-------------|
 | `inputDir` | string | ✅ | Source directory path |
 | `outputDir` | string | ✅ | Destination directory path |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
+| `format` | enum | ✅ | Output: `asciidoc`, `writerside-markdown`, `zendesk` |
 | `includePattern` | string | ❌ | File pattern to include (default: all supported) |
 | `excludePattern` | string | ❌ | File pattern to exclude |
 | `preserveStructure` | boolean | ❌ | Maintain folder hierarchy (default: true) |
@@ -200,6 +212,26 @@ Batch convert entire folder structures with link rewriting and structure preserv
 | `generateMasterDoc` | boolean | ❌ | Generate master document from TOCs (default: false) |
 | `variableOptions` | object | ❌ | Variable extraction settings (see Variable Options below) |
 | `asciidocOptions` | object | ❌ | AsciiDoc-specific settings (see AsciiDoc Options below) |
+
+#### `convert_to_writerside_project`
+Complete MadCap Flare to JetBrains Writerside project conversion with full project structure generation.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `inputDir` | string | ✅ | Path to MadCap Flare project directory |
+| `outputDir` | string | ✅ | Destination directory for Writerside project |
+| `projectName` | string | ❌ | Project name (default: auto-detected from TOC) |
+| `generateInstances` | boolean | ❌ | Auto-generate instances from MadCap conditions (default: true) |
+| `instanceMapping` | object | ❌ | Custom condition-to-instance mapping |
+| `createProject` | boolean | ❌ | Generate complete project structure (default: true) |
+| `enableProcedureBlocks` | boolean | ❌ | Convert steps to procedure blocks (default: true) |
+| `enableCollapsibleBlocks` | boolean | ❌ | Transform expandable content (default: true) |
+| `enableTabs` | boolean | ❌ | Convert tabbed content to tab groups (default: true) |
+| `enableSummaryCards` | boolean | ❌ | Create card layouts (default: true) |
+| `enableSemanticMarkup` | boolean | ❌ | Use Writerside semantic elements (default: true) |
+| `themeOptions` | object | ❌ | Theme customization (primaryColor, headerLogo, favicon) |
+| `generateStarterContent` | boolean | ❌ | Generate example content (default: false) |
 
 #### `analyze_folder`
 Analyze folder structure and conversion readiness.
@@ -218,7 +250,7 @@ Extract table of contents from MadCap .fltoc files and generate master documents
 | `fltocPath` | string | ✅ | Path to .fltoc file |
 | `contentBasePath` | string | ✅ | Base path for content files |
 | `outputPath` | string | ✅ | Path for generated master document |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
+| `format` | enum | ✅ | Output: `asciidoc`, `writerside-markdown`, `zendesk` |
 
 #### `discover_tocs`
 Discover and analyze all Table of Contents (TOC) files in a MadCap Flare project.
@@ -236,7 +268,7 @@ Convert MadCap Flare project using TOC-based folder structure for all output for
 |-----------|------|----------|-------------|
 | `projectPath` | string | ✅ | Path to MadCap Flare project directory |
 | `outputDir` | string | ✅ | Destination directory path |
-| `format` | enum | ✅ | Output: `markdown`, `asciidoc`, `zendesk` |
+| `format` | enum | ✅ | Output: `asciidoc`, `writerside-markdown`, `zendesk` |
 | `generateMasterDoc` | boolean | ❌ | Generate master document from TOCs (default: true) |
 | `copyImages` | boolean | ❌ | Copy referenced images (default: true) |
 | `preserveFormatting` | boolean | ❌ | Preserve formatting (default: true) |
@@ -250,6 +282,25 @@ Returns list of supported input and output formats.
 
 **No parameters required.**
 
+#### `validate_links`
+Validate cross-references and links in converted documents.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `outputDir` | string | ✅ | Directory containing converted files to validate |
+| `format` | enum | ✅ | Format of converted files: `asciidoc`, `writerside-markdown`, `zendesk` |
+
+#### `validate_input`
+Validate input paths and content before conversion.
+
+**Parameters:**
+| Parameter | Type | Required | Description |
+|-----------|------|----------|-------------|
+| `inputPath` | string | ❌ | File path to validate |
+| `inputContent` | string | ❌ | Content to validate (HTML/Word) |
+| `inputType` | enum | ❌ | Type of content: `html`, `word`, `madcap` |
+
 ### 📝 Variable Options
 
 When using `variableOptions` with `convert_document`, `convert_file`, or `convert_folder`, you can configure how MadCap variables are handled:
@@ -257,17 +308,29 @@ When using `variableOptions` with `convert_document`, `convert_file`, or `conver
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `extractVariables` | boolean | `false` | Extract variables to separate file instead of flattening to text |
+| `variableMode` | enum | `'flatten'` | Mode: `'flatten'` (replace with text), `'include'` (extract with include), `'reference'` (keep references) |
 | `variableFormat` | enum | `'adoc'` | Format: `'adoc'` (AsciiDoc attributes) or `'writerside'` (XML) |
 | `variablesOutputPath` | string | auto-generated | Custom path for variables file |
 | `preserveVariableStructure` | boolean | `false` | Group variables by namespace with section headers |
+| `autoDiscoverFLVAR` | boolean | `true` | Automatically discover and load FLVAR files |
+| `nameConvention` | enum | `'kebab-case'` | Variable name format: `'camelCase'`, `'snake_case'`, `'kebab-case'`, `'PascalCase'` |
+| `variablePrefix` | string | `''` | Prefix to add to all variable names |
+| `instanceName` | string | `'default'` | Writerside instance name for conditional variables |
+| `includePatterns` | string[] | `[]` | Regex patterns to include specific variables |
+| `excludePatterns` | string[] | `[]` | Regex patterns to exclude specific variables |
+| `flvarFiles` | string[] | `[]` | Explicit list of FLVAR files to process |
 
 **Example Configuration:**
 ```json
 {
   "variableOptions": {
     "extractVariables": true,
+    "variableMode": "include",
     "variableFormat": "adoc",
     "preserveVariableStructure": true,
+    "nameConvention": "snake_case",
+    "variablePrefix": "mc_",
+    "includePatterns": ["^General\\.", "^Version\\."],
     "variablesOutputPath": "/path/to/custom-variables.adoc"
   }
 }
@@ -296,6 +359,15 @@ When converting to AsciiDoc format, you can configure AsciiDoc-specific behavior
 | `includeChapterBreaks` | boolean | `false` | Add chapter breaks between major sections |
 | `includeTOCLevels` | number | `3` | Number of heading levels to include in TOC (1-6) |
 | `useBookDoctype` | boolean | `true` | Set doctype to "book" for multi-chapter documents |
+| `enableValidation` | boolean | `true` | Enable AsciiDoc syntax validation |
+| `validationStrictness` | enum | `'normal'` | Validation level: `'strict'`, `'normal'`, `'lenient'` |
+| `autoColumnWidths` | boolean | `false` | Automatically calculate table column widths |
+| `preserveTableFormatting` | boolean | `true` | Preserve cell formatting (bold, italic, code) |
+| `tableFrame` | enum | `'all'` | Table border style: `'all'`, `'topbot'`, `'sides'`, `'none'` |
+| `tableGrid` | enum | `'all'` | Table grid lines: `'all'`, `'rows'`, `'cols'`, `'none'` |
+| `enableSmartPathResolution` | boolean | `true` | Use intelligent path detection for images and includes |
+| `validateImagePaths` | boolean | `true` | Verify image file existence during conversion |
+| `customImagePaths` | string[] | `[]` | Additional directories to search for images |
 
 **Example Configuration:**
 ```json
@@ -307,7 +379,13 @@ When converting to AsciiDoc format, you can configure AsciiDoc-specific behavior
     "bookAuthor": "Company Name",
     "useLinkedTitleFromTOC": true,
     "includeChapterBreaks": true,
-    "includeTOCLevels": 6
+    "includeTOCLevels": 6,
+    "enableValidation": true,
+    "validationStrictness": "normal",
+    "autoColumnWidths": true,
+    "preserveTableFormatting": true,
+    "enableSmartPathResolution": true,
+    "validateImagePaths": true
   }
 }
 ```
@@ -347,14 +425,30 @@ To activate the correct display of the spend data...
 
 **Claude Desktop:**
 ```
-Please convert this HTML to Markdown:
+Please convert this HTML to Markdown using Writerside format:
 <h1>Getting Started</h1>
 <p>This is a <strong>sample</strong> document with <em>formatting</em>.</p>
 <ul>
   <li>Item one</li>
   <li>Item two</li>
 </ul>
+
+Format: writerside-markdown
 ```
+
+### Writerside Markdown Converter Features
+
+The Writerside markdown converter provides CommonMark 0.31.2 compliant output optimized for JetBrains Writerside:
+
+- ✅ Full CommonMark specification compliance
+- ✅ Writerside admonitions with `{style="note"}` syntax
+- ✅ Smart inline/block image detection (≤32px = inline)
+- ✅ Proper tight/loose list formatting
+- ✅ Table generation with required headers
+- ✅ Eliminates broken italics and formatting issues
+- ✅ Proper HTML entity decoding
+- ✅ Clean emphasis and strong formatting
+- ✅ MadCap-specific element handling
 
 ### MadCap Flare to Zendesk Conversion
 
@@ -911,6 +1005,57 @@ The converter intelligently handles various file types and automatically filters
 | `mc-note` | `> **📝 NOTE:** Content` | `NOTE: Content` | `<blockquote class="zendesk-callout zendesk-note">` |
 | `mc-warning` | `> **⚠️ WARNING:** Content` | `WARNING: Content` | `<blockquote class="zendesk-callout zendesk-warning">` |
 | `mc-procedure` | Numbered list | Numbered list | `<ol class="zendesk-list">` |
+
+### Comprehensive Writerside Project Conversion
+
+The `convert_to_writerside_project` tool provides complete MadCap Flare to JetBrains Writerside project conversion with advanced features:
+
+#### Project Structure Generation
+- **Complete project setup**: Generates `writerside.cfg`, `buildprofiles.xml`, and directory structure
+- **Multiple instances**: Auto-generates instances based on MadCap conditions (web, mobile, admin, etc.)
+- **Tree files**: Converts MadCap TOC files to Writerside `.tree` format with hierarchical structure
+- **Variable integration**: Converts FLVAR files to Writerside `v.list` format with instance-specific variables
+
+#### Advanced Content Processing
+- **Semantic markup**: Converts MadCap elements to Writerside semantic elements (`<procedure>`, `<note>`, `<tip>`)
+- **Conditional content**: Maps MadCap conditions to Writerside instance filters and conditional markup
+- **Snippet conversion**: Transforms MadCap snippets (.flsnp) to Writerside includes
+- **Cross-reference handling**: Converts MadCap cross-references to standard Writerside links
+
+#### Writerside-Specific Features
+- **Procedure blocks**: Converts step-by-step content to `<procedure>` elements with proper numbering
+- **Collapsible blocks**: Transforms expandable content to collapsible elements
+- **Tab groups**: Converts tabbed content to Writerside tab syntax
+- **Summary cards**: Transforms summary content to card layouts
+- **Admonition blocks**: Converts notes, tips, warnings to Writerside blockquote format with `{style="note"}`
+
+#### Example Usage
+```bash
+# Convert complete MadCap project to Writerside
+convert_to_writerside_project \
+  --inputDir "/path/to/madcap/project" \
+  --outputDir "/path/to/writerside/project" \
+  --projectName "My Documentation" \
+  --generateInstances true
+```
+
+#### Generated Project Structure
+```
+writerside-project/
+├── writerside.cfg              # Main configuration
+├── v.list                      # Global variables
+├── cfg/
+│   └── buildprofiles.xml       # Build configuration
+├── topics/                     # Converted content files
+│   ├── overview.md
+│   ├── getting-started.md
+│   └── ...
+├── images/                     # Copied image assets
+├── snippets/                   # Converted snippet files
+├── default.tree                # Main instance TOC
+├── mobile.tree                 # Mobile instance TOC
+└── admin.tree                  # Admin instance TOC
+```
 
 ### Zendesk Help Center Optimization
 

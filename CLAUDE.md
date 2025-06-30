@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **MadCap Converter** - a Model Context Protocol (MCP) server that specializes in converting MadCap Flare output to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. The application provides both single-file conversion and batch folder processing capabilities through MCP tools that integrate with Claude Desktop and other MCP clients.
+This is a **MadCap Converter** - a Model Context Protocol (MCP) server that specializes in converting MadCap Flare source HTM files (from the Content folder) to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. The application provides both single-file conversion and batch folder processing capabilities through MCP tools that integrate with Claude Desktop and other MCP clients.
 
 ## Key Development Commands
 
@@ -47,12 +47,44 @@ MCP Client → MCP Server (index.ts) → DocumentService/BatchService → Conver
 
 ## MCP Tools Overview
 
-The server exposes 5 main tools:
+The server exposes 12 main tools:
 - `convert_document`: Direct content conversion (string/base64 input)
 - `convert_file`: Single file conversion with filesystem I/O
 - `convert_folder`: Batch directory processing with structure preservation
+- `convert_to_writerside_project`: Complete MadCap Flare to Writerside project conversion
 - `analyze_folder`: Directory analysis and conversion readiness assessment
+- `discover_tocs`: Discover and analyze MadCap TOC files in project
+- `convert_with_toc_structure`: Convert using TOC-based organization
+- `parse_toc`: Parse individual MadCap .fltoc files
+- `generate_master_doc`: Generate master documents from TOC structures
 - `get_supported_formats`: Runtime capability discovery
+- `validate_links`: Validate cross-references and links in converted documents
+- `validate_input`: Validate input paths and content before conversion
+
+## Available Output Formats
+
+The converter supports three primary output formats, each optimized for specific use cases:
+
+### Core Output Formats
+
+**Note**: While the codebase contains multiple converter implementations (enhanced-asciidoc, optimized-asciidoc, madcap-markdown, etc.), the type system currently restricts output to three primary formats:
+
+#### AsciiDoc Format
+- **`asciidoc`**: Clean, syntax-compliant AsciiDoc with minimal post-processing and advanced MadCap Flare support
+  - Implementation: `src/converters/asciidoc-converter.ts`
+  - Also available: `enhanced-asciidoc-converter.ts`, `optimized-asciidoc-converter.ts` (not exposed via type system)
+
+#### Markdown Format
+- **`writerside-markdown`**: CommonMark-compliant converter optimized for JetBrains Writerside
+  - Implementation: `src/converters/writerside-markdown-converter.ts`
+  - Primary markdown converter for MadCap Flare → Writerside conversion workflow
+
+#### HTML Format
+- **`zendesk`**: Zendesk-optimized HTML with metadata and API integration
+  - Implementation: `src/converters/zendesk-converter.ts`
+  - Specialized for Help Center deployment
+
+**Technical Note**: The `get_supported_formats` tool returns additional format names (enhanced-markdown, madcap-markdown, etc.) that are hardcoded in the response but not available through the type system. This is a known limitation where the actual type definition in `src/types/index.ts` only allows: `'asciidoc' | 'writerside-markdown' | 'zendesk'`.
 
 ## Specialized Processing Features
 
@@ -77,6 +109,209 @@ Images in their own paragraphs are automatically formatted as **block images** w
 **Output formats:**
 - **AsciiDoc**: `image::path[alt]` (block) vs `image:path[alt]` (inline)  
 - **Markdown**: Proper spacing with line breaks (block) vs inline syntax (inline)
+
+### Clean AsciiDoc Conversion Approach
+The `AsciiDocConverter` follows a **lightweight, syntax-compliant approach** that prioritizes clean output over heavy post-processing:
+
+**Core Philosophy:**
+- Convert already-repaired HTML (via HTMLPreprocessor) to clean AsciiDoc following official syntax guidelines
+- Apply minimal, focused cleanup rather than aggressive post-processing
+- Preserve document structure while ensuring AsciiDoc compliance
+
+**Document Structure:**
+```asciidoc
+= Document Title
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+include::includes/variables.adoc[]
+
+Content follows with proper spacing...
+```
+
+**Key Improvements:**
+- **Structured Headers**: Proper document attributes and variable includes
+- **Clean Formatting**: Focused cleanup of spacing, continuation markers, and redundant patterns
+- **Syntax Compliance**: Follows AsciiDoc best practices without over-engineering
+- **Block Spacing**: Proper blank lines around images, admonitions, and code blocks
+- **List Processing**: Enhanced list handling with proper nesting and continuation markers
+- **Intelligent Cleanup**: Removes orphaned continuation markers and conflicting list attributes
+- **Admonition Spacing**: Comprehensive spacing fixes for NOTE, TIP, WARNING blocks
+- **Image Processing**: Simplified inline/block detection without aggressive overrides
+
+**What Was Removed:**
+- Heavy-handed post-processor that caused formatting corruption
+- Aggressive syntax validation that created more problems than it solved
+- Complex multi-phase repair systems that interfered with clean output
+
+### Enhanced Quality & Validation System
+
+The converter now includes a comprehensive quality and validation system for optimal AsciiDoc output:
+
+#### AsciiDoc Syntax Validation (`src/validators/`)
+
+**Core Components:**
+- **`validation-rules.ts`**: Comprehensive rule definitions for AsciiDoc syntax validation
+- **`asciidoc-validator.ts`**: Main validation engine with configurable strictness levels
+
+**Validation Capabilities:**
+- **Orphaned Continuation Markers**: Detects `+` markers not properly attached to content blocks
+- **Broken List Structures**: Identifies malformed list nesting and numbering issues
+- **Invalid Table Syntax**: Catches incomplete table structures and formatting errors
+- **Missing Image Files**: Validates image path references and file existence
+- **Broken Include Directives**: Checks for malformed include statements
+- **Malformed Admonitions**: Ensures proper NOTE, TIP, WARNING block formatting
+
+**Configurable Strictness Levels:**
+```typescript
+// Strict mode: Reports all issues as errors
+{ validationStrictness: 'strict' }
+
+// Normal mode: Balanced reporting (default)
+{ validationStrictness: 'normal' }
+
+// Lenient mode: Only critical issues reported
+{ validationStrictness: 'lenient' }
+```
+
+#### Enhanced Table Processing (`src/converters/enhanced-table-processor.ts`)
+
+**Advanced Table Features:**
+- **Smart Column Width Calculation**: Automatic sizing based on content length
+- **Cell Formatting Preservation**: Maintains bold, italic, code, and link formatting
+- **Complex Table Support**: Handles colspan, rowspan, and alignment attributes
+- **Header Detection**: Intelligent identification of table headers vs data rows
+- **Caption Support**: Proper conversion of table captions and titles
+
+**Table Conversion Options:**
+```typescript
+{
+  autoColumnWidths: true,           // Calculate optimal column widths
+  preserveTableFormatting: true,    // Keep cell formatting intact
+  tableFrame: 'all',               // Border style (all, topbot, sides, none)
+  tableGrid: 'all'                 // Grid lines (all, rows, cols, none)
+}
+```
+
+#### Intelligent Path Resolution (`src/converters/improved-path-resolver.ts`)
+
+**Smart Path Processing:**
+- **Cross-Platform Normalization**: Handles Windows/Unix path differences
+- **Project Structure Detection**: Automatically identifies MadCap/AsciiDoc projects
+- **Alternative Path Searching**: Finds images in common subdirectories (Screens, Icons, GUI)
+- **File Existence Validation**: Verifies paths before conversion
+- **Transform Rule Engine**: Configurable path transformation patterns
+
+**Project Structure Auto-Detection:**
+```typescript
+// Automatically detects project types:
+{
+  projectType: 'madcap',           // MadCap Flare project
+  projectRoot: '/path/to/project',
+  imagesDir: '/path/to/Content/Images',
+  variablesDir: '/path/to/Variables'
+}
+```
+
+#### Enhanced Variable Processing (`src/services/enhanced-variable-processor.ts`)
+
+**Advanced Variable Features:**
+- **Multi-Project Support**: Handles nested and related MadCap projects
+- **Missing Variable Detection**: Identifies unresolved references with suggestions
+- **Smart Path Resolution**: Automatic FLVAR file discovery and validation
+- **Fallback Strategies**: Configurable handling of missing variables (error/warning/ignore)
+- **Variable Name Transformation**: Support for different naming conventions
+
+**Variable Modes:**
+- **`flatten`**: Replace variables with their text values directly (default)
+- **`include`**: Extract variables to separate file with include directive
+- **`reference`**: Keep variable references with namespace transformation
+
+**Variable Processing Options:**
+```typescript
+{
+  // Core options
+  extractVariables: true,           // Extract variables to separate file
+  variableMode: 'include',          // 'flatten' | 'include' | 'reference'
+  variableFormat: 'adoc',           // 'adoc' | 'writerside'
+  autoDiscoverFLVAR: true,          // Automatic FLVAR file discovery
+  
+  // Advanced options
+  multiProjectSupport: true,        // Handle nested projects
+  smartProjectDetection: true,      // Intelligent project structure detection
+  fallbackStrategy: 'warning',      // Handle missing variables gracefully
+  nameConvention: 'kebab-case',     // Transform variable names
+  variablePrefix: 'mc_',            // Add prefix to avoid conflicts
+  instanceName: 'web',              // Writerside instance for conditionals
+  
+  // Filtering options
+  includePatterns: ['^General\\.'],  // Include only matching variables
+  excludePatterns: ['^Internal\\.'], // Exclude matching variables
+  flvarFiles: ['General.flvar']     // Explicit FLVAR file list
+}
+```
+
+#### Robust Error Handling
+
+**Graceful Fallback System:**
+- Enhanced features gracefully fall back to legacy methods on errors
+- Detailed warning collection and reporting
+- Configurable error handling strategies
+- Comprehensive logging for debugging
+
+**Error Recovery:**
+```typescript
+// Enhanced processing with fallback
+try {
+  result = await enhancedProcessor.process(content);
+} catch (error) {
+  warnings.push(`Enhanced processing failed: ${error}`);
+  result = await legacyProcessor.process(content);
+}
+```
+
+#### Usage Examples
+
+**Enable All Enhanced Features:**
+```typescript
+const options = {
+  format: 'asciidoc',
+  asciidocOptions: {
+    // Validation options
+    enableValidation: true,
+    validationStrictness: 'normal',
+    
+    // Table processing options
+    autoColumnWidths: true,
+    preserveTableFormatting: true,
+    tableFrame: 'all',
+    tableGrid: 'all',
+    
+    // Path resolution options
+    enableSmartPathResolution: true,
+    validateImagePaths: true
+  },
+  variableOptions: {
+    extractVariables: true,
+    variableMode: 'include',      // 'flatten' | 'include' | 'reference'
+    variableFormat: 'adoc',       // 'adoc' | 'writerside'
+    autoDiscoverFLVAR: true,
+    nameConvention: 'snake_case'  // Transform variable names
+  }
+};
+```
+
+**Custom Validation Configuration:**
+```typescript
+const strictValidation = {
+  enableValidation: true,
+  validationStrictness: 'strict',  // Report all issues
+  validateImagePaths: true,        // Check image file existence
+  enableSmartPathResolution: true  // Use intelligent path detection
+};
+```
 
 ### MadCap Condition Filtering (All Formats)
 All converters automatically exclude content with specific MadCap conditions using regex patterns:
@@ -103,7 +338,155 @@ All converters automatically exclude content with specific MadCap conditions usi
 - **Single file conversion**: Throws error with descriptive message
 - **Batch conversion**: Skips entire file and logs to console  
 - **Element-level**: (Zendesk only) Removes elements and adds HTML comments
-- **Applies to**: Markdown, AsciiDoc, and Zendesk conversions
+- **Applies to**: All output formats (Markdown, AsciiDoc, and Zendesk conversions)
+
+### Writerside Markdown Converter (Primary Markdown Converter)
+The `WritersideMarkdownConverter` is the **sole markdown converter** for MadCap Flare → Writerside conversion, providing CommonMark-compliant output optimized for JetBrains Writerside:
+
+**Key Features:**
+- **CommonMark compliance**: Strict adherence to CommonMark 0.31.2 specification
+- **MadCap Flare integration**: Specifically designed for MadCap Flare HTML input with advanced preprocessing
+- **Emphasis spacing fixes**: Proper spacing preservation around emphasized text (e.g., prevents "*panel*is" → ensures "*panel* is")
+- **Custom DOM traversal**: Uses JSDOM for proper HTML parsing and manipulation
+- **Clean text processing**: Proper HTML entity decoding and formatting
+- **Writerside extensions**: Support for Writerside-specific features
+  - Admonitions using blockquote syntax with `{style="note"}` attributes
+  - Smart image handling with automatic inline/block detection (≤32px = inline)
+  - Table generation with proper headers and separators
+- **Advanced list handling**: 
+  - Proper tight vs loose list formatting
+  - Multi-paragraph list items with correct indentation
+  - Support for custom start numbers on ordered lists
+- **MadCap-specific processing**: 
+  - Note/warning/tip/caution divs → Proper blockquotes with labels
+  - Keyboard spans → Code formatting
+  - Variable and conditional content preservation
+- **Text escaping**: Proper escaping of CommonMark special characters
+- **Code blocks**: Fenced code blocks with language specification
+- **Links**: Standard CommonMark link syntax with .htm → .md conversion
+- **Hard line breaks**: Uses double-space syntax for line breaks
+- **Post-processing cleanup**: 
+  - Fixes excessive blank lines and spacing
+  - Cleans up emphasis formatting (avoids escaped underscores)
+  - Normalizes blockquote formatting
+  - Removes trailing whitespace
+
+**Writerside-specific optimizations:**
+- Admonitions: `> content\n{style="tip"}` format
+- Image sizing: Automatic style attributes for size control
+- Table compliance: Always includes header rows with separators
+- Variable support: Ready for future Writerside variable integration
+
+**Quality improvements:**
+- Eliminates broken italics like `\_> Activities\_` 
+- Properly handles HTML entities and special characters
+- Better spacing around lists, images, and admonitions
+- More reliable emphasis and strong formatting
+- Cleaner overall markdown structure
+
+## Comprehensive Writerside Project Conversion
+
+The `convert_to_writerside_project` tool provides complete MadCap Flare to Writerside project conversion with advanced features:
+
+### Project Structure Generation
+- **Complete project setup**: Generates `writerside.cfg`, `buildprofiles.xml`, and directory structure
+- **Multiple instances**: Auto-generates instances based on MadCap conditions (web, mobile, admin, etc.)
+- **Tree files**: Converts MadCap TOC files to Writerside `.tree` format with hierarchical structure
+- **Variable integration**: Converts FLVAR files to Writerside `v.list` format with instance-specific variables
+
+### Advanced Content Processing
+- **Semantic markup**: Converts MadCap elements to Writerside semantic elements (`<procedure>`, `<note>`, `<tip>`)
+- **Conditional content**: Maps MadCap conditions to Writerside instance filters and conditional markup
+- **Snippet conversion**: Transforms MadCap snippets (.flsnp) to Writerside includes
+- **Cross-reference handling**: Converts MadCap cross-references to standard Writerside links
+
+### Writerside-Specific Features
+- **Procedure blocks**: Converts step-by-step content to `<procedure>` elements with proper numbering
+- **Collapsible blocks**: Transforms expandable content to collapsible elements
+- **Tab groups**: Converts tabbed content to Writerside tab syntax
+- **Summary cards**: Transforms summary content to card layouts
+- **Admonition blocks**: Converts notes, tips, warnings to Writerside blockquote format with `{style="note"}`
+
+### Project Configuration Options
+```xml
+<!-- Example writerside.cfg generated -->
+<?xml version="1.0" encoding="UTF-8"?>
+<ihp version="1.0">
+    <topics dir="topics"/>
+    <images dir="images"/>
+    <snippets dir="snippets"/>
+    <instance src="default.tree" web-path="/"/>
+    <instance src="mobile.tree" web-path="/mobile"/>
+    <instance src="admin.tree" web-path="/admin"/>
+</ihp>
+```
+
+### Build Configuration Support
+```xml
+<!-- Example buildprofiles.xml with theming -->
+<buildprofiles>
+    <variables>
+        <primary-color>blue</primary-color>
+        <header-logo>logo.svg</header-logo>
+        <enable-search>true</enable-search>
+        <enable-sitemap>true</enable-sitemap>
+    </variables>
+</buildprofiles>
+```
+
+### Variable System Integration
+- **FLVAR to v.list conversion**: Automatically converts MadCap variable sets to Writerside format
+- **Instance-specific variables**: Supports conditional variables per documentation instance
+- **Namespace preservation**: Maintains MadCap variable organization structure
+- **Variable reference conversion**: Updates content to use Writerside variable syntax (`%varname%`)
+
+### Conditional Content Mapping
+The converter intelligently maps MadCap conditions to Writerside filters:
+
+**Platform Conditions:**
+- `web` → `platform="web"`
+- `mobile` → `platform="mobile"`
+- `desktop` → `platform="desktop"`
+
+**Audience Conditions:**
+- `admin` → `audience="admin"`
+- `user` → `audience="user"`
+- `developer` → `audience="developer"`
+
+**Status Conditions:**
+- `release` → `status="release"`
+- `beta` → `status="beta"`
+- `deprecated` → `status="deprecated"`
+
+### Usage Example
+```bash
+# Convert complete MadCap project to Writerside
+convert_to_writerside_project \
+  --inputDir "/path/to/madcap/project" \
+  --outputDir "/path/to/writerside/project" \
+  --projectName "My Documentation" \
+  --generateInstances true \
+  --generateTOC true \
+  --generateStarterContent true
+```
+
+### Generated Project Structure
+```
+writerside-project/
+├── writerside.cfg              # Main configuration
+├── v.list                      # Global variables
+├── cfg/
+│   └── buildprofiles.xml       # Build configuration
+├── topics/                     # Converted content files
+│   ├── overview.md
+│   ├── getting-started.md
+│   └── ...
+├── images/                     # Copied image assets
+├── snippets/                   # Converted snippet files
+├── default.tree                # Main instance TOC
+├── mobile.tree                 # Mobile instance TOC
+└── admin.tree                  # Admin instance TOC
+```
 
 ### Word Document Processing
 Uses **mammoth.js** with custom style mapping and image extraction:
@@ -146,7 +529,7 @@ When searching for MadCap project files (.flvar, .flsnp):
 ### MCP Server Testing
 ```bash
 # Test individual tools
-echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"convert_document","arguments":{"input":"<h1>Test</h1>","inputType":"html","format":"markdown"}}}' | node build/index.js
+echo '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"convert_document","arguments":{"input":"<h1>Test</h1>","inputType":"html","format":"writerside-markdown"}}}' | node build/index.js
 
 # Test folder processing
 echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"analyze_folder","arguments":{"inputDir":"/path/to/test-docs"}}}' | node build/index.js
