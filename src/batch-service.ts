@@ -1,5 +1,5 @@
 import { readdir, stat, copyFile, mkdir, readFile, writeFile } from 'fs/promises';
-import { join, relative, extname, dirname, basename } from 'path';
+import { join, relative, extname, dirname, basename, sep } from 'path';
 import { DocumentService } from './document-service.js';
 import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from './types/index.js';
 import { JSDOM } from 'jsdom';
@@ -647,6 +647,11 @@ export class BatchService {
         }
       }
       
+      // Process glossary files if requested (only for AsciiDoc format)
+      if (options.format === 'asciidoc' && options.asciidocOptions?.glossaryOptions?.includeGlossary) {
+        await this.processGlossaryFiles(inputDir, outputDir, options, result);
+      }
+      
       // TOC-BASED CONVERSION SUMMARY:
       // Total TOCs processed: ${tocDiscovery.tocStructures.length}
       // Total entries discovered: ${tocDiscovery.totalEntries}
@@ -765,6 +770,16 @@ export class BatchService {
           }
         }
 
+        // Calculate path depth for correct image path resolution
+        const relativeInputPath = relative(inputDir, actualInputPath);
+        const pathDepth = dirname(relativeInputPath).split(sep).filter(part => part && part !== '.').length;
+        console.log(`[Batch Debug] Input: ${actualInputPath}`);
+        console.log(`[Batch Debug] InputDir: ${inputDir}`);
+        console.log(`[Batch Debug] Relative: ${relativeInputPath}`);
+        console.log(`[Batch Debug] Dirname: ${dirname(relativeInputPath)}`);
+        console.log(`[Batch Debug] Split: ${dirname(relativeInputPath).split(sep)}`);
+        console.log(`[Batch Debug] Calculated path depth: ${pathDepth}`);
+
         const conversionOptions: ConversionOptions = {
           format: options.format || 'asciidoc',
           inputPath: actualInputPath,
@@ -774,6 +789,7 @@ export class BatchService {
           extractImages: options.extractImages ?? true,
           outputDir: dirname(finalOutputPath),
           rewriteLinks: true,
+          pathDepth, // Pass path depth for image path resolution
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
             variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
@@ -1847,6 +1863,16 @@ export class BatchService {
           }
         }
 
+        // Calculate path depth for correct image path resolution
+        const relativeFilePath = relative(inputDir, inputPath);
+        const pathDepth = dirname(relativeFilePath).split(sep).filter(part => part && part !== '.').length;
+        console.log(`[Batch Debug 2] Input: ${inputPath}`);
+        console.log(`[Batch Debug 2] InputDir: ${inputDir}`);
+        console.log(`[Batch Debug 2] Relative: ${relativeFilePath}`);
+        console.log(`[Batch Debug 2] Dirname: ${dirname(relativeFilePath)}`);
+        console.log(`[Batch Debug 2] Split: ${dirname(relativeFilePath).split(sep)}`);
+        console.log(`[Batch Debug 2] Calculated path depth: ${pathDepth}`);
+
         const conversionOptions: ConversionOptions = {
           format: options.format || 'asciidoc',
           inputPath: inputPath,
@@ -1856,6 +1882,7 @@ export class BatchService {
           extractImages: options.extractImages ?? true,
           outputDir: dirname(outputPath),
           rewriteLinks: true,  // Enable link rewriting for batch conversions
+          pathDepth, // Pass path depth for image path resolution
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
             variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
@@ -1975,6 +2002,11 @@ export class BatchService {
       }
     }
     
+    // Process glossary files if requested (only for AsciiDoc format)
+    if (options.format === 'asciidoc' && options.asciidocOptions?.glossaryOptions?.includeGlossary) {
+      await this.processGlossaryFiles(inputDir, outputDir, options, result);
+    }
+    
     // Update cross-references if files were renamed
     if (options.renameFiles && result.filenameMapping && result.filenameMapping.size > 0) {
       await this.updateCrossReferences(result, outputDir, options.format || 'markdown');
@@ -1998,5 +2030,191 @@ export class BatchService {
     
     // If no Content directory found, assume the input is already the project root
     return inputDir;
+  }
+
+  /**
+   * Process glossary files and generate glossary document
+   */
+  private async processGlossaryFiles(
+    inputDir: string,
+    outputDir: string,
+    options: BatchConversionOptions,
+    result: BatchConversionResult
+  ): Promise<void> {
+    try {
+      const { FlgloParser } = await import('./services/flglo-parser.js');
+      const { GlossaryConverter } = await import('./converters/glossary-converter.js');
+      
+      const glossaryParser = new FlgloParser();
+      const glossaryConverter = new GlossaryConverter();
+      
+      // Find project root to search for glossary files
+      const projectRoot = this.findProjectRoot(inputDir);
+      
+      // Discover glossary files (.flglo) in the project
+      let glossaryFiles: string[] = [];
+      
+      // Check if a specific glossary file path was provided
+      if (options.asciidocOptions?.glossaryOptions?.glossaryPath) {
+        const specifiedPath = join(projectRoot, options.asciidocOptions.glossaryOptions.glossaryPath);
+        try {
+          await stat(specifiedPath);
+          glossaryFiles = [specifiedPath];
+          console.error(`Using specified glossary file: ${specifiedPath}`);
+        } catch (error) {
+          console.warn(`Specified glossary file not found: ${specifiedPath}`);
+        }
+      }
+      
+      // If no specific file or file not found, auto-discover
+      if (glossaryFiles.length === 0) {
+        glossaryFiles = await glossaryParser.findGlossaryFiles(projectRoot);
+        console.error(`Auto-discovered ${glossaryFiles.length} glossary file(s)`);
+      }
+      
+      if (glossaryFiles.length === 0) {
+        console.error('No glossary files found in project');
+        return;
+      }
+      
+      // Parse all glossary files and combine entries
+      const allEntries: import('./services/flglo-parser.js').GlossaryEntry[] = [];
+      
+      for (const glossaryFile of glossaryFiles) {
+        try {
+          console.error(`Processing glossary file: ${glossaryFile}`);
+          const parsed = await glossaryParser.parseGlossaryFile(glossaryFile);
+          
+          // Apply condition filtering if enabled (default is true)
+          if (options.asciidocOptions?.glossaryOptions?.filterConditions !== false) {
+            allEntries.push(...parsed.entries);
+          } else {
+            // Include all entries without filtering
+            const allParsed = await glossaryParser.parseGlossaryFile(glossaryFile);
+            allEntries.push(...allParsed.entries);
+          }
+          
+          console.error(`Parsed ${parsed.entries.length} entries from ${basename(glossaryFile)}`);
+        } catch (error) {
+          console.error(`Error parsing glossary file ${glossaryFile}:`, error);
+          result.errors.push({
+            file: glossaryFile,
+            error: `Failed to parse glossary: ${error instanceof Error ? error.message : String(error)}`
+          });
+        }
+      }
+      
+      if (allEntries.length === 0) {
+        console.error('No glossary entries to process');
+        return;
+      }
+      
+      // Convert glossary entries to AsciiDoc format
+      const glossaryOptions: import('./converters/glossary-converter.js').GlossaryConversionOptions = {
+        format: options.asciidocOptions?.glossaryOptions?.glossaryFormat || 'separate',
+        generateAnchors: options.asciidocOptions?.glossaryOptions?.generateAnchors ?? true,
+        includeIndex: options.asciidocOptions?.glossaryOptions?.includeIndex ?? true,
+        title: options.asciidocOptions?.glossaryOptions?.glossaryTitle || 'Glossary',
+        levelOffset: 0
+      };
+      
+      const glossaryContent = glossaryConverter.convertToAsciiDoc(allEntries, glossaryOptions);
+      
+      // Determine output path for glossary
+      let glossaryOutputPath: string;
+      
+      if (glossaryOptions.format === 'separate') {
+        // Save as separate glossary file
+        glossaryOutputPath = join(outputDir, 'glossary.adoc');
+      } else if (glossaryOptions.format === 'book-appendix') {
+        // Save in appendices folder for book structure
+        const appendicesDir = join(outputDir, 'appendices');
+        await this.ensureDirectoryExists(appendicesDir);
+        glossaryOutputPath = join(appendicesDir, 'glossary.adoc');
+      } else {
+        // Inline format - save to includes directory
+        const includesDir = join(outputDir, 'includes');
+        await this.ensureDirectoryExists(includesDir);
+        glossaryOutputPath = join(includesDir, 'glossary.adoc');
+      }
+      
+      // Write glossary file
+      await writeFile(glossaryOutputPath, glossaryContent, 'utf8');
+      console.error(`Generated glossary at: ${glossaryOutputPath}`);
+      
+      // Add to conversion results
+      result.results.push({
+        inputPath: glossaryFiles[0], // Use first glossary file as representative
+        outputPath: glossaryOutputPath,
+        result: {
+          content: glossaryContent,
+          metadata: {
+            title: glossaryOptions.title,
+            format: 'asciidoc',
+            wordCount: allEntries.length * 50, // Estimate word count
+            warnings: [`Processed ${allEntries.length} glossary entries`]
+          }
+        }
+      });
+      
+      result.convertedFiles++;
+      
+      // Update master document to include glossary if it was generated
+      if (options.generateMasterDoc && options.format === 'asciidoc') {
+        await this.updateMasterDocWithGlossary(outputDir, glossaryOutputPath, glossaryOptions.format);
+      }
+      
+    } catch (error) {
+      console.error('Error processing glossary files:', error);
+      result.errors.push({
+        file: 'glossary',
+        error: `Failed to process glossary: ${error instanceof Error ? error.message : String(error)}`
+      });
+    }
+  }
+  
+  /**
+   * Update master document to include glossary reference
+   */
+  private async updateMasterDocWithGlossary(
+    outputDir: string,
+    glossaryPath: string,
+    glossaryFormat: 'inline' | 'separate' | 'book-appendix'
+  ): Promise<void> {
+    try {
+      const masterPath = join(outputDir, 'master.adoc');
+      
+      // Check if master document exists
+      try {
+        await stat(masterPath);
+      } catch (error) {
+        console.error('Master document not found, skipping glossary inclusion');
+        return;
+      }
+      
+      const masterContent = await readFile(masterPath, 'utf8');
+      
+      // Calculate relative path from master to glossary
+      const glossaryRelativePath = relative(outputDir, glossaryPath);
+      
+      let updatedContent = masterContent;
+      
+      if (glossaryFormat === 'book-appendix') {
+        // Add as appendix at the end
+        updatedContent += '\n\n';
+        updatedContent += 'include::' + glossaryRelativePath + '[]\n';
+      } else if (glossaryFormat === 'separate') {
+        // Add as a regular chapter/section
+        updatedContent += '\n\n== Glossary\n\n';
+        updatedContent += 'include::' + glossaryRelativePath + '[]\n';
+      }
+      // For inline format, it would typically be included within specific documents, not the master
+      
+      await writeFile(masterPath, updatedContent, 'utf8');
+      console.error('Updated master document to include glossary');
+      
+    } catch (error) {
+      console.error('Error updating master document with glossary:', error);
+    }
   }
 }

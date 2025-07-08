@@ -38,6 +38,7 @@ export class ImprovedListProcessor {
     const listItems = allChildren.filter(child => child.tagName.toLowerCase() === 'li');
     const hasOrphanedContent = allChildren.length > listItems.length;
     
+    
     if (listItems.length === 0) return '';
     
     // Use mixed content processing if orphaned elements exist
@@ -53,13 +54,31 @@ export class ImprovedListProcessor {
     const isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
     const isRoman = style.includes('lower-roman') || type === 'i';
     
-    // Note: [loweralpha] and [lowerroman] are not needed for nested lists
-    // AsciiDoc handles the numbering automatically through proper nesting
+    // Add appropriate list style attributes
+    if (isAlphabetical) {
+      result += '[loweralpha]\n';
+    } else if (isRoman) {
+      result += '[lowerroman]\n';
+    }
     
     // Process each list item
-    listItems.forEach((item) => {
-      result += this.processListItem(item, 'ordered', depth, nodeConverter);
-    });
+    for (let i = 0; i < listItems.length; i++) {
+      const item = listItems[i];
+      
+      
+      // Check if this is orphaned content
+      if (item.getAttribute('data-orphaned-content') === 'true') {
+        // This is orphaned content - add it as continuation to the previous item
+        if (i > 0) {
+          result += '+\n';
+          const content = item.textContent?.trim() || '';
+          result += content + '\n';
+        }
+      } else {
+        // Normal list item
+        result += this.processListItem(item, 'ordered', depth, nodeConverter);
+      }
+    }
     
     return result;
   }
@@ -82,8 +101,12 @@ export class ImprovedListProcessor {
     const isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
     const isRoman = style.includes('lower-roman') || type === 'i';
     
-    // Note: [loweralpha] and [lowerroman] are not needed for nested lists
-    // AsciiDoc handles the numbering automatically through proper nesting
+    // Add appropriate list style attributes for mixed content lists too
+    if (isAlphabetical) {
+      result += '[loweralpha]\n';
+    } else if (isRoman) {
+      result += '[lowerroman]\n';
+    }
     
     // Process all children sequentially with better association logic
     const allChildren = Array.from(list.children);
@@ -217,6 +240,7 @@ export class ImprovedListProcessor {
     const marker = listType === 'ordered' 
       ? this.getOrderedMarker(depth, isInAlphabeticalList, isInRomanList)
       : this.getUnorderedMarker(depth);
+      
     
     // Process the content of this list item
     const content = this.extractListItemContent(item, depth, nodeConverter);
@@ -354,10 +378,14 @@ export class ImprovedListProcessor {
                 mainContent = pContent;
                 hasSetMainContent = true;
               } else {
-                additionalBlocks.push({
-                  type: 'paragraph',
-                  content: pContent
-                });
+                // For multiple paragraphs in same list item, combine them into mainContent
+                // instead of treating as separate blocks (which adds continuation markers)
+                if (mainContent) {
+                  mainContent += '\n+\n' + pContent;
+                } else {
+                  mainContent = pContent;
+                  hasSetMainContent = true;
+                }
               }
             }
           }
@@ -428,6 +456,7 @@ export class ImprovedListProcessor {
       }
     }
     
+    
     return { mainContent, additionalBlocks };
   }
   
@@ -493,8 +522,10 @@ export class ImprovedListProcessor {
    * This applies to ALL ordered lists including alphabetical and roman
    */
   private getOrderedMarker(depth: number, isAlphabetical: boolean = false, isRoman: boolean = false): string {
-    // Use appropriate marker based on depth for ALL ordered lists
-    // For lists at depth 0, use single dot (top-level lists)
+    // For alphabetical lists, we use the [loweralpha] attribute and standard numbered markers
+    // The list processor already adds the [loweralpha] attribute above the list
+    // For roman lists, we use the [lowerroman] attribute and standard numbered markers  
+    // For numeric lists, use dot-based markers
     const level = Math.min(depth + 1, 5);
     return '.'.repeat(level);
   }

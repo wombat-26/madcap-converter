@@ -15,6 +15,8 @@ import { AsciiDocValidator, ValidationOptions, ValidationResult } from '../valid
 import { EnhancedTableProcessor, TableOptions } from './enhanced-table-processor.js';
 import { ImprovedPathResolver, PathResolutionOptions } from './improved-path-resolver.js';
 import { EnhancedVariableProcessor, EnhancedVariableOptions } from '../services/enhanced-variable-processor.js';
+import { FlgloParser } from '../services/flglo-parser.js';
+import { GlossaryConverter, GlossaryConversionOptions } from './glossary-converter.js';
 
 export class AsciiDocConverter implements DocumentConverter {
   supportedInputTypes = ['html'];
@@ -32,10 +34,13 @@ export class AsciiDocConverter implements DocumentConverter {
   private enhancedTableProcessor: EnhancedTableProcessor;
   private pathResolver: ImprovedPathResolver;
   private enhancedVariableProcessor: EnhancedVariableProcessor;
+  private flgloParser: FlgloParser;
+  private glossaryConverter: GlossaryConverter;
   
   // Section context tracking for proper list nesting
   private currentSectionLevel: number = 0;
   private lastWasSection: boolean = false;
+  private currentPathDepth: number = 0;
 
   constructor() {
     this.madCapPreprocessor = new MadCapPreprocessor();
@@ -52,6 +57,8 @@ export class AsciiDocConverter implements DocumentConverter {
     this.enhancedTableProcessor = new EnhancedTableProcessor();
     this.pathResolver = new ImprovedPathResolver();
     this.enhancedVariableProcessor = new EnhancedVariableProcessor();
+    this.flgloParser = new FlgloParser();
+    this.glossaryConverter = new GlossaryConverter();
   }
 
   async convert(input: string | Buffer, options: ConversionOptions): Promise<ConversionResult> {
@@ -59,6 +66,9 @@ export class AsciiDocConverter implements DocumentConverter {
       // Reset section context for each conversion
       this.currentSectionLevel = 0;
       this.lastWasSection = false;
+      
+      // Store path depth for image path resolution
+      this.currentPathDepth = options.pathDepth || 0;
       
       // Clear variables from previous conversions
       this.variableExtractor.clear();
@@ -110,8 +120,14 @@ export class AsciiDocConverter implements DocumentConverter {
       
       // Step 3: Create JSDOM instance after preprocessing
       // DOM cleanup is now handled by MadCapPreprocessor.cleanupDOMStructure()
+      
+      // The MadCap preprocessor already handles orphaned content, so we don't need additional processing
+      // processedInput = this.fixOrphanedListContent(processedInput);
+      
       const dom = new JSDOM(processedInput);
       const document = dom.window.document;
+      
+      
       
       // Step 4: Extract variables from DOM if using legacy method
       if (options.variableOptions?.extractVariables && !options.variableOptions.variableFormat) {
@@ -185,9 +201,32 @@ export class AsciiDocConverter implements DocumentConverter {
         }
       }
 
+      // Process glossary if enabled
+      let glossaryContent: string | undefined;
+      if (options.asciidocOptions?.glossaryOptions?.includeGlossary) {
+        try {
+          const glossaryResult = await this.processGlossary(options, warnings);
+          if (glossaryResult) {
+            // Handle different glossary formats
+            const glossaryFormat = options.asciidocOptions.glossaryOptions.glossaryFormat || 'inline';
+            
+            if (glossaryFormat === 'inline' || glossaryFormat === 'book-appendix') {
+              // Append glossary to main content
+              content += '\n\n' + glossaryResult;
+            } else if (glossaryFormat === 'separate') {
+              // Store as separate content for file generation
+              glossaryContent = glossaryResult;
+            }
+          }
+        } catch (error) {
+          warnings.push(`Glossary processing failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+
       const result: ConversionResult = {
         content,
         variablesFile,
+        glossaryContent,
         metadata: {
           title,
           wordCount,
@@ -246,8 +285,23 @@ export class AsciiDocConverter implements DocumentConverter {
     // Apply minimal essential cleanup
     result = this.applyMinimalCleanup(result);
     
+    // Apply comprehensive AsciiDoc formatting fixes
+    result = this.applyCleanAsciiDocFormatting(result);
+    
+    // CRITICAL FIX: Fix MadCap sibling list structure - merge orphaned alphabetic lists into parent items
+    result = this.fixMadCapSiblingListStructure(result);
+    
     // FINAL FIX: Add continuation markers before [loweralpha] in list contexts
     result = this.addContinuationMarkersForNestedLists(result);
+    
+    // FINAL FIX 2: Fix orphaned content after NOTE blocks in alphabetic lists
+    result = this.fixOrphanedContentInAlphabeticLists(result);
+    
+    // FINAL FIX 3: Fix specific MadCap pattern where numeric markers appear in alphabetic lists
+    result = this.fixNumericMarkersInAlphabeticLists(result);
+    
+    // FINAL FIX 4: Fix triple-dot markers and normalize list depths
+    result = this.fixTripleDotMarkersAndDepths(result);
     
     // Remove orphaned continuation markers
     result = this.removeOrphanedContinuationMarkers(result);
@@ -297,6 +351,126 @@ export class AsciiDocConverter implements DocumentConverter {
   }
 
   /**
+   * Fix orphaned content after NOTE blocks in alphabetic lists
+   * This handles the specific MadCap pattern where snippet expansion creates orphaned content
+   */
+  private fixOrphanedContentInAlphabeticLists(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+    let inAlphabeticList = false;
+    let lastAlphabeticItemIndex = -1;
+    let expectingListContinuation = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      const nextLine = i + 1 < lines.length ? lines[i + 1].trim() : '';
+      
+      // Track when we're in an alphabetic list
+      if (trimmedLine === '[loweralpha]' || trimmedLine === '[upperalpha]') {
+        inAlphabeticList = true;
+        expectingListContinuation = false;
+        result.push(line);
+        continue;
+      }
+      
+      // Track when we exit the alphabetic list
+      if (inAlphabeticList && trimmedLine.match(/^\.\s/)) {
+        // This is a main list item (single dot), not an alphabetic sub-item
+        inAlphabeticList = false;
+        expectingListContinuation = false;
+      }
+      
+      // Handle alphabetic list items
+      if (inAlphabeticList && trimmedLine.match(/^\.+\s/)) {
+        lastAlphabeticItemIndex = i;
+        result.push(line);
+        
+        // Check if the next content might need continuation markers
+        let j = i + 1;
+        while (j < lines.length && lines[j].trim() === '') j++;
+        
+        if (j < lines.length) {
+          const nextContent = lines[j].trim();
+          // If next content is NOTE, image, or paragraph text (not another list item)
+          if (nextContent.startsWith('[NOTE]') || nextContent.startsWith('image:') || 
+              (nextContent.length > 0 && !nextContent.match(/^[\.\*\+\[]/) && !nextContent.match(/^=/))) {
+            expectingListContinuation = true;
+          }
+        }
+        continue;
+      }
+      
+      // Fix the specific pattern: content after NOTE blocks that should be connected
+      if (inAlphabeticList && expectingListContinuation) {
+        // After a NOTE block's closing delimiter
+        if (trimmedLine === '====') {
+          result.push(line);
+          
+          // Look ahead for orphaned content
+          let j = i + 1;
+          while (j < lines.length && lines[j].trim() === '') j++;
+          
+          if (j < lines.length) {
+            const orphanedContent = lines[j].trim();
+            // If we have an image or paragraph text that's not a list item
+            if ((orphanedContent.startsWith('image:') || 
+                (orphanedContent.length > 0 && !orphanedContent.match(/^[\.\*\+\[]/) && !orphanedContent.match(/^=/) && !orphanedContent.match(/^\d+\.\s/)))) {
+              // Add continuation marker after the NOTE block
+              result.push('+');
+              expectingListContinuation = true;
+            } else if (orphanedContent.match(/^\d+\.\s/)) {
+              // This is the problem! A numeric list item that should be alphabetic
+              // Don't set expectingListContinuation = false here, let it continue
+            }
+          }
+          continue;
+        }
+        
+        // Handle orphaned content that needs continuation markers
+        if ((trimmedLine.startsWith('image:') || 
+            (trimmedLine.length > 0 && !trimmedLine.match(/^[\.\*\+\[]/) && !trimmedLine.match(/^=/)))) {
+          
+          // Check if previous non-empty line needs a continuation marker
+          let needsContinuation = true;
+          for (let j = result.length - 1; j >= 0; j--) {
+            if (result[j].trim() === '+') {
+              needsContinuation = false;
+              break;
+            }
+            if (result[j].trim().length > 0) {
+              break;
+            }
+          }
+          
+          if (needsContinuation && i > 0 && !lines[i-1].trim().match(/^\.+\s/)) {
+            // Add continuation before this content
+            let insertIndex = result.length;
+            if (result.length > 0 && result[result.length - 1].trim() === '') {
+              insertIndex = result.length - 1;
+            }
+            result.splice(insertIndex, 0, '+');
+          }
+          
+          // Continue expecting continuation for subsequent content
+          if (!trimmedLine.match(/^\d+\.\s/)) {
+            expectingListContinuation = true;
+          }
+        }
+        
+        // Reset expectation after a clear list item
+        if (trimmedLine.match(/^\.+\s/) && !trimmedLine.match(/^\d+\.\s/)) {
+          expectingListContinuation = false;
+        }
+      }
+      
+      result.push(line);
+    }
+    
+    return result.join('\n');
+  }
+
+  /**
    * Remove orphaned continuation markers that appear incorrectly
    */
   private removeOrphanedContinuationMarkers(content: string): string {
@@ -320,7 +494,8 @@ export class AsciiDocConverter implements DocumentConverter {
                                        nextLine.trim().startsWith('[WARNING]') ||
                                        nextLine.trim().startsWith('[CAUTION]') ||
                                        /^[.*]{1,5}\s/.test(nextLine) ||
-                                       nextLine.trim() === '' && i + 2 < lines.length && lines[i + 2].trim().startsWith('image::');
+                                       nextLine.trim() === '' && i + 2 < lines.length && lines[i + 2].trim().startsWith('image::') ||
+                                       (nextLine.trim().length > 0 && !nextLine.match(/^[.*]{1,5}\s/) && !nextLine.match(/^=/)); // Regular text content
         
         // Special case: + followed by empty line then image or admonition
         const nextNextLine = i + 2 < lines.length ? lines[i + 2] : '';
@@ -427,8 +602,8 @@ export class AsciiDocConverter implements DocumentConverter {
       if (element.childNodes.length === 1 && element.childNodes[0].nodeType === 3) {
         // Single text node - handle directly to avoid double processing
         const textContent = (element.childNodes[0].textContent || '').trim();
-        // Clean any residual alphabetic list markers
-        children = textContent.replace(/^\s*[a-z]\.\s+/, '');
+        // Don't strip alphabetic list markers - they're needed for proper list sequence
+        children = textContent;
       } else {
         // For complex inline and other elements, use smart text processing
         children = this.textProcessor.processChildNodes(
@@ -733,7 +908,7 @@ export class AsciiDocConverter implements DocumentConverter {
         const imgElement = element.querySelector('img');
         if (imgElement && element.textContent?.trim() === '') {
           const originalSrc = imgElement.getAttribute('src');
-          const src = originalSrc ? this.normalizeImagePath(originalSrc) : '';
+          const src = originalSrc ? this.normalizeImagePath(originalSrc, this.currentPathDepth) : '';
           const alt = imgElement.getAttribute('alt') || '';
           
           // Check if this linked image is within a list item
@@ -885,7 +1060,7 @@ export class AsciiDocConverter implements DocumentConverter {
                   result += '|';
                   if (imgElement) {
                     const originalSrc = imgElement.getAttribute('src') || '';
-                    const src = this.normalizeImagePath(originalSrc);
+                    const src = this.normalizeImagePath(originalSrc, this.currentPathDepth);
                     const alt = imgElement.getAttribute('alt') || '';
                     // Check if this image has IconInline class for smaller sizing
                     const hasIconInlineClass = imgElement.className.includes('IconInline');
@@ -1265,6 +1440,65 @@ export class AsciiDocConverter implements DocumentConverter {
         }
         return children ? children + '\n\n' : '';
       }
+      case 'ol': {
+        // Handle ordered lists with proper nesting and style detection
+        const style = element.getAttribute('style') || '';
+        const isLowerAlpha = style.includes('list-style-type: lower-alpha');
+        
+        
+        
+        // Check if this is a nested list by looking at parent structure
+        const parentLI = element.closest('li');
+        const isNested = parentLI !== null;
+        
+        let result = '';
+        const listItems = Array.from(element.children).filter(child => 
+          child.tagName.toLowerCase() === 'li'
+        );
+        
+        if (isLowerAlpha) {
+          // This is an alphabetic list - add continuation marker if nested and format as alphabetic
+          if (isNested) {
+            result += '\n+\n';
+          }
+          result += '[loweralpha]\n';
+          listItems.forEach((li, index) => {
+            const letter = String.fromCharCode(97 + index); // a, b, c, etc.
+            const content = this.nodeToAsciiDoc(li, depth + 1, options).trim();
+            result += `${letter}. ${content}\n`;
+          });
+        } else {
+          // Regular numbered list
+          listItems.forEach((li, index) => {
+            const content = this.nodeToAsciiDoc(li, depth + 1, options).trim();
+            result += `. ${content}\n`;
+          });
+        }
+        
+        return result + '\n';
+      }
+      
+      case 'ul': {
+        // Handle unordered lists
+        let result = '';
+        const listItems = Array.from(element.children).filter(child => 
+          child.tagName.toLowerCase() === 'li'
+        );
+        
+        listItems.forEach((li) => {
+          const content = this.nodeToAsciiDoc(li, depth + 1, options).trim();
+          result += `* ${content}\n`;
+        });
+        
+        return result + '\n';
+      }
+      
+      case 'li': {
+        // Handle list items - return content without additional formatting
+        // The parent ol/ul will handle the list markers
+        return children.trim();
+      }
+      
       case 'body':
       case 'html': {
         // For body/html, return the processed children with clean spacing
@@ -1272,6 +1506,59 @@ export class AsciiDocConverter implements DocumentConverter {
       }
       default: return children;
     }
+  }
+
+  /**
+   * Fix malformed lists with orphaned content before JSDOM processing
+   * JSDOM automatically moves orphaned elements out of lists, breaking the association
+   */
+  private fixOrphanedListContent(html: string): string {
+    // Pattern to match lists with orphaned content
+    const listPattern = /<(ol|ul)([^>]*)>(.*?)<\/\1>/gs;
+    
+    return html.replace(listPattern, (match, tagName, attributes, content) => {
+      // Check if this list has orphaned content (non-li elements)
+      const orphanedPattern = /<(?!li\b|\/li\b)(\w+)([^>]*)>(.*?)<\/\1>/gs;
+      let hasOrphanedContent = false;
+      
+      // Look for orphaned elements
+      let modifiedContent = content;
+      const orphanedMatches: Array<{element: string, content: string, position: number}> = [];
+      
+      let match2;
+      while ((match2 = orphanedPattern.exec(content)) !== null) {
+        const [fullMatch, elementTag, elementAttrs, elementContent] = match2;
+        // Skip if this is nested inside an li (check for preceding <li and no </li>)
+        const beforeMatch = content.substring(0, match2.index);
+        const lastLiStart = beforeMatch.lastIndexOf('<li');
+        const lastLiEnd = beforeMatch.lastIndexOf('</li>');
+        
+        if (lastLiStart > lastLiEnd) {
+          // This element is inside an li, skip it
+          continue;
+        }
+        
+        // This is orphaned content - mark it for processing
+        hasOrphanedContent = true;
+        orphanedMatches.push({
+          element: fullMatch,
+          content: elementContent.trim(),
+          position: match2.index
+        });
+      }
+      
+      if (hasOrphanedContent) {
+        // Process orphaned content by adding special data attributes
+        orphanedMatches.reverse().forEach(orphan => {
+          const replacement = `<li data-orphaned-content="true">${orphan.content}</li>`;
+          modifiedContent = modifiedContent.substring(0, orphan.position) + 
+                          replacement + 
+                          modifiedContent.substring(orphan.position + orphan.element.length);
+        });
+      }
+      
+      return `<${tagName}${attributes}>${modifiedContent}</${tagName}>`;
+    });
   }
 
   /**
@@ -1598,14 +1885,94 @@ export class AsciiDocConverter implements DocumentConverter {
     const lines = text.split('\n');
     const result: string[] = [];
     let dotCounter = 0; // Track multiple dot patterns within a list
+    let inAlphabeticList = false; // Track if we're in a [loweralpha] context
+    let alphabeticListDepth = 0; // Track nesting depth
     
     for (let i = 0; i < lines.length; i++) {
       let line = lines[i];
       
-      // Match multiple dot patterns: "...", "....", etc.
+      // Check for [loweralpha] markers - preserve the context
+      if (line.trim() === '[loweralpha]' || line.trim() === '[upperalpha]') {
+        inAlphabeticList = true;
+        alphabeticListDepth = 0;
+        
+        // Look ahead to determine the depth of the following list items
+        for (let j = i + 1; j < lines.length && j < i + 5; j++) {
+          const nextLine = lines[j].trim();
+          const dotMatch = nextLine.match(/^(\.+)\s/);
+          if (dotMatch) {
+            alphabeticListDepth = Math.max(alphabeticListDepth, dotMatch[1].length);
+            break;
+          }
+        }
+        
+        result.push(line);
+        continue;
+      }
+      
+      // More intelligent context tracking - only reset on clear boundaries
+      if (inAlphabeticList) {
+        // Check if we're exiting the alphabetic list
+        const trimmedLine = line.trim();
+        
+        // Look ahead to see if we're really exiting or just have intervening content
+        let shouldExit = false;
+        
+        // Exit conditions:
+        // 1. A heading (section break)
+        if (trimmedLine.match(/^=/)) {
+          shouldExit = true;
+        }
+        // 2. A main list item (single dot) - but check if there are more alphabetic items after
+        else if (trimmedLine.match(/^\.\s/)) {
+          // Look ahead to see if there are more .. items before the next . item
+          let hasMoreAlphaItems = false;
+          for (let j = i + 1; j < lines.length && j < i + 20; j++) {
+            const futureLineTrimmed = lines[j].trim();
+            if (futureLineTrimmed.match(/^\.\s/)) {
+              // Found another main list item, stop looking
+              break;
+            }
+            if (futureLineTrimmed.match(/^\.{2,}\s/)) {
+              // Found more alphabetic items
+              hasMoreAlphaItems = true;
+              break;
+            }
+          }
+          
+          if (!hasMoreAlphaItems) {
+            shouldExit = true;
+          }
+        }
+        // 3. Another list style marker
+        else if (trimmedLine.match(/^\[(lowerroman|upperroman|arabic)\]/)) {
+          shouldExit = true;
+        }
+        // 4. End of document structure markers
+        else if (trimmedLine.match(/^---+$/) || trimmedLine.match(/^___+$/)) {
+          shouldExit = true;
+        }
+        
+        if (shouldExit) {
+          inAlphabeticList = false;
+        }
+      }
+      
+      // If we're in an alphabetic list context, preserve ALL dot markers
+      if (inAlphabeticList) {
+        // Preserve any line with dot markers in alphabetic context
+        const dotMatch = line.match(/^(\s*)(\.+)\s+(.*)$/);
+        if (dotMatch) {
+          result.push(line); // Keep as-is - don't convert to numbers
+          continue;
+        }
+      }
+      
+      // Match multiple dot patterns: "...", "....", etc. (only if not in alphabetic context)
       const multiDotMatch = line.match(/^(\s*)(\.{2,})\s+(.+)$/);
-      if (multiDotMatch) {
+      if (multiDotMatch && !inAlphabeticList) {
         const [, indent, dots, content] = multiDotMatch;
+        
         
         // Reset counter if we're starting a new list (different indentation)
         if (i === 0 || !lines[i-1].match(/^(\s*)(\.{2,})\s+/)) {
@@ -1614,9 +1981,8 @@ export class AsciiDocConverter implements DocumentConverter {
         
         dotCounter++;
         
-        // Convert to alphabetic list format
-        const letter = String.fromCharCode(96 + dotCounter); // 96 + 1 = 97 which is 'a'
-        line = `${indent}${letter}. ${content}`;
+        // Convert to numbered list format (not alphabetic)
+        line = `${indent}${dotCounter}. ${content}`;
         
         result.push(line);
         continue;
@@ -2260,8 +2626,15 @@ export class AsciiDocConverter implements DocumentConverter {
   /**
    * Normalize image paths using enhanced path resolver
    */
-  private normalizeImagePath(originalPath: string, contextPath?: string): string {
+  private normalizeImagePath(originalPath: string, pathDepth?: number, contextPath?: string): string {
     try {
+      // First, apply batch conversion path depth correction if provided
+      if (typeof pathDepth === 'number' && pathDepth > 0) {
+        const correctedPath = this.adjustPathForDepth(originalPath, pathDepth);
+        // Always return the depth-corrected path for batch conversions
+        return correctedPath;
+      }
+      
       const resolution = this.pathResolver.resolveImagePath(originalPath, contextPath);
       
       // Only use resolved path if it's actually better (no malformed patterns)
@@ -2279,6 +2652,40 @@ export class AsciiDocConverter implements DocumentConverter {
       console.warn('Enhanced image path resolution failed, using legacy method:', error);
       return this.legacyNormalizeImagePath(originalPath);
     }
+  }
+
+  /**
+   * Adjust image path based on directory depth for batch conversions
+   */
+  private adjustPathForDepth(originalPath: string, pathDepth: number): string {
+    // Skip external URLs and absolute paths
+    if (originalPath.startsWith('http') || originalPath.startsWith('//') || originalPath.startsWith('/')) {
+      return originalPath;
+    }
+    
+    // Count existing ../ prefixes
+    const existingPrefixes = (originalPath.match(/\.\.\//g) || []).length;
+    
+    // If we already have the correct number of prefixes, return as-is
+    if (existingPrefixes === pathDepth) {
+      return originalPath;
+    }
+    
+    // Remove all existing ../ prefixes
+    let cleanPath = originalPath.replace(/^(\.\.\/)+/, '');
+    
+    // Handle paths that start with Images/ (no ../ prefix) - these are MadCap relative paths
+    // These need to be adjusted based on target depth
+    if (cleanPath === originalPath) {
+      // No ../ prefixes found - this is a relative path that needs prefixes added
+      const prefixes = '../'.repeat(pathDepth);
+      return prefixes + cleanPath;
+    }
+    
+    // Add the correct number of ../ prefixes based on path depth
+    const prefixes = '../'.repeat(pathDepth);
+    
+    return prefixes + cleanPath;
   }
 
   /**
@@ -2415,7 +2822,7 @@ export class AsciiDocConverter implements DocumentConverter {
     if (!originalSrc) return '';
     
     // Normalize image paths for consistent relative structure in target
-    const src = this.normalizeImagePath(originalSrc);
+    const src = this.normalizeImagePath(originalSrc, this.currentPathDepth);
     
     // Generate alt text if missing
     if (!alt) {
@@ -2446,8 +2853,11 @@ export class AsciiDocConverter implements DocumentConverter {
     const filename = src.split('/').pop() || '';
     const nameWithoutExt = filename.replace(/\.[^/.]+$/, '');
     
-    // Convert filename to readable alt text
-    return nameWithoutExt.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    // Convert filename to readable alt text - ensure we don't truncate
+    const altText = nameWithoutExt.replace(/[-_]/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+    
+    // Ensure alt text has minimum length and is not just a single character
+    return altText.length > 1 ? altText : filename;
   }
 
   /**
@@ -2705,6 +3115,9 @@ export class AsciiDocConverter implements DocumentConverter {
     // 1. Fix all list marker issues first - this is the core problem
     result = this.fixAllListMarkers(result);
 
+    // 1a. Fix roman numeral and ellipsis list patterns
+    result = this.fixRomanNumeralLists(result);
+
     // 2. Aggressively remove ALL orphaned continuation markers
     result = this.aggressivelyRemoveContinuationMarkers(result);
 
@@ -2722,6 +3135,10 @@ export class AsciiDocConverter implements DocumentConverter {
     result = result.replace(/(image::[^\]]+\])\s+(\[(?:NOTE|TIP|WARNING|CAUTION|IMPORTANT)\])/g, '$1\n\n$2');
     // Handle case: text image text - ensure image has proper spacing
     result = result.replace(/(\w+)\s+(image::[^\]]+\])\s+(\w+)/g, '$1\n\n$2\n\n$3');
+    
+    // 4b. Ensure proper spacing between paragraphs and block elements
+    result = result.replace(/([^\n])\n(\[(?:NOTE|TIP|WARNING|CAUTION|IMPORTANT)\])/g, '$1\n\n$2');
+    result = result.replace(/(====)\n([^\n\s])/g, '$1\n\n$2');
 
     // 5. Clean up redundant formatting patterns
     result = result.replace(/NOTE: \*Note:\* /g, 'NOTE: ');
@@ -2790,6 +3207,9 @@ export class AsciiDocConverter implements DocumentConverter {
     result = result.replace(/(image:[^\]]+\])(\w)/g, '$1 $2'); // Add space after inline images
     result = result.replace(/(\w)(image:)/g, '$1 $2'); // Add space before inline images
     
+    // Fix inline image spacing issues specifically
+    result = result.replace(/(\w)(image:[^\]]+\])(\w)/g, '$1 $2 $3'); // Ensure spaces around inline images
+    
     // Fix missing newlines in list items with multiple elements
     result = result.replace(/(\w)(\*\*\*)/g, '$1\n$2'); // Newline before list markers in text
     result = result.replace(/(\w)(\.\.\. )/g, '$1\n$2'); // Newline before numbered sub-items
@@ -2812,8 +3232,8 @@ export class AsciiDocConverter implements DocumentConverter {
     // Ensure blank line before admonition blocks
     result = result.replace(/([^\n])\n(\[(?:NOTE|TIP|WARNING|CAUTION|IMPORTANT)\])/g, '$1\n\n$2');
     
-    // Ensure proper spacing between admonition header and content
-    result = result.replace(/(\[(?:NOTE|TIP|WARNING|CAUTION|IMPORTANT)\])\n(====)/g, '$1\n$2');
+    // Ensure proper spacing between admonition header and content - NO blank lines
+    result = result.replace(/(\[(?:NOTE|TIP|WARNING|CAUTION|IMPORTANT)\])\n\n+(====)/g, '$1\n$2');
     
     // Ensure blank line after admonition blocks end - improved pattern
     result = result.replace(/(====)(\n)?([^\n\s\[])/g, '$1\n\n$3');
@@ -2883,8 +3303,8 @@ export class AsciiDocConverter implements DocumentConverter {
         let hasValidList = false;
         for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
           const nextLine = lines[j].trim();
-          // Check for any level of ordered list marker (., .., ..., etc.)
-          if (nextLine.match(/^\.+\s/)) {
+          // Check for any level of ordered list marker (., .., ..., etc.) OR alphabetic markers (a., b., c., etc.)
+          if (nextLine.match(/^\.+\s/) || nextLine.match(/^[a-z]\.\s/)) {
             hasValidList = true;
             break;
           }
@@ -3049,5 +3469,417 @@ export class AsciiDocConverter implements DocumentConverter {
     return null;
   }
 
+  /**
+   * Process glossary conversion if enabled
+   */
+  private async processGlossary(options: ConversionOptions, warnings: string[]): Promise<string | undefined> {
+    const glossaryOptions = options.asciidocOptions?.glossaryOptions;
+    if (!glossaryOptions?.includeGlossary) {
+      return undefined;
+    }
 
+    try {
+      let glossaryPath = glossaryOptions.glossaryPath;
+      
+      // Auto-discover glossary file if not provided
+      if (!glossaryPath && options.inputPath) {
+        const projectPath = this.findProjectPath(options.inputPath);
+        if (projectPath) {
+          const glossaryFiles = await this.flgloParser.findGlossaryFiles(projectPath);
+          if (glossaryFiles.length > 0) {
+            glossaryPath = glossaryFiles[0]; // Use first found glossary
+            warnings.push(`Auto-discovered glossary file: ${glossaryPath}`);
+          }
+        }
+      }
+      
+      if (!glossaryPath) {
+        warnings.push('No glossary file found or specified');
+        return undefined;
+      }
+      
+      // Parse the glossary file
+      const parsedGlossary = await this.flgloParser.parseGlossaryFile(glossaryPath);
+      
+      if (parsedGlossary.entries.length === 0) {
+        warnings.push('No glossary entries found in file');
+        return undefined;
+      }
+      
+      // Apply condition filtering if not disabled
+      const conditionFilters = glossaryOptions.filterConditions !== false ? 
+        undefined : []; // Use default filters unless explicitly disabled
+      
+      // Create converter options
+      const glossaryConversionOptions: GlossaryConversionOptions = {
+        format: glossaryOptions.glossaryFormat || 'inline',
+        generateAnchors: glossaryOptions.generateAnchors !== false,
+        includeIndex: glossaryOptions.includeIndex || false,
+        title: glossaryOptions.glossaryTitle || 'Glossary',
+        levelOffset: options.asciidocOptions?.generateAsBook ? 1 : 0
+      };
+      
+      // Convert to AsciiDoc
+      const glossaryContent = this.glossaryConverter.convertToAsciiDoc(
+        parsedGlossary.entries,
+        glossaryConversionOptions
+      );
+      
+      warnings.push(`Processed ${parsedGlossary.entries.length} glossary entries`);
+      
+      return glossaryContent;
+      
+    } catch (error) {
+      throw new Error(`Glossary processing failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  /**
+   * Fix specific MadCap pattern where numeric markers appear in alphabetic lists
+   * Targets: "1. Click _Next_." should be ".. Click _Next_." within or after [loweralpha] sections
+   */
+  private fixNumericMarkersInAlphabeticLists(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+    let recentLowerAlphaSection = false;
+    let alphaDepth = 2; // Default depth for alphabetic items (usually ..)
+    let lastAlphaIndex = -1;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Track [loweralpha] sections
+      if (trimmedLine === '[loweralpha]') {
+        recentLowerAlphaSection = true;
+        lastAlphaIndex = i;
+        
+        // Look ahead to determine the expected depth for alphabetic items
+        for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+          const nextLine = lines[j].trim();
+          const dotMatch = nextLine.match(/^(\.+)\s/);
+          if (dotMatch && dotMatch[1].length > 1) {
+            alphaDepth = dotMatch[1].length;
+            break;
+          }
+        }
+        
+        result.push(line);
+        continue;
+      }
+      
+      // Reset recentLowerAlphaSection on major section boundaries or new list types
+      if (recentLowerAlphaSection) {
+        if (trimmedLine.match(/^={1,6}\s/) || 
+            trimmedLine.match(/^\[(lowerroman|upperroman|arabic)\]/) ||
+            trimmedLine.match(/^===/)) {
+          recentLowerAlphaSection = false;
+        }
+        // Also reset if we're too far from the last [loweralpha] section
+        else if (i - lastAlphaIndex > 30) {
+          recentLowerAlphaSection = false;
+        }
+      }
+      
+      // Fix numeric markers that should be alphabetic
+      const numericMatch = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
+      if (numericMatch) {
+        const [, indent, number, content] = numericMatch;
+        
+        // Check if this appears to be in an alphabetic list context
+        let isInAlphabeticContext = false;
+        
+        // Strong indicator: we recently had a [loweralpha] section
+        if (recentLowerAlphaSection) {
+          isInAlphabeticContext = true;
+        }
+        
+        // Look backwards for alphabetic items (more comprehensive search)
+        if (!isInAlphabeticContext) {
+          for (let j = Math.max(0, i - 10); j < i; j++) {
+            const prevLine = lines[j].trim();
+            if (prevLine.match(/^\.{2,}\s/) || prevLine.match(/^[a-z]\.\s/)) {
+              isInAlphabeticContext = true;
+              break;
+            }
+          }
+        }
+        
+        // Look forwards for alphabetic items
+        if (!isInAlphabeticContext) {
+          for (let j = i + 1; j < Math.min(i + 8, lines.length); j++) {
+            const nextLine = lines[j].trim();
+            if (nextLine.match(/^\.{2,}\s/) || nextLine.match(/^[a-z]\.\s/)) {
+              isInAlphabeticContext = true;
+              break;
+            }
+          }
+        }
+        
+        // Special case: Check if this numeric item is between a NOTE block and the next main list item
+        // This is the exact pattern from our problem: NOTE block, then "1. Click _Next_.", then ". On the *Budget* page:"
+        if (!isInAlphabeticContext) {
+          let foundNoteAbove = false;
+          let foundMainListBelow = false;
+          
+          // Look backwards for NOTE block
+          for (let j = Math.max(0, i - 8); j < i; j++) {
+            const prevLine = lines[j].trim();
+            if (prevLine === '====' || prevLine.includes('[NOTE]')) {
+              foundNoteAbove = true;
+              break;
+            }
+          }
+          
+          // Look forwards for main list item (single dot)
+          for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+            const nextLine = lines[j].trim();
+            if (nextLine.match(/^\.\s/)) {
+              foundMainListBelow = true;
+              break;
+            }
+          }
+          
+          if (foundNoteAbove && foundMainListBelow) {
+            isInAlphabeticContext = true;
+          }
+        }
+        
+        if (isInAlphabeticContext) {
+          // Replace numeric marker with appropriate dot marker
+          const dotMarker = '.'.repeat(alphaDepth);
+          const fixedLine = `${indent}${dotMarker} ${content}`;
+          result.push(fixedLine);
+          continue;
+        }
+      }
+      
+      result.push(line);
+    }
+    
+    return result.join('\n');
+  }
+
+  /**
+   * Fix MadCap sibling list structure where alphabetic lists appear as siblings instead of nested
+   * This addresses the core issue where HTML like:
+   * <li>On the Type page:</li>
+   * <ol style="list-style-type: lower-alpha;">...</ol>
+   * Should become properly nested AsciiDoc structure with ALL alphabetic items under one [loweralpha] section
+   */
+  private fixMadCapSiblingListStructure(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Check if this is a main list item (with single dot)
+      const mainItemMatch = line.match(/^(\s*)(\.\s+.*)$/);
+      if (mainItemMatch) {
+        const indent = mainItemMatch[1];
+        const itemContent = mainItemMatch[2];
+        
+        // Look ahead to find orphaned alphabetic content
+        let foundOrphanedAlpha = false;
+        let allContent: string[] = [];
+        let j = i + 1;
+        let hasAlphaMarker = false;
+        
+        // Collect content until next main list item or section
+        while (j < lines.length) {
+          const nextLine = lines[j];
+          const nextTrimmed = nextLine.trim();
+          
+          // Stop at next main list item (single dot) or section heading
+          if (nextTrimmed.match(/^\.\s+/) || 
+              nextTrimmed.match(/^={1,6}\s/) || 
+              nextTrimmed.match(/^===+$/)) {
+            break;
+          }
+          
+          // Check for [loweralpha] marker
+          if (nextTrimmed === '[loweralpha]') {
+            hasAlphaMarker = true;
+            foundOrphanedAlpha = true;
+            j++;
+            continue;
+          }
+          
+          // Check for alphabetic list items (double dot markers)
+          if (nextTrimmed.match(/^\.{2,}\s/)) {
+            foundOrphanedAlpha = true;
+          }
+          
+          allContent.push(nextLine);
+          j++;
+        }
+        
+        // Add the main list item
+        result.push(line);
+        
+        if (foundOrphanedAlpha && allContent.length > 0) {
+          // This main item has orphaned alphabetic sublists
+          // Add continuation marker to connect the sublist
+          result.push('+');
+          
+          // Add [loweralpha] marker for the entire alphabetic section
+          if (hasAlphaMarker || allContent.some(l => l.trim().match(/^\.{2,}\s/))) {
+            result.push('[loweralpha]');
+          }
+          
+          // Add all the alphabetic content
+          for (const contentLine of allContent) {
+            const contentTrimmed = contentLine.trim();
+            // Skip any additional [loweralpha] markers
+            if (contentTrimmed !== '[loweralpha]') {
+              result.push(contentLine);
+            }
+          }
+          
+          // Skip ahead in the main loop
+          i = j - 1;
+        } else {
+          // Check if there's immediate content that needs continuation
+          let k = i + 1;
+          while (k < lines.length && lines[k].trim() === '') k++;
+          
+          if (k < lines.length) {
+            const nextLine = lines[k];
+            const nextTrimmed = nextLine.trim();
+            
+            // Special handling for orphaned list markers
+            if (nextTrimmed === '[loweralpha]' || nextTrimmed === '[lowerroman]') {
+              result.push('+');
+            }
+            // If next line is not a list item or heading but has content,
+            // it probably needs continuation
+            else if (nextTrimmed.length > 0 && 
+                !nextTrimmed.match(/^[\.\*\+\[]/) && 
+                !nextTrimmed.match(/^=/) &&
+                !nextTrimmed.startsWith('image::')) {
+              
+              // This content should probably continue the list item
+              result.push('+');
+            }
+          }
+        }
+      } 
+      // Handle orphaned [loweralpha] markers that weren't merged
+      else if (trimmedLine === '[loweralpha]') {
+        // Only skip if this appears to be an orphan that should have been merged
+        let shouldSkip = false;
+        
+        // Look backwards for a recent main list item
+        for (let k = Math.max(0, i - 8); k < i; k++) {
+          const prevLine = lines[k];
+          if (prevLine.match(/^\s*\.\s+/)) {
+            // Found a recent main item, this marker should probably be merged
+            shouldSkip = true;
+            break;
+          }
+        }
+        
+        if (!shouldSkip) {
+          result.push(line);
+        }
+        // Otherwise skip this orphaned marker
+      }
+      else {
+        // Not a main list item, add as-is
+        result.push(line);
+      }
+    }
+    
+    return result.join('\n');
+  }
+
+  /**
+   * Fix triple-dot markers and normalize list depths for consistent AsciiDoc
+   * Converts ... to .. where appropriate and fixes orphaned numeric markers
+   */
+  private fixTripleDotMarkersAndDepths(content: string): string {
+    const lines = content.split('\n');
+    const result: string[] = [];
+    let inAlphabeticContext = false;
+    let inRomanContext = false;
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+      const trimmedLine = line.trim();
+      
+      // Track list contexts
+      if (trimmedLine === '[loweralpha]') {
+        inAlphabeticContext = true;
+        inRomanContext = false;
+        result.push(line);
+        continue;
+      } else if (trimmedLine === '[lowerroman]') {
+        inRomanContext = true;
+        inAlphabeticContext = false;
+        result.push(line);
+        continue;
+      } else if (trimmedLine.match(/^={1,6}\s/) || trimmedLine.match(/^===+$/)) {
+        // Reset contexts on major sections
+        inAlphabeticContext = false;
+        inRomanContext = false;
+      }
+      
+      // Fix triple dots in alphabetic contexts
+      if (inAlphabeticContext) {
+        const tripleDotMatch = line.match(/^(\s*)(\.{3,})\s+(.+)$/);
+        if (tripleDotMatch) {
+          const [, indent, dots, content] = tripleDotMatch;
+          // Convert triple+ dots to double dots in alphabetic lists
+          const fixedLine = `${indent}.. ${content}`;
+          result.push(fixedLine);
+          continue;
+        }
+        
+        // Fix remaining numeric markers in alphabetic context
+        const numericMatch = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
+        if (numericMatch) {
+          const [, indent, number, content] = numericMatch;
+          const fixedLine = `${indent}.. ${content}`;
+          result.push(fixedLine);
+          continue;
+        }
+      }
+      
+      // Fix triple dots in roman numeral contexts
+      if (inRomanContext) {
+        const tripleDotMatch = line.match(/^(\s*)(\.{3,})\s+(.+)$/);
+        if (tripleDotMatch) {
+          const [, indent, dots, content] = tripleDotMatch;
+          // Convert triple+ dots to triple dots (proper roman depth)
+          const fixedLine = `${indent}... ${content}`;
+          result.push(fixedLine);
+          continue;
+        }
+        
+        // Fix numeric markers in roman context
+        const numericMatch = line.match(/^(\s*)(\d+)\.\s+(.+)$/);
+        if (numericMatch) {
+          const [, indent, number, content] = numericMatch;
+          const fixedLine = `${indent}... ${content}`;
+          result.push(fixedLine);
+          continue;
+        }
+      }
+      
+      // Check if we're exiting list contexts
+      if (inAlphabeticContext || inRomanContext) {
+        // Exit on main list items or new sections
+        if (trimmedLine.match(/^\.\s+/) && !trimmedLine.match(/^\.{2,}\s+/)) {
+          inAlphabeticContext = false;
+          inRomanContext = false;
+        }
+      }
+      
+      result.push(line);
+    }
+    
+    return result.join('\n');
+  }
 }
