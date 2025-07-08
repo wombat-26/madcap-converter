@@ -12,6 +12,7 @@ export interface ConversionOptions {
   asciidocOptions?: AsciiDocConversionOptions;
   writersideOptions?: WritersideConversionOptions;
   validateLinks?: boolean;
+  pathDepth?: number; // For batch processing - track directory depth
 }
 
 export interface AsciiDocConversionOptions {
@@ -39,6 +40,20 @@ export interface AsciiDocConversionOptions {
   enableSmartPathResolution?: boolean; // Enable intelligent path resolution (default: true)
   validateImagePaths?: boolean; // Validate image file existence (default: false)
   customImagePaths?: string[]; // Additional search paths for images
+  
+  // Glossary options
+  glossaryOptions?: {
+    generateGlossary?: boolean; // Generate AsciiDoc glossary (default: false)
+    glossaryTitle?: string; // Title for glossary section (default: 'Glossary')
+    glossaryFile?: string; // Separate glossary file name
+    extractToSeparateFile?: boolean; // Extract glossary to separate file
+    includeGlossary?: boolean; // Include glossary in conversion
+    glossaryPath?: string; // Path to glossary file
+    filterConditions?: string[] | boolean; // Conditions to filter glossary terms or false to disable filtering
+    glossaryFormat?: 'inline' | 'separate' | 'book-appendix'; // Format for glossary output
+    generateAnchors?: boolean; // Generate anchors for glossary terms
+    includeIndex?: boolean; // Include alphabetical index
+  };
 }
 
 export interface WritersideConversionOptions {
@@ -120,6 +135,7 @@ export interface ConversionResult {
   content: string;
   stylesheet?: string; // Generated CSS content when generateStylesheet is true
   variablesFile?: string; // Generated variables file content when extractVariables is true
+  glossaryContent?: string; // Generated glossary content when glossary generation is enabled
   metadata?: {
     title?: string;
     wordCount: number;
