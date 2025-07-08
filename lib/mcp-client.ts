@@ -60,6 +60,20 @@ export interface AsciidocOptions {
   enableSmartPathResolution?: boolean;
   validateImagePaths?: boolean;
   customImagePaths?: string[];
+  
+  // Glossary options
+  glossaryOptions?: {
+    includeGlossary?: boolean;
+    glossaryPath?: string;
+    glossaryFormat?: 'inline' | 'separate' | 'book-appendix';
+    filterConditions?: boolean;
+    generateAnchors?: boolean;
+    includeIndex?: boolean;
+    glossaryTitle?: string;
+    sortAlphabetically?: boolean;
+    includeDefinitionList?: boolean;
+    enableCrossReferences?: boolean;
+  };
 }
 
 export interface WritersideOptions {
