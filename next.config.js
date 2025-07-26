@@ -5,10 +5,9 @@ const nextConfig = {
   typescript: {
     tsconfigPath: './tsconfig.ui.json'
   },
-  // Enable static export for Netlify
-  output: 'export',
-  trailingSlash: true,
+  // Server-side rendering for API routes
   images: {
+    domains: ['*'],
     unoptimized: true
   }
 }

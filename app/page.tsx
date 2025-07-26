@@ -1,5 +1,5 @@
-import { MadCapConverterUI } from "@/components/madcap-converter-ui"
+import MadCapConverterWebUI from '@/components/madcap-converter-web-ui'
 
 export default function Home() {
-  return <MadCapConverterUI />
+  return <MadCapConverterWebUI />
 }

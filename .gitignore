@@ -102,3 +102,5 @@ Thumbs.db
 # Test files
 test-output/
 *.log
+# Local Netlify folder
+.netlify

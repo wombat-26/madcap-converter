@@ -6,5 +6,7 @@
 
 . First item
 +
+
 Continuation paragraph
+
 . Second item

@@ -1,6 +1,6 @@
-# MadCap Converter MCP Server
+# MadCap Converter
 
-> **A specialized Model Context Protocol (MCP) server that expertly converts MadCap Flare source (Content folder) to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. Do not use with generated HTML output folders.**
+> **A comprehensive web application and Model Context Protocol (MCP) server that expertly converts MadCap Flare source files to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. Features both a modern Next.js web interface and MCP server capabilities for seamless AI workflow integration.**
 
 Transform your technical documentation with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like dynamic variable resolution, snippet processing, cross-reference handling, condition filtering, and comprehensive batch operations with specialized Zendesk Help Center support.
 
@@ -15,6 +15,9 @@ Transform your technical documentation with intelligent conversion that preserve
 
 ### Multiple Output Formats
 - **AsciiDoc** - Professional documentation format with clean, syntax-compliant output
+  - Enhanced list processing with proper consecutive numbering
+  - Intelligent inline/block image detection with proper sizing
+  - Glossary generation from MadCap .flglo files
 - **Writerside Markdown** - CommonMark 0.31.2 compliant markdown optimized for JetBrains Writerside
 - **Zendesk HTML** - Help Center optimized HTML with collapsible sections, styled callouts, and inline CSS
 
@@ -126,36 +129,49 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 
 ## 🖥️ Web Interface
 
-The MadCap Converter includes a modern **Next.js web interface** for users who prefer a graphical interface over the command-line MCP tools.
+The MadCap Converter is now a **comprehensive Next.js web application** that provides both standalone functionality and MCP server capabilities for AI workflow integration.
 
 ### Features
 - **🎛️ Comprehensive Configuration**: Full access to all conversion options through an intuitive interface
-- **🎨 Modern UI**: Built with Radix UI primitives and Tailwind CSS for a polished experience
-- **🚀 Real-time Processing**: Live conversion status updates and progress feedback
-- **📱 Responsive Design**: Works seamlessly on desktop and mobile devices
-- **🌙 Theme Support**: Built-in dark/light mode switching
+- **🎨 Modern UI**: Built with Radix UI primitives and Tailwind CSS for a polished, professional experience
+- **🚀 Real-time Processing**: Live conversion status updates with progress feedback
+- **📱 Responsive Design**: Works seamlessly on desktop and mobile devices  
+- **🌙 Theme Support**: Built-in dark/light mode switching with system preference detection
+- **🔄 Dual Mode Operation**: Functions as both standalone web app and MCP server
+- **📁 Advanced File Handling**: Drag-and-drop support, folder uploads, and File System Access API integration
+- **💾 Smart Downloads**: Direct file writing (where supported) or ZIP download fallback
+- **🧪 Comprehensive Testing**: Full test suite with unit, integration, and E2E tests
 
 ### Quick Start
 ```bash
-# Build both server and UI
-npm run build:all
+# Install dependencies and fix security vulnerabilities
+npm install
+npm audit fix --force
 
-# Start development UI
-npm run dev:ui
+# Start development server
+npm run dev
 
-# Or run both server and UI concurrently
-npm run dev:all
+# Or build for production
+npm run build
+npm start
 ```
 
 Open [http://localhost:3000](http://localhost:3000) to access the web interface.
 
 ### Interface Capabilities
-- **📁 Folder Conversion**: Batch process entire directories with full configuration options
-- **📄 Single File Conversion**: Convert individual files with simplified interface
-- **🔍 Folder Analysis**: Analyze directory structure before conversion
-- **⚙️ Zendesk Integration**: Complete Zendesk Help Center optimization settings
+- **📄 Single File Conversion**: Convert individual files with drag-and-drop support
+- **📁 Project Folder Conversion**: Batch process entire directories with full configuration options
+- **⚙️ Advanced Options**: Preserve structure, rename files, variable extraction, and more
+- **📂 Output Folder Selection**: Choose target directories using File System Access API (modern browsers)
+- **🔍 Real-time Validation**: Input validation and error handling with user feedback
+- **💾 Multiple Output Formats**: AsciiDoc, Writerside Markdown, and Zendesk HTML
 
-The web interface communicates directly with the MCP server, providing the same powerful conversion capabilities through an accessible graphical interface.
+### Testing Infrastructure
+The application includes a comprehensive testing suite:
+- **Unit Tests**: API routes and React components
+- **Integration Tests**: End-to-end conversion workflows  
+- **E2E Tests**: Full user workflows with Playwright
+- **Coverage**: Jest-based test coverage reporting
 
 ---
 
@@ -179,6 +195,7 @@ Convert content directly from string input.
 | `outputPath` | string | ❌ | Save to file (returns content only if omitted) |
 | `variableOptions` | object | ❌ | Variable extraction settings (see Variable Options below) |
 | `asciidocOptions` | object | ❌ | AsciiDoc-specific settings (see AsciiDoc Options below) |
+| `glossaryOptions` | object | ❌ | Glossary processing settings (see Glossary Options below) |
 
 #### `convert_file`
 Convert documents from file system paths with advanced MadCap processing.
@@ -193,6 +210,7 @@ Convert documents from file system paths with advanced MadCap processing.
 | `extractImages` | boolean | ❌ | Extract images to files (default: false) |
 | `variableOptions` | object | ❌ | Variable extraction settings (see Variable Options below) |
 | `asciidocOptions` | object | ❌ | AsciiDoc-specific settings (see AsciiDoc Options below) |
+| `glossaryOptions` | object | ❌ | Glossary processing settings (see Glossary Options below) |
 
 #### `convert_folder`
 Batch convert entire folder structures with link rewriting and structure preservation.
@@ -212,6 +230,7 @@ Batch convert entire folder structures with link rewriting and structure preserv
 | `generateMasterDoc` | boolean | ❌ | Generate master document from TOCs (default: false) |
 | `variableOptions` | object | ❌ | Variable extraction settings (see Variable Options below) |
 | `asciidocOptions` | object | ❌ | AsciiDoc-specific settings (see AsciiDoc Options below) |
+| `glossaryOptions` | object | ❌ | Glossary processing settings (see Glossary Options below) |
 
 #### `convert_to_writerside_project`
 Complete MadCap Flare to JetBrains Writerside project conversion with full project structure generation.
@@ -416,6 +435,54 @@ To activate the correct display of the spend data...
 - **Smart Nesting**: Automatically adjusts delimiter levels (====, =====, ======) based on depth
 - **Title Extraction**: Uses dropdown hotspot text as collapsible block title
 - **Content Preservation**: All formatting, images, lists, and links maintained within blocks
+
+### 📝 Glossary Options
+
+When converting to AsciiDoc format with glossary support, you can configure glossary-specific behavior using `glossaryOptions`:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `includeGlossary` | boolean | `false` | Include glossary in conversion |
+| `glossaryPath` | string | auto-detected | Path to specific glossary file (.flglo) |
+| `glossaryFormat` | enum | `'separate'` | Format: `'inline'`, `'separate'`, `'book-appendix'` |
+| `glossaryTitle` | string | `'Glossary'` | Title for glossary section |
+| `generateAnchors` | boolean | `true` | Generate anchors for glossary terms |
+| `includeIndex` | boolean | `true` | Include alphabetical index |
+| `filterConditions` | string[] or boolean | `false` | Conditions to filter glossary terms or false to disable filtering |
+
+**Example Configuration:**
+```json
+{
+  "glossaryOptions": {
+    "includeGlossary": true,
+    "glossaryFormat": "separate",
+    "glossaryTitle": "Technical Terms",
+    "generateAnchors": true,
+    "includeIndex": true,
+    "filterConditions": ["General", "UserGuide"]
+  }
+}
+```
+
+**Output Behavior:**
+- **Without glossary**: No glossary processing or output
+- **With `'separate'` format**: Creates `glossary.adoc` file in output directory
+- **With `'inline'` format**: Appends glossary to end of each converted document
+- **With `'book-appendix'` format**: Adds glossary as appendix in AsciiDoc book generation
+
+**Generated Glossary Example:**
+```asciidoc
+= Technical Terms
+
+[glossary]
+== A
+
+API:: Application Programming Interface - A set of rules and protocols for building software applications.
+
+== B
+
+Budget:: The financial planning and allocation system within the application.
+```
 
 ---
 
@@ -1381,27 +1448,27 @@ madcap-converter/
 ### Development Scripts
 
 ```bash
-# Build commands
-npm run build          # Build server (TypeScript)
-npm run build:ui       # Build UI (Next.js)
-npm run build:all      # Build both server and UI
+# Main application commands
+npm run dev           # Start Next.js development server (port 3000)
+npm run build         # Build Next.js application for production
+npm start             # Start production Next.js server
 
-# Development workflow
-npm run dev           # Build and run MCP server
-npm run dev:ui        # Run UI in development mode
-npm run dev:all       # Run both server and UI concurrently
-
-# Production
-npm start             # Run compiled MCP server
-npm run start:ui      # Run UI in production mode
-npm run serve         # Run both in production mode
-
-# Testing and quality
-npm test              # Run test suite
+# Testing commands
+npm test              # Run complete test suite (Jest + Playwright)
+npm run test:api      # Run API route tests only
+npm run test:components # Run React component tests only
+npm run test:e2e      # Run end-to-end tests with Playwright
+npm run test:coverage # Generate test coverage report
 npm run test:watch    # Run tests in watch mode
-npm run test:coverage # Generate coverage report
-npm run lint          # Lint the UI code
-npm run clean         # Clean build artifacts
+
+# Quality and maintenance
+npm run lint          # ESLint code quality checks
+npm audit fix --force # Fix security vulnerabilities
+npm run clean         # Clean Next.js build artifacts
+
+# Legacy MCP server commands (still available)
+npm run build:server  # Build TypeScript MCP server to build/
+npm run dev:server    # Build and run standalone MCP server
 ```
 
 ### Testing the Server
@@ -1502,6 +1569,18 @@ npm install
 - **Cross-Reference Processing**: Better handling of relative paths and fragment identifiers
 - **List Continuation**: Proper support for `madcap:continue="true"` across all formats
 - **Variable Resolution**: More robust fallback handling for missing variable files
+
+### July 2025 Updates
+- **Complete Web Application Transformation**: Converted from MCP-only server to full Next.js web application with modern UI
+- **Comprehensive Testing Suite**: Added Jest-based unit tests, React Testing Library component tests, and Playwright E2E tests
+- **Advanced File Handling**: Implemented File System Access API with ZIP fallback for browser-based file operations
+- **Security Updates**: Updated Next.js to 14.2.30 and fixed all critical security vulnerabilities
+- **Enhanced User Experience**: Added drag-and-drop support, real-time conversion status, and theme switching
+- **API Route Architecture**: Created REST API endpoints replacing MCP-only functionality for web integration
+- **Dual Mode Operation**: Maintains MCP server compatibility while adding standalone web application capabilities
+- **Professional UI Components**: Built with Radix UI primitives and Tailwind CSS for modern, accessible interface
+- **Output Folder Selection**: Advanced folder selection with browser File System API support
+- **Comprehensive Error Handling**: Enhanced error reporting and user feedback throughout the application
 
 ## 🤝 Contributing
 

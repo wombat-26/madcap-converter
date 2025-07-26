@@ -4,50 +4,112 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a **MadCap Converter** - a Model Context Protocol (MCP) server that specializes in converting MadCap Flare source HTM files (from the Content folder) to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. The application provides both single-file conversion and batch folder processing capabilities through MCP tools that integrate with Claude Desktop and other MCP clients.
+This is a **MadCap Converter** - a comprehensive Next.js web application that converts MadCap Flare source files to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. The application provides both a modern web interface and MCP server capabilities for AI workflow integration.
 
 ## Key Development Commands
 
 ```bash
-# Essential workflow commands
-npm run build          # Compile TypeScript to build/ directory and make executable
-npm run dev            # Build and run the MCP server
-npm start              # Run the compiled server directly
+# Main application commands
+npm run dev           # Start Next.js development server (port 3000)
+npm run build         # Build Next.js application for production
+npm start             # Start production Next.js server
 
-# Testing MCP server functionality
+# Testing commands
+npm test              # Run complete test suite (Jest + Playwright)
+npm run test:api      # Run API route tests only
+npm run test:components # Run React component tests only
+npm run test:e2e      # Run end-to-end tests with Playwright
+npm run test:coverage # Generate test coverage report
+
+# Quality and maintenance
+npm run lint          # ESLint code quality checks
+npm audit fix --force # Fix security vulnerabilities
+
+# Legacy MCP server commands (still available)
+npm run build:server  # Build TypeScript MCP server to build/
+npm run dev:server    # Build and run standalone MCP server
 echo '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' | node build/index.js
 npx @modelcontextprotocol/inspector node build/index.js  # Visual debugging interface
 ```
 
 ## Architecture Overview
 
-### Core Service Pattern
-The application follows a **service-oriented architecture** with clear separation of concerns:
+### Modern Web Application Architecture
+The application follows a **Next.js full-stack architecture** with clear separation of concerns:
 
-- **DocumentService**: Orchestrates single-file conversions, manages converter registry
-- **BatchService**: Handles folder processing, directory traversal, and bulk operations  
-- **Converter Classes**: Implement `DocumentConverter` interface for format-specific logic
-- **MCP Server**: Exposes functionality through standardized protocol tools
+- **Next.js App Router**: Modern React Server Components with API routes
+- **API Routes**: RESTful endpoints in `app/api/` replacing MCP-only functionality
+- **React Components**: Modern UI built with Radix UI primitives and Tailwind CSS
+- **Core Services**: Conversion logic in `src/core/` with simplified interfaces
+- **Testing Suite**: Comprehensive Jest + Playwright testing infrastructure
 
-### Converter Plugin System
+### Conversion Service Architecture
 New document formats are added by:
-1. Implementing the `DocumentConverter` interface in `src/converters/`
-2. Registering in `DocumentService.converters` Map
-3. Adding to Zod schema enums for validation
+1. Implementing converter classes in `src/core/converters/`
+2. Registering in service classes (`SimpleDocumentService`, `SimpleBatchService`)
+3. Adding API endpoints in `app/api/` for web interface integration
+4. Adding UI controls in React components
 
-Key interfaces in `src/types/index.ts`:
+Key interfaces in `src/core/types/index.ts`:
 - `ConversionOptions`: Configuration for conversion behavior
 - `ConversionResult`: Standardized output with content and metadata
 - `DocumentConverter`: Plugin interface for format handlers
 
 ### Data Flow Architecture
 ```
-MCP Client → MCP Server (index.ts) → DocumentService/BatchService → Converter Classes → Output
+Web UI → API Routes → Core Services → Converter Classes → Output
+Legacy: MCP Client → MCP Server → Core Services → Converter Classes → Output
 ```
 
-## MCP Tools Overview
+### Web Application Structure
+```
+app/                    # Next.js App Router
+├── api/               # REST API endpoints
+│   ├── convert/       # Text conversion
+│   ├── convert-file/  # File upload conversion
+│   ├── batch-convert/ # Folder processing
+│   └── formats/       # Supported formats
+├── layout.tsx         # Root layout with providers
+└── page.tsx          # Main converter interface
 
-The server exposes 12 main tools:
+components/            # React UI components
+├── madcap-converter-web-ui.tsx # Main converter interface
+├── theme-provider.tsx # Theme context provider
+├── theme-toggle.tsx   # Dark/light mode toggle
+└── ui/               # Radix UI primitives
+
+src/core/             # Conversion logic (web-compatible)
+├── converters/       # Format-specific converters
+├── services/         # Processing services
+└── types/           # TypeScript interfaces
+
+tests/                # Comprehensive testing
+├── api/             # API route tests
+├── components/      # React component tests
+├── e2e/            # Playwright E2E tests
+└── integration/    # Integration tests
+```
+
+## Web API Endpoints
+
+The application provides RESTful API endpoints for web interface integration:
+
+### Core API Routes
+- **`POST /api/convert`**: Text/HTML content conversion with format options
+- **`POST /api/convert-file`**: Single file upload and conversion
+- **`POST /api/batch-convert`**: Batch folder processing with ZIP output
+- **`GET /api/formats`**: Returns supported input types and output formats
+
+### API Features
+- **File Upload Support**: Handles single files and folder structures
+- **Real-time Processing**: Streaming responses for large conversions
+- **ZIP Output**: Automatic ZIP generation for batch conversions
+- **Error Handling**: Comprehensive error responses with validation
+- **Format Validation**: Zod schema validation for all inputs
+
+## Legacy MCP Tools (Still Available)
+
+The legacy MCP server exposes 12 main tools for AI workflow integration:
 - `convert_document`: Direct content conversion (string/base64 input)
 - `convert_file`: Single file conversion with filesystem I/O
 - `convert_folder`: Batch directory processing with structure preservation
@@ -95,6 +157,7 @@ The `MadCapConverter` includes sophisticated preprocessing for:
 - Cross-references (`data-mc-xref`) → standard links
 - Snippets (`data-mc-snippet`) → documented includes
 - Style class mapping (mc-heading-1, mc-note, mc-warning, etc.)
+- Keyboard formatting (`<span class="Keyboard">`) → AsciiDoc `kbd:[]` macros
 
 ### General Flare Image Conversion Rule
 **Applied to both AsciiDoc and Markdown formats:**
@@ -103,12 +166,38 @@ Images in their own paragraphs are automatically formatted as **block images** w
 
 **Detection logic:**
 - **Block images**: Images in paragraphs with minimal or no surrounding text (≤5 characters beyond alt text)
-- **Inline images**: Images with `IconInline` class, small dimensions (≤32px), or substantial surrounding text
+- **Inline images**: Images with `IconInline` class, small dimensions (≤36px), or substantial surrounding text
 - **Path-based detection**: UI icons in `/GUI/`, `/Icon/`, `/Button/` paths are treated as inline
 
 **Output formats:**
 - **AsciiDoc**: `image::path[alt]` (block) vs `image:path[alt]` (inline)  
 - **Markdown**: Proper spacing with line breaks (block) vs inline syntax (inline)
+
+### Keyboard Formatting Support
+**MadCap to AsciiDoc keyboard element conversion:**
+
+The converter automatically detects and converts MadCap keyboard formatting to AsciiDoc keyboard macros:
+
+**HTML Input:**
+```html
+<span class="Keyboard">Enter</span>
+<span class="Keyboard">Ctrl+S</span>
+<span class="Keyboard">…</span>
+```
+
+**AsciiDoc Output:**
+```asciidoc
+kbd:[Enter]
+kbd:[Ctrl+S]
+kbd:[...]
+```
+
+**Features:**
+- **Single keys**: `<span class="Keyboard">Enter</span>` → `kbd:[Enter]`
+- **Key combinations**: `<span class="Keyboard">Ctrl+S</span>` → `kbd:[Ctrl+S]`
+- **Special symbols**: Converts ellipsis (`…`) to three dots (`...`)
+- **Requires `:experimental:`**: Added automatically to all AsciiDoc headers
+- **Unicode normalization**: Handles en-dash (`–`) and em-dash (`—`) characters
 
 ### Clean AsciiDoc Conversion Approach
 The `AsciiDocConverter` follows a **lightweight, syntax-compliant approach** that prioritizes clean output over heavy post-processing:
@@ -136,15 +225,38 @@ Content follows with proper spacing...
 - **Clean Formatting**: Focused cleanup of spacing, continuation markers, and redundant patterns
 - **Syntax Compliance**: Follows AsciiDoc best practices without over-engineering
 - **Block Spacing**: Proper blank lines around images, admonitions, and code blocks
-- **List Processing**: Enhanced list handling with proper nesting and continuation markers
+- **List Processing**: Enhanced list handling with proper nesting and continuation markers using ImprovedListProcessor
 - **Intelligent Cleanup**: Removes orphaned continuation markers and conflicting list attributes
 - **Admonition Spacing**: Comprehensive spacing fixes for NOTE, TIP, WARNING blocks
 - **Image Processing**: Simplified inline/block detection without aggressive overrides
+- **Inline Icon Sizing**: Proper AsciiDoc dimensions using `16,16` for IconInline class and `18,18` for UI icons
+
+**Recent Fixes (December 2024):**
+- **CRITICAL LIST NUMBERING FIX**: ✅ **FULLY RESOLVED** - Fixed ALL issues where nested alphabetic lists showed `1. 2. 3.` instead of `a. b. c.`
+- **Comprehensive Detection Logic**: Enhanced `fixNumericMarkersInAlphabeticLists()` with 7 different detection patterns:
+  - After main list items: Detects numeric items following `. On the Type page:` patterns
+  - Consecutive numeric sequences: Identifies `1. 2. 3. 4.` patterns that should be sub-lists
+  - Near NOTE blocks: Catches isolated numeric items between notes and main lists
+  - Section context: Identifies numeric items under section headings like `=== Connecting...`
+  - Isolated numeric items: Converts single `1.` items that appear near `..` items
+  - Image/Note context: Detects numeric items between images and notes
+  - Triple asterisk patterns: Converts `***` to proper `..` markers
+- **HTML Preprocessing**: Enhanced to properly move sibling `<ol>` elements into parent `<li>` elements for correct nesting
+- **Depth-Based Dots**: All ordered lists now use proper AsciiDoc depth-based dot syntax (`.` for main items, `..` for sub-items)
+- **Alphabetic Rendering**: AsciiDoc automatically renders nested lists (depth 1) as alphabetic (a, b, c) without manual `[loweralpha]` attributes
+- **Perfect Structure Match**: Final output now matches HTML5 published pages exactly with 1-8 main sequence and a, b, c sub-sequences
+- **Format Parameter**: Ensured `'asciidoc'` format is explicitly passed to ImprovedListProcessor.convertList()
+- **Section Reset Logic**: Fixed `lastWasSection` flag to only reset depth for top-level lists, not nested lists
 
 **What Was Removed:**
+- All `[loweralpha]` attribute generation and post-processing functions (except `fixNumericMarkersInAlphabeticLists` which was re-enabled)
 - Heavy-handed post-processor that caused formatting corruption
 - Aggressive syntax validation that created more problems than it solved
 - Complex multi-phase repair systems that interfered with clean output
+- Legacy list processing functions: `fixMadCapSiblingListStructure`, `addContinuationMarkersForNestedLists`, `fixOrphanedContentInAlphabeticLists`, `fixMissingLowerAlphaAttributes`
+
+**SOLUTION SUMMARY:**
+The list numbering issue was solved by re-enabling and enhancing the `fixNumericMarkersInAlphabeticLists()` post-processing function. This function now detects when numeric markers appear in alphabetic contexts (after main list items) and converts them to proper AsciiDoc depth-based dots. The result is perfect 1-8 main sequence with a, b, c alphabetic sub-sequences that match HTML5 published output exactly.
 
 ### Enhanced Quality & Validation System
 
