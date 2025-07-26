@@ -67,7 +67,7 @@ Transform your technical documentation with intelligent conversion that preserve
 
 ```bash
 # Clone the repository
-git clone https://github.com/eckardtm/madcap-converter.git
+git clone https://github.com/wombat-26/madcap-converter.git
 cd madcap-converter
 
 # Install dependencies
