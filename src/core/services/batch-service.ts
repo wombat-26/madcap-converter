@@ -1,11 +1,11 @@
 import { readdir, stat, copyFile, mkdir, readFile, writeFile } from 'fs/promises';
 import { join, relative, extname, dirname, basename, sep } from 'path';
 import { DocumentService } from './document-service.js';
-import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from './types/index.js';
+import { ConversionOptions, ConversionResult, ZendeskConversionOptions } from '../types/index.js';
 import { JSDOM } from 'jsdom';
-import { ZendeskConverter } from './converters/zendesk-converter.js';
-import { MadCapConverter } from './converters/madcap-converter.js';
-import { TOCDiscoveryService } from './services/toc-discovery.js';
+import { ZendeskConverter } from '../converters/zendesk-converter.js';
+import { MadCapConverter } from '../converters/madcap-converter.js';
+import { TOCDiscoveryService } from './toc-discovery.js';
 import { TocService, TOCBasedConversionPlan } from './toc-service.js';
 
 export interface BatchConversionOptions extends Partial<ConversionOptions> {
@@ -17,7 +17,7 @@ export interface BatchConversionOptions extends Partial<ConversionOptions> {
   excludePatterns?: string[];
   useTOCStructure?: boolean; // Use TOC hierarchy instead of file structure
   generateMasterDoc?: boolean; // Generate master document from TOCs
-  writersideOptions?: import('./types/index.js').WritersideOptions; // Writerside project options
+  writersideOptions?: import('../types/index.js').WritersideOptions; // Writerside project options
 }
 
 export interface BatchConversionResult {

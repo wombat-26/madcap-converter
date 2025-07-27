@@ -1,11 +1,11 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { extname, dirname, basename, join } from 'path';
-import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter, AsciiDocConverter } from './converters/index.js';
-import WritersideMarkdownConverter from './converters/writerside-markdown-converter.js';
-import { ConversionOptions, ConversionResult, DocumentConverter } from './types/index.js';
-import { errorHandler } from './services/error-handler.js';
-import { InputValidator } from './services/input-validator.js';
-import { LinkValidator } from './services/link-validator.js';
+import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter, AsciiDocConverter } from '../converters/index.js';
+import WritersideMarkdownConverter from '../converters/writerside-markdown-converter.js';
+import { ConversionOptions, ConversionResult, DocumentConverter } from '../types/index.js';
+import { errorHandler } from './error-handler.js';
+import { InputValidator } from './input-validator.js';
+import { LinkValidator } from './link-validator.js';
 
 export class DocumentService {
   private converters: Map<string, DocumentConverter>;
