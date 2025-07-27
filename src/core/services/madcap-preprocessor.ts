@@ -55,9 +55,6 @@ export class MadCapPreprocessor {
     // Remove Microsoft properties first
     let cleanedHtml = this.removeMicrosoftProperties(html);
     
-    // **PROGRAMMATIC FIX**: Repair malformed HTML in main document content
-    cleanedHtml = this.repairMalformedHTML(cleanedHtml);
-    
     // Try to load MadCap variables from project (cached)
     if (inputPath) {
       const projectPath = this.findProjectPath(inputPath);
@@ -326,23 +323,8 @@ export class MadCapPreprocessor {
           }
           
           // Parse snippet content with JSDOM and extract body children with boundary preservation
-          // Use a more robust parsing approach to prevent content truncation
-          let snippetDom: JSDOM;
-          try {
-            // Wrap content in a complete HTML document to ensure proper parsing
-            const wrappedContent = `<!DOCTYPE html><html><head></head><body>${snippetContent}</body></html>`;
-            snippetDom = new JSDOM(wrappedContent, { 
-              contentType: 'text/html',
-              includeNodeLocations: false,
-              storageQuota: 10000000
-            });
-          } catch (jsdomError) {
-            console.warn(`JSDOM parsing failed for snippet ${snippetSrc}:`, jsdomError instanceof Error ? jsdomError.message : String(jsdomError));
-            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
-            continue;
-          }
+          const snippetDom = new JSDOM(snippetContent, { contentType: 'text/html' });
           const snippetBody = snippetDom.window.document.body;
-          
           
           if (snippetBody && element.parentNode) {
             // Wrap snippet content in a container to preserve boundaries
@@ -360,7 +342,6 @@ export class MadCapPreprocessor {
             // Insert the container and remove the original snippet element
             element.parentNode.insertBefore(snippetContainer, element);
             element.parentNode.removeChild(element);
-            
           } else {
             // Fallback: use the old method if no body found
             const div = element.ownerDocument.createElement('div');
@@ -512,7 +493,6 @@ export class MadCapPreprocessor {
   }
 
   private async processSnippetContent(snippetContent: string): Promise<string> {
-    
     // Clean the snippet content
     let cleanedSnippet = snippetContent
       .replace(/<\?xml[^>]*>/g, '')
@@ -520,211 +500,12 @@ export class MadCapPreprocessor {
     
     // Extract the body content
     const bodyMatch = cleanedSnippet.match(/<body[^>]*>([\s\S]*?)<\/body>/i);
-    let bodyContent = bodyMatch ? bodyMatch[1].trim() : cleanedSnippet.trim();
-    
-    if (snippetContent.includes('HowEditPlanPerformDat')) {
-      console.log('🔍 EXTRACTED body content:', bodyContent.substring(0, 500) + '...');
+    if (bodyMatch) {
+      return bodyMatch[1].trim();
     }
     
-    // **PROGRAMMATIC FIX**: Repair malformed HTML in snippet content
-    if (snippetContent.includes('HowEditPlanPerformDat')) {
-      console.log('🔍 BEFORE repair:', bodyContent);
-    }
-    bodyContent = this.repairMalformedHTML(bodyContent);
-    if (snippetContent.includes('HowEditPlanPerformDat')) {
-      console.log('🔍 AFTER repair:', bodyContent);
-    }
-    
-    return bodyContent;
-  }
-  
-  /**
-   * Programmatically repair malformed HTML patterns that cause JSDOM parsing failures
-   */
-  private repairMalformedHTML(html: string): string {
-    // Fix 1: Repair <p> tags that appear between <li> elements instead of inside them
-    // This is the most common pattern causing truncation
-    html = this.fixMalformedListParagraphs(html);
-    
-    // Fix 2: Repair unclosed or improperly nested tags
-    html = this.fixImproperNesting(html);
-    
-    // Fix 3: Fix orphaned content in lists - DISABLED to preserve semantic meaning
-    // html = this.fixOrphanedListContent(html);
-    
-    // Fix 4: Fix orphaned <li> elements (MadCap specific issue) - DISABLED due to truncation issues
-    // html = this.fixOrphanedListItems(html);
-    
-    return html;
-  }
-  
-  /**
-   * Fix malformed HTML where <p> tags appear between <li> elements
-   */
-  private fixMalformedListParagraphs(html: string): string {
-    // Pattern: <li>...</li><p>content</p><li>...</li>
-    // Fix: Move the <p> content into the previous <li> element
-    
-    // Use regex to find and fix the pattern
-    let fixed = html;
-    
-    // Find all cases where </li> is followed by <p> content and then <li>
-    const pattern = /(<\/li>)\s*(<p[^>]*>[\s\S]*?<\/p>)\s*(<li[^>]*>)/g;
-    
-    fixed = fixed.replace(pattern, (match, closingLi, pContent, openingLi) => {
-      // Move the <p> content into the previous <li> by removing the closing </li>
-      // and adding it after the <p> content
-      return pContent + '\n' + closingLi + '\n' + openingLi;
-    });
-    
-    // Also handle cases where multiple <p> tags appear between <li> elements
-    const multiPPattern = /(<\/li>)\s*(<p[^>]*>[\s\S]*?<\/p>(?:\s*<p[^>]*>[\s\S]*?<\/p>)*)\s*(<li[^>]*>)/g;
-    
-    fixed = fixed.replace(multiPPattern, (match, closingLi, pContent, openingLi) => {
-      return pContent + '\n' + closingLi + '\n' + openingLi;
-    });
-    
-    // Handle end-of-list cases: </li><p>content</p></ol> or </li><p>content</p></ul>
-    const endPattern = /(<\/li>)\s*(<p[^>]*>[\s\S]*?<\/p>)\s*(<\/(?:ol|ul)>)/g;
-    
-    fixed = fixed.replace(endPattern, (match, closingLi, pContent, closingList) => {
-      return pContent + '\n' + closingLi + '\n' + closingList;
-    });
-    
-    return fixed;
-  }
-  
-  /**
-   * Fix improper nesting of HTML elements
-   */
-  private fixImproperNesting(html: string): string {
-    // Fix block elements inside inline elements
-    let fixed = html;
-    
-    // Common patterns that cause issues
-    const patterns = [
-      // <span><div>...</div></span> -> <div><span>...</span></div>
-      {
-        from: /<span([^>]*)>\s*<div([^>]*)>([\s\S]*?)<\/div>\s*<\/span>/g,
-        to: '<div$2><span$1>$3</span></div>'
-      },
-      // <a><p>...</p></a> -> <p><a>...</a></p>
-      {
-        from: /<a([^>]*)>\s*<p([^>]*)>([\s\S]*?)<\/p>\s*<\/a>/g,
-        to: '<p$2><a$1>$3</a></p>'
-      }
-    ];
-    
-    patterns.forEach(pattern => {
-      fixed = fixed.replace(pattern.from, pattern.to);
-    });
-    
-    return fixed;
-  }
-  
-  /**
-   * Fix orphaned content in lists
-   */
-  private fixOrphanedListContent(html: string): string {
-    // Fix content that appears directly inside <ol> or <ul> without being in <li>
-    let fixed = html;
-    
-    // Pattern: <ol><p>content</p><li>...</li></ol>
-    // Fix: <ol><li><p>content</p></li><li>...</li></ol>
-    const orphanedPattern = /(<(?:ol|ul)[^>]*>)\s*(<p[^>]*>[\s\S]*?<\/p>)\s*(<li[^>]*>)/g;
-    
-    fixed = fixed.replace(orphanedPattern, (match, listStart, pContent, firstLi) => {
-      return listStart + '\n<li>' + pContent + '</li>\n' + firstLi;
-    });
-    
-    return fixed;
-  }
-  
-  /**
-   * Fix orphaned <li> elements that appear outside of <ol>/<ul> containers
-   * This is a common MadCap export issue where list items become orphaned
-   */
-  private fixOrphanedListItems(html: string): string {
-    // Pattern: </ol>...<li>content</li>...
-    // Fix: Find the nearest preceding <ol> and move the orphaned <li> into it
-    
-    let fixed = html;
-    
-    // Find orphaned <li> elements that appear after </ol> or </ul>
-    // Look for: </ol> or </ul> followed by content and then orphaned <li>
-    const orphanedLiPattern = /(<\/(?:ol|ul)>)([\s\S]*?)(<li[^>]*>[\s\S]*?<\/li>)/g;
-    
-    let match;
-    const fixes = [];
-    
-    // Collect all orphaned <li> elements
-    while ((match = orphanedLiPattern.exec(html)) !== null) {
-      const [fullMatch, listClosing, betweenContent, orphanedLi] = match;
-      
-      // Check if the content between </ol> and <li> suggests they should be connected
-      const shouldReconnect = this.shouldReconnectOrphanedListItem(betweenContent);
-      
-      if (shouldReconnect) {
-        fixes.push({
-          fullMatch,
-          listClosing,
-          betweenContent,
-          orphanedLi,
-          index: match.index
-        });
-      }
-    }
-    
-    // Apply fixes in reverse order to avoid index shifting
-    fixes.reverse().forEach(fix => {
-      // Reconstruct: keep the orphaned <li> inside the list, move </ol> after it
-      const replacement = fix.betweenContent + fix.orphanedLi + fix.listClosing;
-      fixed = fixed.substring(0, fix.index) + replacement + fixed.substring(fix.index + fix.fullMatch.length);
-    });
-    
-    return fixed;
-  }
-  
-  /**
-   * Determine if an orphaned <li> should be reconnected to the previous list
-   */
-  private shouldReconnectOrphanedListItem(betweenContent: string): boolean {
-    // Clean up the content between </ol> and <li>
-    const cleanContent = betweenContent.replace(/<[^>]*>/g, '').trim();
-    
-    // If there's minimal content between them, they should be reconnected
-    if (cleanContent.length < 50) {
-      return true;
-    }
-    
-    // Check for sub-list patterns (alphabetical lists between main steps)
-    if (betweenContent.includes('lower-alpha') || 
-        betweenContent.includes('lower-latin') || 
-        betweenContent.includes('lower-roman')) {
-      return true;
-    }
-    
-    // Check for continuation patterns
-    const continuationPatterns = [
-      /the .+ (page|dialog|window|panel) (is )?displayed/i,
-      /the .+ (opens|appears|shows)/i,
-      /you (can|will|should) now/i,
-      /this (opens|displays|shows)/i
-    ];
-    
-    if (continuationPatterns.some(pattern => pattern.test(cleanContent))) {
-      return true;
-    }
-    
-    // Don't reconnect if there are major section breaks
-    if (cleanContent.includes('Configuring') || 
-        cleanContent.includes('Related tasks') ||
-        cleanContent.includes('Summary') ||
-        cleanContent.includes('Overview')) {
-      return false;
-    }
-    
-    return false;
+    // If no body tag, return the cleaned content
+    return cleanedSnippet.trim();
   }
 
   private createSnippetPlaceholder(document: Document, element: Element, snippetSrc: string): void {
@@ -1298,8 +1079,8 @@ export class MadCapPreprocessor {
       }
     }
     
-    // Third pass: Fix orphaned paragraphs - DISABLED to preserve semantic meaning for continuation content
-    // this.fixOrphanedParagraphs(document);
+    // Third pass: Fix orphaned paragraphs that should be nested under list items
+    this.fixOrphanedParagraphs(document);
   }
   
   /**
@@ -1710,7 +1491,7 @@ export class MadCapPreprocessor {
     if (width && height) {
       const w = parseInt(width);
       const h = parseInt(height);
-      if (w <= 36 && h <= 36) {
+      if (w <= 32 && h <= 32) {
         return false;
       }
     }

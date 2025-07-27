@@ -1,0 +1,277 @@
+import { FLVARParser, VariableSet } from './flvar-parser.js';
+import { WritersideVariable, WritersideFilter, WritersideInstanceConfig } from './writerside-project-generator.js';
+
+export interface MadCapCondition {
+  name: string;
+  type: 'include' | 'exclude';
+  description?: string;
+}
+
+export interface ConversionOptions {
+  excludeConditions?: string[];
+  includeConditions?: string[];
+  variablePrefix?: string;
+  instanceMapping?: { [madcapCondition: string]: string };
+  defaultInstance?: string;
+}
+
+export interface ConversionResult {
+  variables: WritersideVariable[];
+  filters: WritersideFilter[];
+  conditionMapping: { [madcapCondition: string]: string };
+  excludedVariables: string[];
+  warnings: string[];
+}
+
+/**
+ * Converts MadCap Flare project elements to Writerside equivalents
+ */
+export class MadCapToWritersideConverter {
+  private flvarParser: FLVARParser;
+  private options: ConversionOptions;
+
+  constructor(options: ConversionOptions = {}) {
+    this.flvarParser = new FLVARParser();
+    this.options = {
+      excludeConditions: [
+        'deprecated', 'obsolete', 'legacy', 'old',
+        'hidden', 'internal', 'private', 'draft',
+        'print-only', 'printonly', 'print only',
+        'cancelled', 'canceled', 'abandoned', 'shelved',
+        'Black', 'Red', 'Gray', 'Grey'
+      ],
+      includeConditions: [],
+      variablePrefix: '',
+      instanceMapping: {},
+      defaultInstance: 'main',
+      ...options
+    };
+  }
+
+  /**
+   * Convert MadCap variables from FLVAR files to Writerside format
+   */
+  async convertVariables(flvarPaths: string[]): Promise<ConversionResult> {
+    const result: ConversionResult = {
+      variables: [],
+      filters: [],
+      conditionMapping: {},
+      excludedVariables: [],
+      warnings: []
+    };
+
+    for (const flvarPath of flvarPaths) {
+      try {
+        const variableSet = await this.flvarParser.parseFLVAR(flvarPath);
+        await this.processVariableSet(variableSet, result);
+      } catch (error) {
+        result.warnings.push(`Failed to parse ${flvarPath}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    return result;
+  }
+
+  /**
+   * Process a single variable set and add to conversion result
+   */
+  private async processVariableSet(variableSet: VariableSet, result: ConversionResult): Promise<void> {
+    for (const variable of variableSet.variables) {
+      // Check if variable should be excluded
+      if (this.shouldExcludeVariable(variable.name)) {
+        result.excludedVariables.push(variable.name);
+        continue;
+      }
+
+      // Convert to Writerside variable format
+      const writersideVar: WritersideVariable = {
+        name: this.formatVariableName(variable.name),
+        value: variable.value || '',
+        instance: this.determineVariableInstance(variable),
+        description: variable.comment || undefined
+      };
+
+      result.variables.push(writersideVar);
+
+      // Handle conditional variables
+      if (variable.conditions && variable.conditions.length > 0) {
+        await this.processVariableConditions(variable, result);
+      }
+    }
+  }
+
+  /**
+   * Process conditions for a variable and create appropriate filters
+   */
+  private async processVariableConditions(variable: any, result: ConversionResult): Promise<void> {
+    for (const condition of variable.conditions) {
+      if (this.shouldExcludeCondition(condition)) {
+        continue;
+      }
+
+      // Map MadCap condition to Writerside instance or filter
+      const instanceName = this.mapConditionToInstance(condition);
+      if (instanceName) {
+        result.conditionMapping[condition] = instanceName;
+
+        // Create filter if it doesn't exist
+        if (!result.filters.find(f => f.name === condition)) {
+          result.filters.push({
+            name: condition,
+            type: 'instance',
+            value: instanceName,
+            description: `Filter for ${condition} content`
+          });
+        }
+      }
+    }
+  }
+
+  /**
+   * Check if a variable should be excluded based on naming patterns
+   */
+  private shouldExcludeVariable(variableName: string): boolean {
+    const excludePatterns = [
+      /^internal/i,
+      /^deprecated/i,
+      /^legacy/i,
+      /^temp/i,
+      /^test/i,
+      /^debug/i
+    ];
+
+    return excludePatterns.some(pattern => pattern.test(variableName));
+  }
+
+  /**
+   * Check if a condition should be excluded
+   */
+  private shouldExcludeCondition(condition: string): boolean {
+    return this.options.excludeConditions?.includes(condition.toLowerCase()) || false;
+  }
+
+  /**
+   * Format variable name for Writerside compatibility
+   */
+  private formatVariableName(name: string): string {
+    // Apply prefix if specified
+    const prefixed = this.options.variablePrefix ? 
+      `${this.options.variablePrefix}${name}` : name;
+
+    // Convert to valid Writerside variable name
+    return prefixed
+      .replace(/[^a-zA-Z0-9_-]/g, '_')  // Replace invalid chars with underscore
+      .replace(/_+/g, '_')              // Collapse multiple underscores
+      .replace(/^_|_$/g, '');           // Remove leading/trailing underscores
+  }
+
+  /**
+   * Determine which Writerside instance a variable belongs to
+   */
+  private determineVariableInstance(variable: any): string {
+    // Check if variable has conditions that map to specific instances
+    if (variable.conditions && variable.conditions.length > 0) {
+      for (const condition of variable.conditions) {
+        const mappedInstance = this.mapConditionToInstance(condition);
+        if (mappedInstance) {
+          return mappedInstance;
+        }
+      }
+    }
+
+    return this.options.defaultInstance || 'main';
+  }
+
+  /**
+   * Map MadCap condition to Writerside instance
+   */
+  private mapConditionToInstance(condition: string): string | null {
+    // Check explicit mapping first
+    if (this.options.instanceMapping && this.options.instanceMapping[condition]) {
+      return this.options.instanceMapping[condition];
+    }
+
+    // Apply default mapping rules
+    const conditionLower = condition.toLowerCase();
+    
+    // Platform-based conditions
+    if (conditionLower.includes('web')) return 'web';
+    if (conditionLower.includes('mobile')) return 'mobile';
+    if (conditionLower.includes('desktop')) return 'desktop';
+    if (conditionLower.includes('tablet')) return 'tablet';
+    
+    // Audience-based conditions
+    if (conditionLower.includes('admin')) return 'admin';
+    if (conditionLower.includes('user')) return 'user';
+    if (conditionLower.includes('developer')) return 'developer';
+    
+    // Product variant conditions
+    if (conditionLower.includes('enterprise')) return 'enterprise';
+    if (conditionLower.includes('professional')) return 'professional';
+    if (conditionLower.includes('standard')) return 'standard';
+    
+    return null;
+  }
+
+  /**
+   * Convert MadCap TOC structure to Writerside tree format
+   */
+  async convertTOCStructure(tocPath: string): Promise<string> {
+    // This would parse MadCap .fltoc files and convert to Writerside .tree format
+    // Implementation would depend on MadCap TOC structure
+    throw new Error('TOC conversion not yet implemented');
+  }
+
+  /**
+   * Generate Writerside instance configurations based on converted conditions
+   */
+  generateInstanceConfigs(conversionResult: ConversionResult): WritersideInstanceConfig[] {
+    const instances: WritersideInstanceConfig[] = [];
+    const instanceNames = new Set<string>();
+
+    // Collect all unique instance names
+    conversionResult.variables.forEach(v => instanceNames.add(v.instance));
+    Object.values(conversionResult.conditionMapping).forEach(instance => instanceNames.add(instance));
+
+    // Create configuration for each instance
+    instanceNames.forEach(name => {
+      const config: WritersideInstanceConfig = {
+        name,
+        webPath: `/${name}`,
+        variables: conversionResult.variables.filter(v => v.instance === name),
+        filters: conversionResult.filters.filter(f => f.value === name)
+      };
+      instances.push(config);
+    });
+
+    return instances;
+  }
+
+  /**
+   * Validate conversion results and provide recommendations
+   */
+  validateConversion(result: ConversionResult): string[] {
+    const recommendations: string[] = [];
+
+    // Check for too many instances
+    const instanceCount = new Set(result.variables.map(v => v.instance)).size;
+    if (instanceCount > 10) {
+      recommendations.push(`Consider consolidating instances (found ${instanceCount})`);
+    }
+
+    // Check for variables without proper naming
+    const problematicVars = result.variables.filter(v => 
+      v.name.length < 2 || v.name.includes('__') || /^[0-9]/.test(v.name)
+    );
+    if (problematicVars.length > 0) {
+      recommendations.push(`${problematicVars.length} variables have naming issues`);
+    }
+
+    // Check for excluded variables
+    if (result.excludedVariables.length > 0) {
+      recommendations.push(`${result.excludedVariables.length} variables were excluded`);
+    }
+
+    return recommendations;
+  }
+}

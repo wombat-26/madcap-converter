@@ -103,112 +103,142 @@ export class EnhancedTableProcessor {
     const cells: TableCell[] = [];
     const cellElements = Array.from(row.querySelectorAll('td, th'));
 
-    cellElements.forEach(cell => {
-      const cellData: TableCell = {
-        content: this.extractCellContent(cell as HTMLTableCellElement),
-        isHeader: cell.tagName === 'TH' || isHeader,
-        colspan: (cell as HTMLTableCellElement).colSpan > 1 ? (cell as HTMLTableCellElement).colSpan : undefined,
-        rowspan: (cell as HTMLTableCellElement).rowSpan > 1 ? (cell as HTMLTableCellElement).rowSpan : undefined,
-        alignment: this.detectAlignment(cell as HTMLTableCellElement),
-        format: this.detectFormat(cell as HTMLTableCellElement)
-      };
-      cells.push(cellData);
+    cellElements.forEach(cellElement => {
+      const cell = this.processTableCell(cellElement, isHeader);
+      cells.push(cell);
     });
 
     return { cells, isHeader };
   }
 
   /**
-   * Extract and format cell content
+   * Process a single table cell
    */
-  private extractCellContent(cell: HTMLTableCellElement): string {
+  private processTableCell(cellElement: Element, defaultHeader: boolean): TableCell {
+    const isHeader = cellElement.tagName.toLowerCase() === 'th' || defaultHeader;
+    
+    // Extract cell content with formatting
+    const content = this.extractCellContent(cellElement);
+    
+    // Extract cell attributes
+    const colspan = parseInt(cellElement.getAttribute('colspan') || '1');
+    const rowspan = parseInt(cellElement.getAttribute('rowspan') || '1');
+    
+    // Determine alignment
+    const alignment = this.determineCellAlignment(cellElement);
+    
+    // Determine format
+    const format = this.determineCellFormat(cellElement);
+
+    return {
+      content,
+      isHeader,
+      colspan: colspan > 1 ? colspan : undefined,
+      rowspan: rowspan > 1 ? rowspan : undefined,
+      alignment: alignment !== 'left' ? alignment : undefined,
+      format: format !== 'normal' ? format : undefined
+    };
+  }
+
+  /**
+   * Extract cell content preserving formatting
+   */
+  private extractCellContent(cell: Element): string {
+    if (!this.options.preserveFormatting) {
+      return this.cleanTextContent(cell.textContent || '');
+    }
+
+    // Process child nodes to preserve formatting
     let content = '';
     
-    // Process child nodes to preserve formatting
-    const processNode = (node: Node): string => {
-      if (node.nodeType === 3) { // Node.TEXT_NODE
-        return node.textContent || '';
-      } else if (node.nodeType === 1) { // Node.ELEMENT_NODE
-        const element = node as Element;
+    for (const child of Array.from(cell.childNodes)) {
+      if (child.nodeType === 3) { // Text node
+        content += child.textContent || '';
+      } else if (child.nodeType === 1) { // Element node
+        const element = child as Element;
         const tagName = element.tagName.toLowerCase();
+        const text = element.textContent || '';
         
-        // Handle formatting tags
         switch (tagName) {
           case 'strong':
           case 'b':
-            return `*${element.textContent}*`;
+            content += `*${text}*`;
+            break;
           case 'em':
           case 'i':
-            return `_${element.textContent}_`;
+            content += `_${text}_`;
+            break;
           case 'code':
-            return `\`${element.textContent}\``;
-          case 'a':
-            const href = element.getAttribute('href') || '';
-            const text = element.textContent || '';
-            return `${href}[${text}]`;
+            content += `\`${text}\``;
+            break;
           case 'br':
-            return ' +\n';
-          case 'p':
-            return Array.from(element.childNodes).map(processNode).join('') + '\n\n';
-          case 'ul':
-          case 'ol':
-            return this.processList(element as HTMLElement);
+            content += ' +\n';
+            break;
+          case 'a':
+            const href = element.getAttribute('href');
+            if (href) {
+              content += `link:${href}[${text}]`;
+            } else {
+              content += text;
+            }
+            break;
           default:
-            return Array.from(element.childNodes).map(processNode).join('');
+            content += text;
         }
       }
-      return '';
-    };
-
-    content = Array.from(cell.childNodes).map(processNode).join('');
-    
-    // Clean up content
-    return content.trim().replace(/\n\n+/g, '\n\n');
-  }
-
-  /**
-   * Process lists within table cells
-   */
-  private processList(list: HTMLElement): string {
-    const items = Array.from(list.querySelectorAll('li'));
-    const marker = list.tagName === 'OL' ? '.' : '*';
-    
-    return items.map(item => {
-      const content = item.textContent?.trim() || '';
-      return `${marker} ${content}`;
-    }).join('\n') + '\n';
-  }
-
-  /**
-   * Detect cell alignment
-   */
-  private detectAlignment(cell: HTMLTableCellElement): 'left' | 'center' | 'right' | undefined {
-    const style = cell.style.textAlign || cell.getAttribute('align');
-    
-    switch (style) {
-      case 'center':
-        return 'center';
-      case 'right':
-        return 'right';
-      case 'left':
-        return 'left';
-      default:
-        return undefined;
     }
+
+    return this.cleanTextContent(content);
   }
 
   /**
-   * Detect cell format
+   * Clean and normalize text content
    */
-  private detectFormat(cell: HTMLTableCellElement): 'normal' | 'emphasis' | 'strong' | 'monospace' {
+  private cleanTextContent(text: string): string {
+    return text
+      .replace(/\s+/g, ' ')
+      .replace(/\|/g, '\\|') // Escape pipes
+      .replace(/\n/g, ' +\n') // Handle line breaks
+      .trim();
+  }
+
+  /**
+   * Determine cell alignment from HTML attributes and styles
+   */
+  private determineCellAlignment(cell: Element): 'left' | 'center' | 'right' {
+    // Check align attribute
+    const align = cell.getAttribute('align');
+    if (align) {
+      const normalized = align.toLowerCase();
+      if (['center', 'right'].includes(normalized)) {
+        return normalized as 'center' | 'right';
+      }
+    }
+
+    // Check CSS text-align
+    const style = cell.getAttribute('style') || '';
+    if (style.includes('text-align: center')) return 'center';
+    if (style.includes('text-align: right')) return 'right';
+
+    return 'left';
+  }
+
+  /**
+   * Determine cell format based on content
+   */
+  private determineCellFormat(cell: Element): 'normal' | 'emphasis' | 'strong' | 'monospace' {
     // Check if entire cell content is formatted
     const children = Array.from(cell.children);
+    
     if (children.length === 1) {
       const child = children[0];
-      if (child.tagName === 'STRONG' || child.tagName === 'B') return 'strong';
-      if (child.tagName === 'EM' || child.tagName === 'I') return 'emphasis';
-      if (child.tagName === 'CODE') return 'monospace';
+      const tagName = child.tagName.toLowerCase();
+      
+      if (['strong', 'b'].includes(tagName)) return 'strong';
+      if (['em', 'i'].includes(tagName)) return 'emphasis';
+      if (tagName === 'code') return 'monospace';
     }
+
     return 'normal';
   }
 
@@ -221,31 +251,37 @@ export class EnhancedTableProcessor {
     }
 
     if (!options.autoColumnWidths || tableData.length === 0) {
-      // Default equal width columns
-      const columnCount = Math.max(...tableData.map(row => row.cells.length));
-      return Array(columnCount).fill('1');
+      const colCount = Math.max(...tableData.map(row => row.cells.length));
+      return Array(colCount).fill('1');
     }
 
-    // Calculate based on content length
-    const columnWidths: number[] = [];
-    
+    // Calculate relative column widths based on content
+    const colCount = Math.max(...tableData.map(row => row.cells.length));
+    const columnWidths: number[] = Array(colCount).fill(0);
+
     tableData.forEach(row => {
       row.cells.forEach((cell, index) => {
-        const contentLength = cell.content.length;
-        columnWidths[index] = Math.max(columnWidths[index] || 0, contentLength);
+        if (index < columnWidths.length) {
+          const contentLength = cell.content.length;
+          columnWidths[index] = Math.max(columnWidths[index], contentLength);
+        }
       });
     });
 
-    // Convert to relative widths
+    // Convert to relative proportions
     const totalWidth = columnWidths.reduce((sum, width) => sum + width, 0);
+    if (totalWidth === 0) {
+      return Array(colCount).fill('1');
+    }
+
     return columnWidths.map(width => {
-      const percentage = Math.round((width / totalWidth) * 100);
-      return percentage.toString();
+      const proportion = Math.round((width / totalWidth) * 10);
+      return Math.max(1, proportion).toString();
     });
   }
 
   /**
-   * Generate AsciiDoc table syntax
+   * Generate the final AsciiDoc table
    */
   private generateAsciiDocTable(
     tableData: TableRow[], 
@@ -253,55 +289,63 @@ export class EnhancedTableProcessor {
     options: TableOptions,
     originalTable: HTMLTableElement
   ): string {
-    let result = '\n';
-    
-    // Add table title if present
-    const caption = originalTable.querySelector('caption');
-    if (caption || options.title) {
-      result += `.${caption?.textContent?.trim() || options.title}\n`;
+    let result = '';
+
+    // Add table caption if present
+    const caption = originalTable.querySelector('caption') || 
+                   (options.title ? { textContent: options.title } : null);
+    if (caption) {
+      result += `.${caption.textContent?.trim() || ''}\n`;
     }
 
-    // Table options
-    const tableAttrs: string[] = [];
+    // Build table attributes
+    const attributes: string[] = [];
     
     // Column specifications
-    if (columnSpecs.length > 0) {
-      tableAttrs.push(`cols="${columnSpecs.join(',')}"`);
-    }
-    
-    // Table options
-    if (options.width) {
-      tableAttrs.push(`width=${options.width}%`);
-    }
+    attributes.push(`cols="${columnSpecs.join(',')}"`);
+
+    // Frame and grid
     if (options.frame !== 'all') {
-      tableAttrs.push(`frame=${options.frame}`);
+      attributes.push(`frame="${options.frame}"`);
     }
     if (options.grid !== 'all') {
-      tableAttrs.push(`grid=${options.grid}`);
-    }
-    if (options.stripes && options.stripes !== 'none') {
-      tableAttrs.push(`stripes=${options.stripes}`);
+      attributes.push(`grid="${options.grid}"`);
     }
 
-    // Start table
-    if (tableAttrs.length > 0) {
-      result += `[${tableAttrs.join(',')}]\n`;
+    // Width
+    if (options.width) {
+      attributes.push(`width="${options.width}%"`);
+    }
+
+    // Stripes
+    if (options.stripes && options.stripes !== 'none') {
+      attributes.push(`stripes="${options.stripes}"`);
+    }
+
+    // Add table header with attributes
+    if (attributes.length > 0) {
+      result += `[${attributes.join(', ')}]\n`;
     }
     result += '|===\n';
 
-    // Process headers
-    const headerRows = tableData.filter(row => row.isHeader);
-    if (headerRows.length > 0) {
-      headerRows.forEach(row => {
-        result += this.formatTableRow(row, options);
-      });
-      result += '\n'; // Empty line after headers
-    }
+    // Process rows
+    let headerSectionProcessed = false;
+    
+    tableData.forEach((row, rowIndex) => {
+      // Add header separator if transitioning from headers to body
+      if (!headerSectionProcessed && !row.isHeader && rowIndex > 0) {
+        // Check if previous rows were headers
+        const hasHeaders = tableData.slice(0, rowIndex).some(r => r.isHeader);
+        if (hasHeaders) {
+          result += '\n'; // Empty line to separate header from body
+          headerSectionProcessed = true;
+        }
+      }
 
-    // Process body rows
-    const bodyRows = tableData.filter(row => !row.isHeader);
-    bodyRows.forEach(row => {
-      result += this.formatTableRow(row, options);
+      // Process cells in this row
+      row.cells.forEach(cell => {
+        result += this.generateCellContent(cell);
+      });
     });
 
     result += '|===\n\n';
@@ -309,45 +353,69 @@ export class EnhancedTableProcessor {
   }
 
   /**
-   * Format a single table row
+   * Generate content for a single cell
    */
-  private formatTableRow(row: TableRow, options: TableOptions): string {
-    let result = '';
+  private generateCellContent(cell: TableCell): string {
+    let cellPrefix = '|';
     
-    row.cells.forEach(cell => {
-      let cellContent = '';
-      
-      // Add cell specifications
-      const specs: string[] = [];
-      
-      if (cell.colspan) specs.push(`${cell.colspan}+`);
-      if (cell.rowspan) specs.push(`.${cell.rowspan}+`);
-      if (cell.alignment) {
-        switch (cell.alignment) {
-          case 'center': specs.push('^'); break;
-          case 'right': specs.push('>'); break;
-        }
-      }
-      if (cell.format !== 'normal' && options.preserveFormatting) {
-        switch (cell.format) {
-          case 'strong': specs.push('s'); break;
-          case 'emphasis': specs.push('e'); break;
-          case 'monospace': specs.push('m'); break;
-        }
-      }
-      
-      if (specs.length > 0) {
-        cellContent += specs.join('');
-      }
-      
-      cellContent += '| ';
-      cellContent += cell.content;
-      cellContent += ' ';
-      
-      result += cellContent;
-    });
+    // Add cell format specifiers
+    const specifiers: string[] = [];
     
-    result += '\n';
-    return result;
+    // Colspan/rowspan
+    if (cell.colspan && cell.colspan > 1) {
+      specifiers.push(`${cell.colspan}+`);
+    }
+    if (cell.rowspan && cell.rowspan > 1) {
+      specifiers.push(`.${cell.rowspan}+`);
+    }
+
+    // Alignment
+    if (cell.alignment) {
+      const alignSymbol = cell.alignment === 'center' ? '^' : 
+                         cell.alignment === 'right' ? '>' : '<';
+      specifiers.push(alignSymbol);
+    }
+
+    // Format
+    if (cell.format) {
+      const formatSymbol = cell.format === 'strong' ? 's' :
+                          cell.format === 'emphasis' ? 'e' :
+                          cell.format === 'monospace' ? 'm' : '';
+      if (formatSymbol) {
+        specifiers.push(formatSymbol);
+      }
+    }
+
+    // Add specifiers if any
+    if (specifiers.length > 0) {
+      cellPrefix += specifiers.join('');
+    }
+
+    return `${cellPrefix}${cell.content}\n`;
   }
+
+  /**
+   * Update table processing options
+   */
+  updateOptions(newOptions: Partial<TableOptions>): void {
+    this.options = { ...this.options, ...newOptions };
+  }
+
+  /**
+   * Get current table processing options
+   */
+  getOptions(): TableOptions {
+    return { ...this.options };
+  }
+}
+
+/**
+ * Convenience function for quick table conversion
+ */
+export function convertTableToAsciiDoc(
+  tableElement: HTMLTableElement, 
+  options?: Partial<TableOptions>
+): string {
+  const processor = new EnhancedTableProcessor(options);
+  return processor.convertTable(tableElement);
 }

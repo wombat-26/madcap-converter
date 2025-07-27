@@ -1,116 +1,65 @@
 /**
- * Improved List Processor - Proper nested list conversion for multiple formats
+ * Improved List Processor - Proper nested list conversion for AsciiDoc
  * 
- * This processor correctly handles nested lists using proper syntax for different formats
- * and maintains list continuity with appropriate markers.
+ * This processor correctly handles nested lists using proper AsciiDoc syntax
+ * and maintains list continuity with continuation markers.
  */
 export class ImprovedListProcessor {
   
   /**
-   * Convert HTML list to target format with proper nesting
+   * Convert HTML list to AsciiDoc with proper nesting
    */
   convertList(
     listElement: Element, 
     depth: number = 0,
-    nodeConverter?: (node: Node, depth: number) => string,
-    startNumber?: number,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
+    nodeConverter?: (node: Node, depth: number) => string
   ): string {
     const tagName = listElement.tagName.toLowerCase();
     
-    if (process.env.DEBUG_LIST_NUMBERING) {
-      console.log(`🔢 convertList called: tagName=${tagName}, depth=${depth}, startNumber=${startNumber}`);
-    }
-    
     if (tagName === 'ol') {
-      return this.convertOrderedList(listElement, depth, nodeConverter, startNumber, format);
+      return this.convertOrderedList(listElement, depth, nodeConverter);
     } else if (tagName === 'ul') {
-      return this.convertUnorderedList(listElement, depth, nodeConverter, format);
+      return this.convertUnorderedList(listElement, depth, nodeConverter);
     }
     
     return '';
   }
   
   /**
-   * Convert ordered list (ol) to target format
+   * Convert ordered list (ol) to AsciiDoc
    */
   private convertOrderedList(
     list: Element, 
     depth: number,
-    nodeConverter?: (node: Node, depth: number) => string,
-    startNumber?: number,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
+    nodeConverter?: (node: Node, depth: number) => string
   ): string {
     // Check for mixed content (li elements + orphaned content)
     const allChildren = Array.from(list.children);
     const listItems = allChildren.filter(child => child.tagName.toLowerCase() === 'li');
-    
-    // Only consider actual block elements as orphaned content, not text nodes or whitespace
-    const orphanedElements = allChildren.filter(child => {
-      const tagName = child.tagName.toLowerCase();
-      return tagName !== 'li' && 
-             tagName !== 'script' && 
-             tagName !== 'style' &&
-             child.nodeType === 1 && // Only element nodes
-             (child.textContent || '').trim().length > 0; // With actual content
-    });
-    
-    const hasOrphanedContent = orphanedElements.length > 0;
-    
-    // Debug logging
-    if (process.env.NODE_ENV === 'development' || process.env.DEBUG_LIST_PROCESSING) {
-      // console.log(`[DEBUG] convertOrderedList: Found ${listItems.length} li elements, ${orphanedElements.length} orphaned elements`);
-      // console.log(`[DEBUG] convertOrderedList: hasOrphanedContent = ${hasOrphanedContent}, processing path = ${hasOrphanedContent ? 'MIXED' : 'SIMPLE'}`);
-    }
+    const hasOrphanedContent = allChildren.length > listItems.length;
     
     if (listItems.length === 0) return '';
     
     // Use mixed content processing if orphaned elements exist
     if (hasOrphanedContent) {
-      return this.convertMixedOrderedList(list, depth, nodeConverter, startNumber, format);
+      return this.convertMixedOrderedList(list, depth, nodeConverter);
     }
     
     let result = '';
     
-    // Check if this is an alphabetical or roman numeral list with context-aware override
+    // Check if this is an alphabetical or roman numeral list
     const style = list.getAttribute('style') || '';
     const type = list.getAttribute('type') || '';
-    let isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
+    const isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
     const isRoman = style.includes('lower-roman') || type === 'i';
     
-    // Preserve original list styles from snippets - no overrides needed
+    // Note: [loweralpha] and [lowerroman] are not needed for nested lists
+    // AsciiDoc handles the numbering automatically through proper nesting
     
-    
-    // Add start attributes when startNumber is provided (AsciiDoc only)
-    if (process.env.DEBUG_LIST_NUMBERING) {
-      console.log(`🔍 ImprovedListProcessor: format=${format}, startNumber=${startNumber}, depth=${depth}, tagName=${list.tagName}`);
-    }
-    if (format === 'asciidoc' && startNumber && startNumber >= 1) {
-      // Add start attribute for consecutive numbered lists or explicit restarts
-      if (process.env.DEBUG_LIST_NUMBERING) {
-        console.log(`🏷️  Adding [start=${startNumber}] attribute to list at depth=${depth}`);
-      }
-      result += `[start=${startNumber}]\n`;
-    }
-    
-    // Process each list item with {blank} entry logic for continuous numbering
-    for (let i = 0; i < listItems.length; i++) {
-      const item = listItems[i];
-      
-      // Check if this is orphaned content
-      if (item.getAttribute('data-orphaned-content') === 'true') {
-        // This is orphaned content - add it as continuation to the previous item
-        if (i > 0) {
-          result += '+\n';
-          const content = item.textContent?.trim() || '';
-          result += content + '\n';
-        }
-      } else {
-        // ALL ordered lists use standard list item processing with depth-based dot syntax
-        // AsciiDoc handles alphabetic rendering automatically based on nesting depth
-        result += this.processListItem(item, 'ordered', depth, nodeConverter, format);
-      }
-    }
+    // Process each list item
+    listItems.forEach((item) => {
+      result += this.processListItem(item, 'ordered', depth, nodeConverter);
+    });
     
     return result;
   }
@@ -121,36 +70,23 @@ export class ImprovedListProcessor {
   private convertMixedOrderedList(
     list: Element, 
     depth: number,
-    nodeConverter?: (node: Node, depth: number) => string,
-    startNumber?: number,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
+    nodeConverter?: (node: Node, depth: number) => string
   ): string {
     let result = '';
     let currentListItem: Element | null = null;
     let pendingOrphanedContent: string[] = [];
     
-    // Check for alphabetical or roman numeral style with context-aware override
+    // Check for alphabetical or roman numeral style
     const style = list.getAttribute('style') || '';
     const type = list.getAttribute('type') || '';
-    let isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
+    const isAlphabetical = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
     const isRoman = style.includes('lower-roman') || type === 'i';
     
-    // Preserve original list styles from snippets - no overrides needed
-    
-    // Add start attributes when startNumber is provided (AsciiDoc only)
-    if (format === 'asciidoc' && startNumber && startNumber >= 1) {
-      // Add start attribute for consecutive numbered lists or explicit restarts
-      if (process.env.DEBUG_LIST_NUMBERING) {
-        console.log(`🏷️  Adding [start=${startNumber}] attribute to mixed content list at depth=${depth}`);
-      }
-      result += `[start=${startNumber}]\n`;
-    }
+    // Note: [loweralpha] and [lowerroman] are not needed for nested lists
+    // AsciiDoc handles the numbering automatically through proper nesting
     
     // Process all children sequentially with better association logic
     const allChildren = Array.from(list.children);
-    let liItemIndex = 0; // Track index for alphabetic lists
-    let processedLiCount = 0; // Track how many li elements we've processed
-    
     
     for (let i = 0; i < allChildren.length; i++) {
       const child = allChildren[i];
@@ -159,16 +95,11 @@ export class ImprovedListProcessor {
       if (tagName === 'li') {
         // Process the current list item
         currentListItem = child;
-        // ALL ordered lists use standard list item processing with depth-based dot syntax
-        // AsciiDoc handles alphabetic rendering automatically based on nesting depth
-        result += this.processListItem(child, 'ordered', depth, nodeConverter, format);
-        liItemIndex++; // Increment only for actual li elements
-        processedLiCount++; // Track processed li elements
+        result += this.processListItem(child, 'ordered', depth, nodeConverter);
         
         // Look ahead for any orphaned content that should belong to this list item
         let j = i + 1;
         const associatedOrphanedContent: string[] = [];
-        let orphanedElementsToSkip = 0;
         
         while (j < allChildren.length && allChildren[j].tagName.toLowerCase() !== 'li') {
           const orphanedElement = allChildren[j];
@@ -176,7 +107,6 @@ export class ImprovedListProcessor {
           if (orphanedContent.trim()) {
             associatedOrphanedContent.push(orphanedContent.trim());
           }
-          orphanedElementsToSkip++;
           j++;
         }
         
@@ -188,20 +118,11 @@ export class ImprovedListProcessor {
           });
         }
         
-        // Skip only the orphaned elements we processed, not any li elements
-        i += orphanedElementsToSkip;
+        // Skip the orphaned elements we just processed
+        i = j - 1;  // -1 because the for loop will increment
         
       }
       // Note: orphaned content is now handled in the look-ahead logic above
-    }
-    
-    // Validation: Ensure all li elements were processed
-    const totalLiElements = allChildren.filter(child => child.tagName.toLowerCase() === 'li').length;
-    if (process.env.NODE_ENV === 'development' || process.env.DEBUG_LIST_PROCESSING) {
-      // console.log(`[DEBUG] convertMixedOrderedList: Processed ${processedLiCount}/${totalLiElements} li elements`);
-    }
-    if (processedLiCount !== totalLiElements) {
-      console.warn(`List processing warning: Expected ${totalLiElements} li elements, but processed ${processedLiCount}. This may cause numbering issues.`);
     }
     
     return result;
@@ -218,10 +139,6 @@ export class ImprovedListProcessor {
     
     // Handle different types of orphaned content
     if (tagName === 'p') {
-      // Use nodeConverter to preserve formatting (italics, spans, etc.)
-      if (nodeConverter) {
-        return nodeConverter(element, 0).trim();
-      }
       return element.textContent?.trim() || '';
     } else if (tagName === 'div' && element.classList.contains('note')) {
       // Handle note divs
@@ -237,7 +154,7 @@ export class ImprovedListProcessor {
       const alt = element.getAttribute('alt') || '';
       const isInline = element.classList.contains('IconInline') || 
                       (element.getAttribute('style') || '').includes('width') && 
-                      parseInt((element.getAttribute('style') || '').match(/width:\s*(\d+)/)?.[1] || '100') <= 36;
+                      parseInt((element.getAttribute('style') || '').match(/width:\s*(\d+)/)?.[1] || '100') <= 32;
       
       if (isInline) {
         return `image:${src}[${alt}]`;
@@ -256,8 +173,7 @@ export class ImprovedListProcessor {
   private convertUnorderedList(
     list: Element, 
     depth: number,
-    nodeConverter?: (node: Node, depth: number) => string,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
+    nodeConverter?: (node: Node, depth: number) => string
   ): string {
     const listItems = Array.from(list.children).filter(child => 
       child.tagName.toLowerCase() === 'li'
@@ -269,7 +185,7 @@ export class ImprovedListProcessor {
     
     // Process each list item
     listItems.forEach((item) => {
-      result += this.processListItem(item, 'unordered', depth, nodeConverter, format);
+      result += this.processListItem(item, 'unordered', depth, nodeConverter);
     });
     
     return result;
@@ -282,8 +198,7 @@ export class ImprovedListProcessor {
     item: Element,
     listType: 'ordered' | 'unordered',
     depth: number,
-    nodeConverter?: (node: Node, depth: number) => string,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
+    nodeConverter?: (node: Node, depth: number) => string
   ): string {
     let result = '';
     
@@ -294,22 +209,14 @@ export class ImprovedListProcessor {
     if (parentElement?.tagName.toLowerCase() === 'ol') {
       const style = parentElement.getAttribute('style') || '';
       const type = parentElement.getAttribute('type') || '';
-      
-      // Detect alphabetic lists from MadCap HTML with context-aware override
       isInAlphabeticalList = style.includes('lower-alpha') || style.includes('lower-latin') || type === 'a';
-      
-      // Context-aware override: Check if this snippet list should continue main procedure
-      if (isInAlphabeticalList && parentElement.hasAttribute('data-snippet-main-procedure')) {
-        isInAlphabeticalList = false;
-      }
       isInRomanList = style.includes('lower-roman') || type === 'i';
     }
     
     // Get the appropriate marker
     const marker = listType === 'ordered' 
-      ? this.getOrderedMarker(depth, format)
-      : this.getUnorderedMarker(depth, format);
-      
+      ? this.getOrderedMarker(depth, isInAlphabeticalList, isInRomanList)
+      : this.getUnorderedMarker(depth);
     
     // Process the content of this list item
     const content = this.extractListItemContent(item, depth, nodeConverter);
@@ -320,57 +227,19 @@ export class ImprovedListProcessor {
     }
     
     // Add any additional content blocks with continuation
-    // First add nested lists, then add paragraphs to maintain proper list continuity
-    const nestedLists = content.additionalBlocks.filter(b => b.type === 'nested-list');
-    const otherBlocks = content.additionalBlocks.filter(b => b.type !== 'nested-list');
-    
-    // Add nested lists first - NO continuation markers for nested lists in AsciiDoc
-    nestedLists.forEach((block) => {
-      if (block.content && block.content.trim()) {
-        // console.log('DEBUG: Adding nested list content:', block.content);
-        // For AsciiDoc: nested lists should be directly appended without continuation markers
-        // For Markdown: use indentation
-        if (format === 'markdown') {
-          const indent = '  '.repeat(depth + 1);
-          const indentedContent = block.content.split('\n').map(line => 
-            line.trim() ? indent + line : line
-          ).join('\n');
-          result += indentedContent;
-        } else {
-          // AsciiDoc: append nested list directly without continuation
-          result += block.content;
-        }
-        // Ensure proper spacing after nested lists
-        if (!block.content.endsWith('\n')) {
-          result += '\n';
-        }
-      }
-    });
-    
-    // Then add paragraphs and other content after nested lists
-    otherBlocks.forEach((block) => {
+    content.additionalBlocks.forEach((block, index) => {
+      // Skip empty content
       if (!block.content || !block.content.trim()) {
         return;
       }
       
       if (block.type === 'paragraph' || block.type === 'note' || block.type === 'image') {
-        // Use continuation markers for AsciiDoc, indentation for Markdown
-        if (format === 'asciidoc') {
-          result += '+\n';
-        } else {
-          // For Markdown, use proper indentation
-          const indent = '  '.repeat(depth + 1);
-          result += `${indent}`;
-        }
-        
-        // Special handling for note blocks to ensure proper continuation
-        if (block.type === 'note') {
-          // Ensure note block content doesn't have leading/trailing newlines that break continuation
-          const cleanNoteContent = block.content.trim().replace(/^\n+|\n+$/g, '');
-          result += cleanNoteContent + '\n';
-        } else {
-          result += block.content + '\n';
-        }
+        result += '+\n';
+        result += block.content + '\n';
+      } else if (block.type === 'nested-list') {
+        // Nested lists NEED + continuation to be properly nested in AsciiDoc
+        result += '+\n';
+        result += block.content;
       }
     });
     
@@ -427,7 +296,7 @@ export class ImprovedListProcessor {
         if (tagName === 'ol' || tagName === 'ul') {
           flushInlineContent();
           
-          const nestedList = this.convertList(element, depth + 1, nodeConverter, undefined, 'asciidoc');
+          const nestedList = this.convertList(element, depth + 1, nodeConverter);
           additionalBlocks.push({
             type: 'nested-list',
             content: nestedList
@@ -485,8 +354,6 @@ export class ImprovedListProcessor {
                 mainContent = pContent;
                 hasSetMainContent = true;
               } else {
-                // For multiple paragraphs in same list item, treat additional paragraphs as continuation content
-                // This handles result/explanation paragraphs that should have continuation markers
                 additionalBlocks.push({
                   type: 'paragraph',
                   content: pContent
@@ -561,7 +428,6 @@ export class ImprovedListProcessor {
       }
     }
     
-    
     return { mainContent, additionalBlocks };
   }
   
@@ -589,8 +455,7 @@ export class ImprovedListProcessor {
       // Let the main converter handle note conversion
       const result = nodeConverter(noteDiv, depth);
       // Remove extra newlines that might break list continuation
-      // Also ensure there are no leading/trailing newlines that could break continuation markers
-      return result.trim().replace(/^\n+|\n+$/g, '');
+      return result.trim();
     }
     
     // Fallback
@@ -623,87 +488,13 @@ export class ImprovedListProcessor {
   }
   
   /**
-   * Process a list item in an alphabetic list with proper AsciiDoc .. syntax
-   */
-  private processAlphabeticListItem(
-    item: Element,
-    depth: number,
-    itemIndex: number,
-    nodeConverter?: (node: Node, depth: number) => string,
-    format: 'asciidoc' | 'markdown' = 'asciidoc'
-  ): string {
-    let result = '';
-    
-    // Use format-specific marker for alphabetic lists
-    const marker = format === 'asciidoc' ? '..' : `${String.fromCharCode(97 + itemIndex)}.`;
-    
-    // Process the content of this list item
-    const content = this.extractListItemContent(item, depth, nodeConverter);
-    
-    // Add the main content with the .. marker
-    if (content.mainContent) {
-      result += `${marker} ${content.mainContent}\n`;
-    }
-    
-    // Add any additional content blocks with continuation
-    // First add nested lists, then add paragraphs to maintain proper AsciiDoc list continuity
-    const nestedLists = content.additionalBlocks.filter(b => b.type === 'nested-list');
-    const otherBlocks = content.additionalBlocks.filter(b => b.type !== 'nested-list');
-    
-    // Add nested lists first - NO continuation markers for nested lists in AsciiDoc
-    nestedLists.forEach((block) => {
-      if (block.content && block.content.trim()) {
-        // console.log('DEBUG: Adding nested list content:', block.content);
-        // AsciiDoc: append nested list directly without continuation markers
-        result += block.content;
-        // Ensure proper spacing after nested lists
-        if (!block.content.endsWith('\n')) {
-          result += '\n';
-        }
-      }
-    });
-    
-    // Then add paragraphs and other content after nested lists
-    otherBlocks.forEach((block) => {
-      if (!block.content || !block.content.trim()) {
-        return;
-      }
-      
-      if (block.type === 'paragraph' || block.type === 'note' || block.type === 'image') {
-        result += '+\n';
-        
-        // Special handling for note blocks to ensure proper continuation
-        if (block.type === 'note') {
-          // Ensure note block content doesn't have leading/trailing newlines that break continuation
-          const cleanNoteContent = block.content.trim().replace(/^\n+|\n+$/g, '');
-          result += cleanNoteContent + '\n';
-        } else {
-          result += block.content + '\n';
-        }
-      }
-    });
-    
-    return result;
-  }
-  
-  /**
    * Get ordered list marker based on depth
    * Proper AsciiDoc syntax: . for level 0, .. for level 1, etc.
-   * This creates the proper nesting: 1,2,3 -> a,b,c -> 1,2,3 -> i,ii,iii -> I,II,III
+   * This applies to ALL ordered lists including alphabetical and roman
    */
-  private getOrderedMarker(depth: number, format: 'asciidoc' | 'markdown' = 'asciidoc'): string {
-    if (format === 'markdown') {
-      // Markdown uses numbers with dots for all ordered lists
-      const indent = '  '.repeat(depth);
-      return `${indent}1.`;
-    }
-    
-    // AsciiDoc format: Use proper depth-based dots for correct nesting
-    // Level 0: . (renders as 1,2,3...)
-    // Level 1: .. (renders as a,b,c...)  
-    // Level 2: ... (renders as 1,2,3...)
-    // Level 3: .... (renders as i,ii,iii...)
-    // Level 4: ..... (renders as I,II,III...)
+  private getOrderedMarker(depth: number, isAlphabetical: boolean = false, isRoman: boolean = false): string {
+    // Use appropriate marker based on depth for ALL ordered lists
+    // For lists at depth 0, use single dot (top-level lists)
     const level = Math.min(depth + 1, 5);
     return '.'.repeat(level);
   }
@@ -711,18 +502,9 @@ export class ImprovedListProcessor {
   /**
    * Get unordered list marker based on depth
    * Proper AsciiDoc syntax: * for level 0, ** for level 1, etc.
-   * Markdown syntax: - with indentation
    */
-  private getUnorderedMarker(depth: number, format: 'asciidoc' | 'markdown' = 'asciidoc'): string {
-    if (format === 'markdown') {
-      // Markdown uses dashes with indentation
-      const indent = '  '.repeat(depth);
-      return `${indent}-`;
-    }
-    
-    // AsciiDoc format
+  private getUnorderedMarker(depth: number): string {
     const level = Math.min(depth + 1, 5);
     return '*'.repeat(level);
   }
-  
 }

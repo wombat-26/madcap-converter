@@ -1,0 +1,5 @@
+{
+  "content": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<html xmlns:MadCap=\"http://www.madcapsoftware.com/Schemas/MadCap.xsd\">\n<body>\n<h1>Edit Asset Type</h1>\n<p>This section explains how to edit an asset type.</p>\n<MadCap:dropDown>\n<MadCap:dropDownHead>\n<MadCap:dropDownHotspot>Structure of the Page</MadCap:dropDownHotspot>\n</MadCap:dropDownHead>\n<MadCap:dropDownBody>\n<table>\n<thead>\n<tr>\n<th>No.</th>\n<th>Function</th>\n<th>Description</th>\n</tr>\n</thead>\n<tbody>\n<tr>\n<td>1</td>\n<td>All Attributes</td>\n<td>All attributes that are configured in the system are listed here.</td>\n</tr>\n<tr>\n<td>2</td>\n<td>System Group</td>\n<td>The attributes assigned to the type are listed in this section.</td>\n</tr>\n</tbody>\n</table>\n</MadCap:dropDownBody>\n</MadCap:dropDown>\n<div class=\"note\">\n<p><span class=\"noteInDiv\">Note</span><br/>New assets can no longer be defined as Standard asset type.</p>\n</div>\n</body>\n</html>",
+  "format": "asciidoc",
+  "inputType": "html"
+}

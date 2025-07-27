@@ -5,7 +5,7 @@
  * orphaned markers, broken lists, and other structural problems.
  */
 
-import { ValidationRule, ValidationIssue, VALIDATION_RULES, getValidationRules } from './validation-rules';
+import { ValidationRule, ValidationIssue, VALIDATION_RULES, getValidationRules } from './validation-rules.js';
 
 export interface ValidationOptions {
   /** Validation strictness level */

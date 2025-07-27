@@ -1,18 +1,18 @@
 import { JSDOM } from 'jsdom';
 import { DocumentConverter, ConversionOptions, ConversionResult } from '../types/index';
 import { HTMLConverter } from './html-converter';
-import { AsciiDocConverter } from './asciidoc-converter';
+import { EnhancedAsciiDocConverter } from './enhanced-asciidoc-converter';
 import { MadCapPreprocessor } from '../services/madcap-preprocessor';
 
 export class MadCapConverter implements DocumentConverter {
   supportedInputTypes = ['html', 'htm', 'xml'];
   private htmlConverter: HTMLConverter;
-  private asciidocConverter: AsciiDocConverter;
+  private asciidocConverter: EnhancedAsciiDocConverter;
   private madcapPreprocessor: MadCapPreprocessor;
 
   constructor() {
     this.htmlConverter = new HTMLConverter();
-    this.asciidocConverter = new AsciiDocConverter();
+    this.asciidocConverter = new EnhancedAsciiDocConverter();
     this.madcapPreprocessor = new MadCapPreprocessor();
   }
 

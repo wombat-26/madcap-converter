@@ -71,7 +71,7 @@ export class SimpleDocumentService {
             inputType = 'madcap';
           }
         } else if (format === 'asciidoc') {
-          // Use regular AsciiDoc converter for asciidoc format
+          // Use enhanced AsciiDoc converter for asciidoc format
           converter = this.converters.get('asciidoc')!;
           if (this.containsMadCapContent(input)) {
             inputType = 'madcap';

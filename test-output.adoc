@@ -1,0 +1,13 @@
+= Document Title
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+= Edit Asset Type
+
+This section explains how to edit an asset type.
+
+NoteNew assets can no longer be defined as Standard asset type.
+
+

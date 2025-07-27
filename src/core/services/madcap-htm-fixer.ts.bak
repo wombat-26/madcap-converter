@@ -1,0 +1,334 @@
+/**
+ * MadCap HTM Fixing Service
+ * 
+ * Automatically fixes common validation errors in MadCap Flare HTM files,
+ * with special focus on list nesting issues and XHTML compliance.
+ */
+
+import * as cheerio from 'cheerio';
+
+type CheerioElement = any;
+
+export interface MadCapFixResult {
+  wasFixed: boolean;
+  originalContent: string;
+  fixedContent: string;
+  appliedFixes: string[];
+  remainingIssues: string[];
+  summary: {
+    listNestingFixes: number;
+    xhtmlFixes: number;
+    madcapElementFixes: number;
+    structuralFixes: number;
+  };
+}
+
+export interface MadCapFixOptions {
+  fixListNesting: boolean;
+  fixXHTMLCompliance: boolean;
+  fixMadCapElements: boolean;
+  preserveFormatting: boolean;
+  validateAfterFix: boolean;
+}
+
+export class MadCapHTMFixingService {
+  private readonly defaultOptions: MadCapFixOptions = {
+    fixListNesting: true,
+    fixXHTMLCompliance: true,
+    fixMadCapElements: true,
+    preserveFormatting: true,
+    validateAfterFix: true
+  };
+
+  /**
+   * Fix all common validation errors in MadCap HTM content
+   */
+  async fixMadCapHTM(html: string, options?: Partial<MadCapFixOptions>): Promise<MadCapFixResult> {
+    const opts = { ...this.defaultOptions, ...options };
+    const appliedFixes: string[] = [];
+    const remainingIssues: string[] = [];
+    let fixedContent = html;
+    let listNestingFixes = 0;
+    let xhtmlFixes = 0;
+    let madcapElementFixes = 0;
+    let structuralFixes = 0;
+
+    // 1. Fix MadCap-specific elements first
+    if (opts.fixMadCapElements) {
+      const madcapResult = this.fixMadCapElements(fixedContent);
+      fixedContent = madcapResult.content;
+      appliedFixes.push(...madcapResult.fixes);
+      madcapElementFixes = madcapResult.fixes.length;
+    }
+
+    // 2. Fix list nesting issues
+    if (opts.fixListNesting) {
+      const listResult = this.fixListNesting(fixedContent);
+      fixedContent = listResult.content;
+      appliedFixes.push(...listResult.fixes);
+      remainingIssues.push(...listResult.remainingIssues);
+      listNestingFixes = listResult.fixes.length;
+    }
+
+    // 3. Fix structural issues
+    const structureResult = this.fixStructuralIssues(fixedContent);
+    fixedContent = structureResult.content;
+    appliedFixes.push(...structureResult.fixes);
+    structuralFixes = structureResult.fixes.length;
+
+    // 4. Apply XHTML compliance fixes
+    if (opts.fixXHTMLCompliance) {
+      try {
+        const xhtmlResult = this.fixXHTMLCompliance(fixedContent, opts.preserveFormatting);
+        fixedContent = xhtmlResult.content;
+        appliedFixes.push(...xhtmlResult.fixes);
+        xhtmlFixes = xhtmlResult.fixes.length;
+      } catch (error) {
+        remainingIssues.push(`XHTML fixing failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    return {
+      wasFixed: appliedFixes.length > 0,
+      originalContent: html,
+      fixedContent,
+      appliedFixes,
+      remainingIssues,
+      summary: {
+        listNestingFixes,
+        xhtmlFixes,
+        madcapElementFixes,
+        structuralFixes
+      }
+    };
+  }
+
+  /**
+   * Fix MadCap-specific element issues
+   */
+  private fixMadCapElements(html: string): { content: string; fixes: string[] } {
+    const $ = cheerio.load(html, { xmlMode: true, decodeEntities: false });
+    const fixes: string[] = [];
+
+    // Fix empty MadCap elements
+    $('MadCap\\:conditionalText, MadCap\\:variable, MadCap\\:snippet').each((_, el) => {
+      const $el = $(el);
+      if (!$el.text().trim() && !$el.attr('src') && !$el.attr('name')) {
+        $el.remove();
+        fixes.push('Removed empty MadCap element');
+      }
+    });
+
+    // Fix nested MadCap elements that shouldn't be nested
+    $('MadCap\\:dropDown MadCap\\:dropDown').each((_, el) => {
+      const $el = $(el);
+      $el.unwrap();
+      fixes.push('Fixed nested MadCap dropdown');
+    });
+
+    // Fix unclosed MadCap elements
+    $('MadCap\\:dropDownHead, MadCap\\:dropDownBody').each((_, el) => {
+      const $el = $(el);
+      if (!$el.parent().is('MadCap\\:dropDown')) {
+        $el.wrap('<MadCap:dropDown></MadCap:dropDown>');
+        fixes.push('Wrapped orphaned dropdown element');
+      }
+    });
+
+    return {
+      content: $.html(),
+      fixes
+    };
+  }
+
+  /**
+   * Fix list nesting validation errors
+   */
+  private fixListNesting(html: string): { content: string; fixes: string[]; remainingIssues: string[] } {
+    const $ = cheerio.load(html, { xmlMode: false, decodeEntities: false });
+    const fixes: string[] = [];
+    const remainingIssues: string[] = [];
+
+    // Fix lists directly inside other lists (should be in <li>)
+    $('ul ul, ol ol, ul ol, ol ul').each((_, nestedList) => {
+      const $nestedList = $(nestedList);
+      const $parent = $nestedList.parent();
+      
+      if ($parent.is('ul, ol')) {
+        // Find the previous <li> or create one
+        const $prevLi = $nestedList.prev('li');
+        if ($prevLi.length > 0) {
+          $prevLi.append($nestedList);
+          fixes.push('Moved nested list into previous list item');
+        } else {
+          // Create a wrapper <li>
+          $nestedList.wrap('<li></li>');
+          fixes.push('Wrapped orphaned nested list in list item');
+        }
+      }
+    });
+
+    // Fix empty list items
+    $('li').each((_, li) => {
+      const $li = $(li);
+      if (!$li.text().trim() && $li.children().length === 0) {
+        $li.remove();
+        fixes.push('Removed empty list item');
+      }
+    });
+
+    // Fix lists with no list items
+    $('ul, ol').each((_, list) => {
+      const $list = $(list);
+      if ($list.children('li').length === 0) {
+        if ($list.text().trim()) {
+          // Convert to paragraph
+          $list.replaceWith(`<p>${$list.html()}</p>`);
+          fixes.push('Converted empty list to paragraph');
+        } else {
+          $list.remove();
+          fixes.push('Removed empty list');
+        }
+      }
+    });
+
+    // Fix mismatched list tags
+    $('li').each((_, li) => {
+      const $li = $(li);
+      const $parent = $li.parent();
+      if (!$parent.is('ul, ol')) {
+        $li.wrap('<ul></ul>');
+        fixes.push('Wrapped orphaned list item in unordered list');
+      }
+    });
+
+    return {
+      content: $.html(),
+      fixes,
+      remainingIssues
+    };
+  }
+
+  /**
+   * Fix general structural issues
+   */
+  private fixStructuralIssues(html: string): { content: string; fixes: string[] } {
+    const $ = cheerio.load(html, { xmlMode: false, decodeEntities: false });
+    const fixes: string[] = [];
+
+    // Fix unclosed tags (cheerio handles most of this automatically)
+    // But we can clean up specific patterns
+
+    // Fix missing alt attributes on images
+    $('img').each((_, img) => {
+      const $img = $(img);
+      if (!$img.attr('alt')) {
+        $img.attr('alt', '');
+        fixes.push('Added missing alt attribute to image');
+      }
+    });
+
+    // Fix self-closing tags that should be properly closed
+    $('br, hr, img, input, meta, link').each((_, el) => {
+      // Cheerio handles this automatically in non-XML mode
+    });
+
+    return {
+      content: $.html(),
+      fixes
+    };
+  }
+
+  /**
+   * Fix XHTML compliance issues
+   */
+  private fixXHTMLCompliance(html: string, preserveFormatting: boolean): { content: string; fixes: string[] } {
+    const fixes: string[] = [];
+    let fixedContent = html;
+
+    // Use cheerio to fix basic XHTML issues
+    const $ = cheerio.load(html, { 
+      xmlMode: false, 
+      decodeEntities: false,
+      normalizeWhitespace: !preserveFormatting 
+    });
+
+    // Fix attribute quoting
+    $('*').each((_, el) => {
+      const $el = $(el);
+      const attributes = el.attribs;
+      let hasUnquotedAttrs = false;
+      
+      for (const [name, value] of Object.entries(attributes)) {
+        // Check if we need to fix attribute values
+        if (value && !value.match(/^".*"$/) && !value.match(/^'.*'$/)) {
+          if (value.includes(' ') || value.includes('>') || value.includes('<')) {
+            hasUnquotedAttrs = true;
+            break;
+          }
+        }
+      }
+      
+      if (hasUnquotedAttrs) {
+        fixes.push('Fixed unquoted attribute values');
+      }
+    });
+
+    // Fix case sensitivity (XHTML requires lowercase)
+    fixedContent = $.html();
+    
+    // Manual fixes for common XHTML issues
+    fixedContent = fixedContent
+      .replace(/<BR\s*\/?>/gi, '<br/>')
+      .replace(/<HR\s*\/?>/gi, '<hr/>')
+      .replace(/<IMG([^>]*?)>/gi, '<img$1/>')
+      .replace(/(&nbsp;){2,}/g, '&nbsp;&nbsp;'); // Normalize multiple nbsp
+
+    if (fixedContent !== html) {
+      fixes.push('Applied XHTML compliance fixes');
+    }
+
+    return {
+      content: fixedContent,
+      fixes
+    };
+  }
+
+  /**
+   * Validate the fixed content
+   */
+  private async validateFixedContent(html: string): Promise<{ isValid: boolean; errors: string[] }> {
+    try {
+      const $ = cheerio.load(html, { xmlMode: true });
+      
+      // Basic validation checks
+      const errors: string[] = [];
+      
+      // Check for unclosed tags
+      $('*').each((_, el) => {
+        const tagName = el.tagName?.toLowerCase();
+        if (tagName && ['br', 'hr', 'img', 'input', 'meta', 'link'].includes(tagName)) {
+          // Self-closing tags are OK
+          return;
+        }
+        
+        // Check if element has proper closing
+        const $el = $(el);
+        const html = $el.toString();
+        if (!html.includes(`</${tagName}>`)) {
+          errors.push(`Unclosed tag: ${tagName}`);
+        }
+      });
+
+      return {
+        isValid: errors.length === 0,
+        errors
+      };
+    } catch (error) {
+      return {
+        isValid: false,
+        errors: [`Validation error: ${error instanceof Error ? error.message : String(error)}`]
+      };
+    }
+  }
+}

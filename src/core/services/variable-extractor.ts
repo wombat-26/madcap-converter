@@ -1,4 +1,4 @@
-import { ExtractedVariable, VariableExtractionOptions } from '../types/index';
+import { ExtractedVariable, VariableExtractionOptions } from '../types/index.js';
 import { readdir, readFile, stat } from 'fs/promises';
 import { join, extname } from 'path';
 import { JSDOM } from 'jsdom';
