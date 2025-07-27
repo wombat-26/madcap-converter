@@ -54,6 +54,32 @@ export interface AsciiDocConversionOptions {
     generateAnchors?: boolean; // Generate anchors for glossary terms
     includeIndex?: boolean; // Include alphabetical index
   };
+  
+  // Math processing options
+  mathOptions?: {
+    enableMathProcessing?: boolean; // Enable math notation processing (default: true)
+    mathFormat?: 'latexmath' | 'asciimath' | 'text'; // Math output format (default: 'latexmath')
+    preserveMathSymbols?: boolean; // Keep Unicode math symbols (default: true)
+    convertSubscripts?: boolean; // Convert HTML sub/sup tags (default: true)
+    processInlineExpressions?: boolean; // Process math in inline content (default: true)
+  };
+  
+  // Citation processing options
+  citationOptions?: {
+    enableCitationProcessing?: boolean; // Enable citation processing (default: true)
+    citationStyle?: 'footnote' | 'endnote' | 'bibliography'; // Citation format preference
+    generateCitationsSection?: boolean; // Add citations section (default: true)
+    preserveFootnotes?: boolean; // Keep HTML footnotes as AsciiDoc footnotes (default: true)
+    processBibliography?: boolean; // Process bibliography entries (default: true)
+  };
+  
+  // Performance optimization options
+  performanceOptions?: {
+    enableOptimization?: boolean; // Enable performance optimization for large documents
+    chunkSize?: number; // Chunk size for large documents (default: 10000 characters)
+    memoryThreshold?: number; // Memory warning threshold in MB (default: 100)
+    batchProcessing?: boolean; // Use batch element processing (default: true)
+  };
 }
 
 export interface WritersideConversionOptions {
@@ -145,6 +171,8 @@ export interface ConversionResult {
     zendeskMetadata?: ZendeskArticleMetadata;
     brokenLinks?: any[]; // Link validation results if validation was performed
     format?: string;
+    processingTime?: number; // Processing time in milliseconds (from PerformanceOptimizer)
+    memoryUsage?: number; // Memory usage in MB (from PerformanceOptimizer)
   };
 }
 
