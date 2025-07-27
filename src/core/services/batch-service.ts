@@ -146,7 +146,8 @@ export class BatchService {
     console.log('Using TOC-based conversion strategy');
 
     // Discover TOCs in the project
-    const tocFiles = await this.tocDiscoveryService.discoverTOCs(inputDir);
+    const tocDiscoveryResult = await this.tocDiscoveryService.discoverAllTOCs(inputDir);
+    const tocFiles = tocDiscoveryResult.tocFiles;
     console.log(`Found ${tocFiles.length} TOC files`);
 
     if (tocFiles.length === 0) {
