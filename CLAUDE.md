@@ -615,6 +615,12 @@ The `BatchService` provides enterprise-grade folder processing:
 - Comprehensive error handling and reporting
 - **Automatic exclusion of macOS metadata files** (`._*` and `.DS_Store` files)
 
+**Recent Fixes (January 2025):**
+- **Property Name Consistency**: Fixed critical runtime errors where batch processing expected `sourceFile`/`targetFile` but objects had `inputPath`/`outputPath`
+- **Type Safety Improvements**: Added `BatchTOCConversionPlan` interface to match actual object structures
+- **Method Alignment**: Updated `convertDocument` calls to use correct `convertFile` API from DocumentService
+- **Build Stability**: Resolved TypeScript compilation errors for production deployment
+
 ## File Handling and Filtering
 
 ### Automatic File Exclusions
@@ -628,6 +634,110 @@ When searching for MadCap project files (.flvar, .flsnp):
 - Variable extraction service (`VariableExtractor`) skips `._*` files
 - Batch processing service (`BatchService`) excludes `._*` and `.DS_Store` files
 - These exclusions prevent parsing errors from macOS-generated metadata files
+
+## Specialized Content Handlers (January 2025)
+
+The converter now includes three specialized content handlers that were restored and integrated into the EnhancedAsciiDocConverter:
+
+### MathNotationHandler (`src/core/converters/math-notation-handler.ts`)
+**Advanced mathematical notation processing for academic and technical content:**
+
+**Features:**
+- **LaTeX Math Conversion**: Inline `$equation$` → `latexmath:[equation]`, Display `$$equation$$` → `[latexmath]` blocks
+- **HTML Subscript/Superscript**: `H<sub>2</sub>O` → `H~2~O`, `E=mc<sup>2</sup>` → `E=mc^2^`
+- **Scientific Notation**: `3.0 × 10^8` → `3.0 × 10^8^`
+- **Mathematical Symbols**: Unicode math symbols (π, ∑, ∫, etc.) preserved
+- **MathML Support**: Basic MathML element conversion
+- **Format Support**: Both AsciiDoc and Markdown output formats
+
+**Usage:**
+```typescript
+const mathOptions = {
+  enableMathProcessing: true,        // Enable math notation conversion
+  preserveLatex: true,               // Keep LaTeX syntax in output
+  convertSubscripts: true,           // Convert HTML sub/sup tags
+  normalizeSymbols: true             // Normalize Unicode math symbols
+};
+```
+
+### CitationHandler (`src/core/converters/citation-handler.ts`)
+**Academic citation and footnote processing for scholarly documents:**
+
+**Features:**
+- **HTML Footnotes**: `<a href="#fn1">1</a>` → `footnote:[content]` with automatic content extraction
+- **Academic Citations**: `(Smith, 2023)` → `<<smith_2023,Smith, 2023>>` with bibliography generation
+- **Numeric References**: `[1]` → `<<ref_1,[1]>>` with cross-reference linking
+- **DOI Extraction**: Automatic DOI detection and formatting from bibliography entries
+- **Bibliography Generation**: Automatic references section with proper formatting
+- **Citation Styles**: Support for both author-year and numeric citation styles
+
+**Usage:**
+```typescript
+const citationOptions = {
+  enableCitationProcessing: true,    // Enable citation conversion
+  citationStyle: 'author-year',      // 'author-year' | 'numeric'
+  generateBibliography: true,        // Auto-generate references section
+  extractDOIs: true,                 // Extract and format DOI links
+  footnoteStyle: 'asciidoc'          // Output format for footnotes
+};
+```
+
+### PerformanceOptimizer (`src/core/converters/performance-optimizer.ts`)
+**Large document processing and memory management:**
+
+**Features:**
+- **Document Chunking**: Automatic splitting of large documents (>50KB) for memory efficiency
+- **Batch Processing**: Processes document chunks in parallel with configurable concurrency
+- **Memory Management**: Automatic garbage collection and memory monitoring
+- **DOM Optimization**: Cleans up empty attributes and unnecessary elements
+- **Progress Tracking**: Real-time processing progress with chunk completion logging
+- **Error Recovery**: Graceful handling of processing failures with detailed metrics
+
+**Usage:**
+```typescript
+const performanceOptions = {
+  enableOptimization: true,          // Enable performance optimization
+  chunkSize: 10000,                  // Characters per chunk (default: 10000)
+  maxConcurrency: 3,                 // Parallel processing limit
+  memoryThreshold: 100,              // Memory warning threshold (MB)
+  batchProcessing: true              // Use batch element processing
+};
+```
+
+### Integration with EnhancedAsciiDocConverter
+
+All three handlers are integrated into the `EnhancedAsciiDocConverter` with configurable options:
+
+```typescript
+const options = {
+  format: 'asciidoc',
+  asciidocOptions: {
+    // Math processing
+    mathOptions: {
+      enableMathProcessing: true,
+      preserveLatex: true
+    },
+    
+    // Citation processing  
+    citationOptions: {
+      enableCitationProcessing: true,
+      generateBibliography: true
+    },
+    
+    // Performance optimization
+    performanceOptions: {
+      enableOptimization: true,
+      chunkSize: 10000
+    }
+  }
+};
+```
+
+**Test Coverage:**
+- 21 comprehensive unit tests covering all handler functionality
+- Integration tests for combined handler usage
+- Performance tests for large document processing
+- Error handling and edge case validation
 
 ## TypeScript Configuration Notes
 

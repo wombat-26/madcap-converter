@@ -35,6 +35,14 @@ export interface BatchConversionResult {
   };
 }
 
+export interface BatchTOCConversionPlan {
+  tocFile: string;
+  filesToConvert: Array<{ inputPath: string; outputPath: string; tocEntry: any }>;
+  conversionEntries: Array<{ inputPath: string; outputPath: string; tocEntry: any }>;
+  folderStructure: Array<{ path: string; type: 'folder' | 'file' }>;
+  fileMapping: Map<string, string>;
+}
+
 export class BatchService {
   private documentService: DocumentService;
   private tocDiscoveryService: TOCDiscoveryService;
@@ -230,15 +238,15 @@ export class BatchService {
    * Execute a single TOC-based conversion plan
    */
   private async executeTOCConversionPlan(
-    plan: TOCBasedConversionPlan,
+    plan: BatchTOCConversionPlan,
     options: BatchConversionOptions,
     result: BatchConversionResult
   ): Promise<void> {
     console.log(`Executing conversion plan for ${plan.tocFile} (${plan.filesToConvert.length} files)`);
 
     for (const fileEntry of plan.filesToConvert) {
-      const inputPath = fileEntry.sourceFile;
-      const outputPath = fileEntry.targetFile;
+      const inputPath = fileEntry.inputPath;
+      const outputPath = fileEntry.outputPath;
 
       try {
         // Ensure output directory exists
@@ -247,11 +255,13 @@ export class BatchService {
         // Convert the file
         const conversionOptions: ConversionOptions = {
           ...options,
+          format: options.format || 'asciidoc',
+          inputType: 'html', // TOC-based conversion typically processes HTML files
           inputPath,
           outputPath
         };
 
-        const conversionResult = await this.documentService.convertDocument(
+        const conversionResult = await this.documentService.convertFile(
           inputPath,
           conversionOptions
         );
@@ -267,7 +277,7 @@ export class BatchService {
         // Write converted content
         await writeFile(outputPath, conversionResult.content, 'utf-8');
 
-        console.log(`✓ Converted: ${relative(plan.inputBaseDir, inputPath)} → ${relative(plan.outputBaseDir, outputPath)}`);
+        console.log(`✓ Converted: ${relative(process.cwd(), inputPath)} → ${relative(process.cwd(), outputPath)}`);
 
       } catch (error) {
         result.errors.push({
@@ -283,7 +293,7 @@ export class BatchService {
    * Generate a master document that includes all converted files
    */
   private async generateMasterDocument(
-    plans: TOCBasedConversionPlan[],
+    plans: BatchTOCConversionPlan[],
     outputDir: string,
     options: BatchConversionOptions
   ): Promise<string | undefined> {
@@ -313,7 +323,7 @@ export class BatchService {
   /**
    * Generate AsciiDoc master document
    */
-  private generateAsciiDocMaster(plans: TOCBasedConversionPlan[], outputDir: string): string {
+  private generateAsciiDocMaster(plans: BatchTOCConversionPlan[], outputDir: string): string {
     const lines: string[] = [];
     
     lines.push('= Documentation Master');
@@ -332,7 +342,7 @@ export class BatchService {
 
       // Include all files from this TOC
       for (const fileEntry of plan.filesToConvert) {
-        const relativePath = relative(outputDir, fileEntry.targetFile);
+        const relativePath = relative(outputDir, fileEntry.outputPath);
         lines.push(`include::${relativePath}[]`);
         lines.push('');
       }
@@ -344,7 +354,7 @@ export class BatchService {
   /**
    * Generate Markdown master document
    */
-  private generateMarkdownMaster(plans: TOCBasedConversionPlan[], outputDir: string): string {
+  private generateMarkdownMaster(plans: BatchTOCConversionPlan[], outputDir: string): string {
     const lines: string[] = [];
     
     lines.push('# Documentation Master');
@@ -360,8 +370,8 @@ export class BatchService {
 
       // Add links to all files from this TOC
       for (const fileEntry of plan.filesToConvert) {
-        const relativePath = relative(outputDir, fileEntry.targetFile);
-        const fileName = basename(fileEntry.targetFile, '.md');
+        const relativePath = relative(outputDir, fileEntry.outputPath);
+        const fileName = basename(fileEntry.outputPath, '.md');
         lines.push(`- [${fileName}](${relativePath})`);
       }
       lines.push('');
@@ -414,11 +424,13 @@ export class BatchService {
       // Convert the document
       const conversionOptions: ConversionOptions = {
         ...options,
+        format: options.format || 'asciidoc',
+        inputType: 'html', // Standard file processing typically handles HTML files
         inputPath,
         outputPath
       };
 
-      const conversionResult = await this.documentService.convertDocument(
+      const conversionResult = await this.documentService.convertFile(
         inputPath,
         conversionOptions
       );
