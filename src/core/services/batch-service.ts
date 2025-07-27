@@ -6,7 +6,7 @@ import { JSDOM } from 'jsdom';
 import { ZendeskConverter } from '../converters/zendesk-converter.js';
 import { MadCapConverter } from '../converters/madcap-converter.js';
 import { TOCDiscoveryService } from './toc-discovery.js';
-import { TocService, TOCBasedConversionPlan } from './toc-service.js';
+import { TocService, TOCBasedConversionPlan } from '../toc-service.js';
 
 export interface BatchConversionOptions extends Partial<ConversionOptions> {
   recursive?: boolean;
