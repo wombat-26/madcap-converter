@@ -161,22 +161,45 @@ export class BatchService {
       masterDocumentPath: undefined
     };
 
-    // Create conversion plan based on TOC structure
+    // Create conversion plan based on TOC structure  
     let totalDiscoveredFiles = 0;
-    const allConversionPlans: TOCBasedConversionPlan[] = [];
-
-    for (const tocFile of tocFiles) {
-      try {
-        const plan = await this.tocService.createConversionPlan(tocFile, inputDir, outputDir, options);
-        allConversionPlans.push(plan);
-        totalDiscoveredFiles += plan.filesToConvert.length;
-        console.log(`TOC ${basename(tocFile)}: ${plan.filesToConvert.length} files to convert`);
-      } catch (error) {
-        result.errors.push({
-          file: tocFile,
-          error: `Failed to create conversion plan: ${error instanceof Error ? error.message : String(error)}`
-        });
+    let allConversionPlans: any[] = [];
+    
+    try {
+      // Create a single plan from all discovered TOC structures
+      const tocBasedPlan = await this.tocService.createTOCBasedPlan(tocDiscoveryResult.tocStructures.map(ts => ts.structure), options.format || 'asciidoc');
+      
+      // Convert the plan format to what the rest of the code expects
+      allConversionPlans = tocFiles.map((tocFile, index) => {
+        const relevantEntries = tocBasedPlan.conversionEntries.filter((_, i) => 
+          Math.floor(i / (tocBasedPlan.conversionEntries.length / tocFiles.length)) === index
+        );
+        
+        return {
+          tocFile,
+          filesToConvert: relevantEntries.map(entry => ({
+            inputPath: entry.inputPath,
+            outputPath: entry.outputPath,
+            tocEntry: entry.tocEntry
+          })),
+          conversionEntries: relevantEntries,
+          folderStructure: tocBasedPlan.folderStructure,
+          fileMapping: tocBasedPlan.fileMapping
+        };
+      });
+      
+      totalDiscoveredFiles = tocBasedPlan.conversionEntries.length;
+      
+      for (const plan of allConversionPlans) {
+        console.log(`TOC ${basename(plan.tocFile)}: ${plan.filesToConvert.length} files to convert`);
       }
+      
+    } catch (error) {
+      result.errors.push({
+        file: 'TOC Processing',
+        error: `Failed to create conversion plan: ${error instanceof Error ? error.message : String(error)}`
+      });
+      return result;
     }
 
     result.tocStructure.discoveredFiles = totalDiscoveredFiles;
