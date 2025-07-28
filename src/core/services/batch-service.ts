@@ -125,32 +125,44 @@ export class BatchService {
   ): Promise<string[]> {
     const files: string[] = [];
     
-    const entries = await readdir(dirPath);
+    console.log(`🔍 Searching directory: ${dirPath}`);
+    console.log(`📁 Supported extensions: ${Array.from(this.supportedExtensions).join(', ')}`);
     
-    for (const entry of entries) {
-      const fullPath = join(dirPath, entry);
-      const stats = await stat(fullPath);
+    try {
+      const entries = await readdir(dirPath);
+      console.log(`📂 Found ${entries.length} entries in ${dirPath}: ${entries.join(', ')}`);
       
-      if (stats.isDirectory()) {
-        if (options.recursive !== false) {
-          const subFiles = await this.findDocumentFiles(fullPath, options);
-          files.push(...subFiles);
-        }
-      } else if (stats.isFile()) {
-        const ext = extname(entry).toLowerCase().slice(1);
+      for (const entry of entries) {
+        const fullPath = join(dirPath, entry);
+        const stats = await stat(fullPath);
         
-        if (this.supportedExtensions.has(ext)) {
-          if (this.shouldIncludeFile(entry, options)) {
-            files.push(fullPath);
-          } else {
-            // SKIPPED: ${fullPath} - Excluded by filename pattern
+        if (stats.isDirectory()) {
+          console.log(`📁 Directory found: ${entry}`);
+          if (options.recursive !== false) {
+            const subFiles = await this.findDocumentFiles(fullPath, options);
+            files.push(...subFiles);
           }
-        } else {
-          // SKIPPED: ${fullPath} - Unsupported file extension (.${ext})
+        } else if (stats.isFile()) {
+          const ext = extname(entry).toLowerCase().slice(1);
+          console.log(`📄 File: ${entry} (extension: .${ext})`);
+          
+          if (this.supportedExtensions.has(ext)) {
+            if (this.shouldIncludeFile(entry, options)) {
+              console.log(`✅ Including file: ${fullPath}`);
+              files.push(fullPath);
+            } else {
+              console.log(`⏭️  Skipping file (pattern filter): ${fullPath}`);
+            }
+          } else {
+            console.log(`❌ Skipping file (unsupported extension): ${fullPath} (.${ext})`);
+          }
         }
       }
+    } catch (error) {
+      console.error(`❌ Error reading directory ${dirPath}:`, error);
     }
     
+    console.log(`🎯 Total files found in ${dirPath}: ${files.length}`);
     return files;
   }
 

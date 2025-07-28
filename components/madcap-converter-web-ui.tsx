@@ -176,7 +176,7 @@ export default function MadCapConverterWebUI() {
   }, [])
 
   const addNotification = useCallback((notification: Omit<NotificationState, 'id'>) => {
-    const id = Date.now().toString()
+    const id = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}`
     const newNotification = { ...notification, id }
     setNotifications(prev => [...prev, newNotification])
     
@@ -557,16 +557,38 @@ export default function MadCapConverterWebUI() {
         })
       }
     } catch (error) {
+      console.error('Batch conversion error:', error);
+      
+      let errorMessage = 'Unknown error occurred';
+      if (error instanceof Error) {
+        errorMessage = error.message;
+      } else if (typeof error === 'string') {
+        errorMessage = error;
+      }
+      
+      // Add more detailed error information for debugging
+      const detailedError = {
+        message: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+        fileCount: batchFiles.length,
+        outputFormat,
+        timestamp: new Date().toISOString()
+      };
+      
       setConversionState({ 
         isConverting: false, 
-        error: error instanceof Error ? error.message : 'Unknown error' 
+        error: `${errorMessage}\n\nDebug Info:\nFiles: ${batchFiles.length}\nFormat: ${outputFormat}\nTime: ${new Date().toLocaleString()}`
       })
       
       addNotification({
         type: 'error',
         title: 'Batch conversion failed',
-        message: error instanceof Error ? error.message : 'Unknown error occurred',
+        message: errorMessage,
+        autoHide: false, // Keep error visible
+        duration: 0
       })
+      
+      console.log('Detailed error info:', detailedError);
     }
   }
 
@@ -598,7 +620,14 @@ export default function MadCapConverterWebUI() {
     const files = e.target.files
     if (!files) return
     
-    setBatchFiles(Array.from(files))
+    const fileArray = Array.from(files)
+    console.log(`📁 Folder selected via file picker: ${fileArray.length} files`)
+    fileArray.forEach(file => {
+      const relativePath = (file as any).webkitRelativePath
+      console.log(`📄 File: ${file.name} (webkitRelativePath: ${relativePath})`)
+    })
+    
+    setBatchFiles(fileArray)
   }
 
   const handleDrop = (e: React.DragEvent, multiple: boolean = false) => {
@@ -608,7 +637,26 @@ export default function MadCapConverterWebUI() {
     const items = Array.from(e.dataTransfer.items)
     const files = Array.from(e.dataTransfer.files)
     
+    console.log(`🎯 Drag & drop detected: ${files.length} files, ${items.length} items`)
+    
     if (multiple) {
+      // Check if folder was dropped (folder shows up as 0 files but has items)
+      if (files.length === 0 && items.length > 0) {
+        addNotification({
+          type: 'warning',
+          title: 'Folder drag not supported',
+          message: 'Please use the "Browse" button to select a folder instead of dragging it. Drag & drop only works for individual files.',
+          duration: 8000,
+        })
+        return
+      }
+      
+      // Debug what we're getting
+      files.forEach(file => {
+        const relativePath = (file as any).webkitRelativePath
+        console.log(`📄 Dropped file: ${file.name} (webkitRelativePath: ${relativePath || 'not set'})`)
+      })
+      
       // For batch/folder processing, accept all files
       setBatchFiles(files)
       
@@ -1294,7 +1342,15 @@ export default function MadCapConverterWebUI() {
             </CardHeader>
             <CardContent>
               <p className="text-sm text-muted-foreground">
-                Your files have been converted successfully and downloaded.
+                {conversionState.conversionSummary ? (
+                  conversionState.conversionSummary.convertedFiles > 0 ? 
+                    `Successfully converted ${conversionState.conversionSummary.convertedFiles} of ${conversionState.conversionSummary.totalFiles} files and downloaded.` :
+                    conversionState.conversionSummary.totalFiles === 0 ?
+                      'No files were found to convert. Please check your folder contains supported file types (.htm, .html, .flsnp, .xml, .docx).' :
+                      `No files were converted. ${conversionState.conversionSummary.skippedFiles} files were skipped.`
+                ) : (
+                  'Your files have been converted successfully and downloaded.'
+                )}
               </p>
               {conversionState.result.metadata && (
                 <div className="mt-4 space-y-2 text-sm">

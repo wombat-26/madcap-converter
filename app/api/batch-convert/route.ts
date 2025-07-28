@@ -37,6 +37,8 @@ export async function POST(request: NextRequest) {
     await mkdir(inputDir, { recursive: true });
     await mkdir(outputDir, { recursive: true });
     
+    console.log(`📦 Processing ${files.length} uploaded files:`);
+    
     // Save uploaded files
     for (const file of files) {
       const bytes = await file.arrayBuffer();
@@ -46,6 +48,8 @@ export async function POST(request: NextRequest) {
       const relativePath = (file as any).webkitRelativePath || file.name;
       const filePath = join(inputDir, relativePath);
       
+      console.log(`📄 Uploading file: ${relativePath} (${buffer.length} bytes)`);
+      
       // Create subdirectories if needed
       const fileDir = join(inputDir, relativePath.substring(0, relativePath.lastIndexOf('/')));
       if (fileDir !== inputDir && relativePath.includes('/')) {
@@ -54,6 +58,8 @@ export async function POST(request: NextRequest) {
       
       await writeFile(filePath, buffer);
     }
+    
+    console.log(`✅ All files saved to: ${inputDir}`);
     
     // Track conversion progress
     let lastProgress: ConversionProgress | null = null;
@@ -118,10 +124,18 @@ export async function POST(request: NextRequest) {
       // Ignore cleanup errors
     }
     
+    console.error('Batch conversion API error:', error);
+    console.error('Error stack:', error instanceof Error ? error.stack : 'No stack trace');
+    
     return NextResponse.json(
       { 
         success: false, 
-        error: error instanceof Error ? error.message : 'Unknown error occurred' 
+        error: error instanceof Error ? error.message : 'Unknown error occurred',
+        debug: {
+          type: error instanceof Error ? error.constructor.name : typeof error,
+          stack: error instanceof Error ? error.stack : undefined,
+          timestamp: new Date().toISOString()
+        }
       },
       { status: 500 }
     );
