@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { BatchService } from '../../../src/core/services/batch-service';
+import { BatchService, ConversionProgress } from '../../../src/core/services/batch-service';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -55,11 +55,20 @@ export async function POST(request: NextRequest) {
       await writeFile(filePath, buffer);
     }
     
-    // Perform batch conversion
+    // Track conversion progress
+    let lastProgress: ConversionProgress | null = null;
+    
+    // Perform batch conversion with progress tracking
     const batchService = new BatchService();
     const result = await batchService.convertFolder(inputDir, outputDir, {
       format: format as any,
-      ...options
+      ...options,
+      onProgress: (progress: ConversionProgress) => {
+        lastProgress = progress;
+        // Progress is tracked but not streamed in this version
+        // For real-time updates, would need to use SSE or WebSockets
+        console.log(`Progress: ${progress.percentage}% - ${progress.message}`);
+      }
     });
     
     // Create zip file of results
@@ -94,7 +103,9 @@ export async function POST(request: NextRequest) {
           totalFiles: result.totalFiles,
           convertedFiles: result.convertedFiles,
           skippedFiles: result.skippedFiles,
+          skippedFilesList: result.skippedFilesList,
           errors: result.errors.length,
+          errorDetails: result.errors,
         }),
       },
     });

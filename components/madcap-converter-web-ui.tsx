@@ -39,6 +39,16 @@ interface ConversionState {
   progress?: number
   result?: any
   error?: string
+  currentFile?: string
+  progressMessage?: string
+  conversionSummary?: {
+    totalFiles: number
+    convertedFiles: number
+    skippedFiles: number
+    skippedFilesList?: Array<{ file: string; reason: string }>
+    errors: number
+    errorDetails?: Array<{ file: string; error: string; stack?: string }>
+  }
 }
 
 interface NotificationState {
@@ -447,6 +457,17 @@ export default function MadCapConverterWebUI() {
           throw new Error(data.error || 'Batch conversion failed')
         }
 
+        // Get conversion summary from headers
+        const summaryHeader = response.headers.get('X-Conversion-Summary');
+        let conversionSummary = null;
+        if (summaryHeader) {
+          try {
+            conversionSummary = JSON.parse(summaryHeader);
+          } catch (e) {
+            console.error('Failed to parse conversion summary:', e);
+          }
+        }
+        
         // Get the zip file content to extract individual files
         const blob = await response.blob()
         const zip = new JSZip()
@@ -466,7 +487,8 @@ export default function MadCapConverterWebUI() {
         
         setConversionState({ 
           isConverting: false, 
-          result: { success: true } 
+          result: { success: true },
+          conversionSummary
         })
 
         addNotification({
@@ -499,19 +521,25 @@ export default function MadCapConverterWebUI() {
         
         // Get conversion summary from headers
         const summaryHeader = response.headers.get('X-Conversion-Summary')
+        let conversionSummary = null;
         if (summaryHeader) {
-          const summary = JSON.parse(summaryHeader)
-          addNotification({
-            type: 'info',
-            title: 'Conversion Summary',
-            message: `Converted ${summary.convertedFiles} of ${summary.totalFiles} files. ${summary.skippedFiles} skipped, ${summary.errors} errors.`,
-            duration: 10000,
-          })
+          try {
+            conversionSummary = JSON.parse(summaryHeader);
+            addNotification({
+              type: 'info',
+              title: 'Conversion Summary',
+              message: `Converted ${conversionSummary.convertedFiles} of ${conversionSummary.totalFiles} files. ${conversionSummary.skippedFiles} skipped, ${conversionSummary.errors} errors.`,
+              duration: 10000,
+            })
+          } catch (e) {
+            console.error('Failed to parse conversion summary:', e);
+          }
         }
 
         setConversionState({ 
           isConverting: false, 
-          result: { success: true } 
+          result: { success: true },
+          conversionSummary
         })
 
         // Download the zip file with custom name
@@ -1238,7 +1266,10 @@ export default function MadCapConverterWebUI() {
                   {conversionState.isConverting ? (
                     <>
                       <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
-                      Converting {conversionState.progress ? `(${conversionState.progress}%)` : '...'}
+                      {conversionState.progressMessage || 
+                        (conversionState.currentFile 
+                          ? `Converting ${conversionState.currentFile}...` 
+                          : `Converting ${conversionState.progress ? `(${conversionState.progress}%)` : '...'}`)}
                     </>
                   ) : (
                     <>
@@ -1292,6 +1323,63 @@ export default function MadCapConverterWebUI() {
             </CardHeader>
             <CardContent>
               <p className="text-sm">{conversionState.error}</p>
+            </CardContent>
+          </Card>
+        )}
+        
+        {/* Detailed Conversion Summary */}
+        {conversionState.conversionSummary && (
+          <Card className="mt-6">
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <FileText size={20} />
+                Detailed Conversion Report
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              {/* Summary Stats */}
+              <div className="grid grid-cols-2 gap-4 text-sm">
+                <div>
+                  <span className="font-semibold">Total Files:</span> {conversionState.conversionSummary.totalFiles}
+                </div>
+                <div>
+                  <span className="font-semibold text-green-600">Converted:</span> {conversionState.conversionSummary.convertedFiles}
+                </div>
+                <div>
+                  <span className="font-semibold text-yellow-600">Skipped:</span> {conversionState.conversionSummary.skippedFiles}
+                </div>
+                <div>
+                  <span className="font-semibold text-red-600">Errors:</span> {conversionState.conversionSummary.errors}
+                </div>
+              </div>
+              
+              {/* Skipped Files */}
+              {conversionState.conversionSummary.skippedFilesList && conversionState.conversionSummary.skippedFilesList.length > 0 && (
+                <div>
+                  <h4 className="font-semibold mb-2">Skipped Files:</h4>
+                  <textarea
+                    readOnly
+                    value={conversionState.conversionSummary.skippedFilesList
+                      .map(item => `${item.file}: ${item.reason}`)
+                      .join('\n')}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 h-32 resize-none"
+                  />
+                </div>
+              )}
+              
+              {/* Error Details */}
+              {conversionState.conversionSummary.errorDetails && conversionState.conversionSummary.errorDetails.length > 0 && (
+                <div>
+                  <h4 className="font-semibold mb-2 text-red-600">Conversion Errors:</h4>
+                  <textarea
+                    readOnly
+                    value={conversionState.conversionSummary.errorDetails
+                      .map(item => `${item.file}:\n${item.error}\n${item.stack ? item.stack + '\n' : ''}`)
+                      .join('\n---\n')}
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-xs font-mono ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 h-48 resize-none text-red-600"
+                  />
+                </div>
+              )}
             </CardContent>
           </Card>
         )}

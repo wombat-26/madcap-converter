@@ -18,6 +18,16 @@ export interface BatchConversionOptions extends Partial<ConversionOptions> {
   useTOCStructure?: boolean; // Use TOC hierarchy instead of file structure
   generateMasterDoc?: boolean; // Generate master document from TOCs
   writersideOptions?: import('../types/index').WritersideOptions; // Writerside project options
+  onProgress?: (progress: ConversionProgress) => void; // Progress callback
+}
+
+export interface ConversionProgress {
+  currentFile: string;
+  currentFileIndex: number;
+  totalFiles: number;
+  percentage: number;
+  status: 'discovering' | 'converting' | 'completed' | 'error';
+  message?: string;
 }
 
 export interface BatchConversionResult {
@@ -39,7 +49,7 @@ export class BatchService {
   private documentService: DocumentService;
   private tocDiscoveryService: TOCDiscoveryService;
   private tocService: TocService;
-  private supportedExtensions = new Set(['html', 'htm', 'docx', 'doc', 'xml']);
+  private supportedExtensions = new Set(['html', 'htm', 'docx', 'doc', 'xml', 'flsnp', 'flpgl', 'fltoc']);
 
   constructor() {
     this.documentService = new DocumentService();
@@ -1795,8 +1805,32 @@ export class BatchService {
     options: BatchConversionOptions,
     result: BatchConversionResult
   ): Promise<BatchConversionResult> {
+    // Report discovery phase
+    if (options.onProgress) {
+      options.onProgress({
+        currentFile: '',
+        currentFileIndex: 0,
+        totalFiles: 0,
+        percentage: 0,
+        status: 'discovering',
+        message: 'Discovering files...'
+      });
+    }
+
     const files = await this.findDocumentFiles(inputDir, options);
     result.totalFiles = files.length;
+
+    // Report discovery complete
+    if (options.onProgress) {
+      options.onProgress({
+        currentFile: '',
+        currentFileIndex: 0,
+        totalFiles: files.length,
+        percentage: 0,
+        status: 'converting',
+        message: `Found ${files.length} files to convert`
+      });
+    }
 
     // Track if stylesheet has been written for this batch
     let stylesheetWritten = false;
@@ -1821,7 +1855,23 @@ export class BatchService {
     for (let i = 0; i < files.length; i += BATCH_SIZE) {
       const batch = files.slice(i, i + BATCH_SIZE);
       
-      for (const inputPath of batch) {
+      for (let j = 0; j < batch.length; j++) {
+        const inputPath = batch[j];
+        const fileIndex = i + j;
+        
+        // Report progress for current file
+        if (options.onProgress) {
+          const percentage = Math.round((fileIndex / files.length) * 100);
+          options.onProgress({
+            currentFile: basename(inputPath),
+            currentFileIndex: fileIndex + 1,
+            totalFiles: files.length,
+            percentage,
+            status: 'converting',
+            message: `Converting ${basename(inputPath)}...`
+          });
+        }
+        
         try {
           // Check if file should be skipped due to MadCap conditions (applies to all formats)
           const content = await readFile(inputPath, 'utf8');
@@ -2013,6 +2063,18 @@ export class BatchService {
     // Update cross-references if files were renamed
     if (options.renameFiles && result.filenameMapping && result.filenameMapping.size > 0) {
       await this.updateCrossReferences(result, outputDir, options.format || 'markdown');
+    }
+    
+    // Report completion
+    if (options.onProgress) {
+      options.onProgress({
+        currentFile: '',
+        currentFileIndex: result.totalFiles,
+        totalFiles: result.totalFiles,
+        percentage: 100,
+        status: 'completed',
+        message: `Conversion complete: ${result.convertedFiles} converted, ${result.skippedFiles} skipped`
+      });
     }
     
     return result;
