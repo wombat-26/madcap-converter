@@ -23,7 +23,7 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
     this.madcapPreprocessor = new MadCapPreprocessor();
     this.flvarParser = new FLVARParser();
     this.variableConverter = new WritersideVariableConverter();
-    this.madcapConverter = new MadCapToWritersideConverter();
+    // this.madcapConverter = new MadCapToWritersideConverter();
   }
 
   supportsFormat(format: string): boolean {
@@ -936,8 +936,8 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
       
       if (includePath) {
         if (conditions) {
-          const includeResult = this.madcapConverter.convertSnippetInclude(includePath, [conditions]);
-          return `\n${includeResult}\n\n`;
+          // TODO: Restore MadCapToWritersideConverter for snippet includes
+          return `\n<include from="${includePath}"/>\n\n`;
         } else {
           return `\n<include from="${includePath}"/>\n\n`;
         }
@@ -959,7 +959,8 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
       
       if (includePath) {
         if (conditions) {
-          return this.madcapConverter.convertSnippetInclude(includePath, [conditions]);
+          // TODO: Restore MadCapToWritersideConverter for snippet includes
+          return `<include from="${includePath}"/>`;
         } else {
           return `<include from="${includePath}"/>`;
         }

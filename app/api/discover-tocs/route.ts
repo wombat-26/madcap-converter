@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SimpleBatchService } from '../../../src/core/simple-batch-service';
+import { BatchService } from '../../../src/core/services/batch-service';
+import { TOCDiscoveryService } from '../../../src/core/services/toc-discovery';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -43,8 +44,9 @@ export async function POST(request: NextRequest) {
     }
     
     // Discover TOCs
-    const batchService = new SimpleBatchService();
-    const tocDiscovery = await batchService.discoverTocs(inputDir);
+    const batchService = new BatchService();
+    const tocDiscoveryService = new TOCDiscoveryService();
+    const tocDiscovery = await tocDiscoveryService.discoverAllTOCs(inputDir);
     
     // Clean up temp directory
     const { rm } = await import('fs/promises');

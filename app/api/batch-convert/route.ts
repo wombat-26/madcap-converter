@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SimpleBatchService } from '../../../src/core/simple-batch-service';
+import { BatchService } from '../../../src/core/services/batch-service';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -56,7 +56,7 @@ export async function POST(request: NextRequest) {
     }
     
     // Perform batch conversion
-    const batchService = new SimpleBatchService();
+    const batchService = new BatchService();
     const result = await batchService.convertFolder(inputDir, outputDir, {
       format: format as any,
       ...options

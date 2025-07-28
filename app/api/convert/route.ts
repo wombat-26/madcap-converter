@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SimpleDocumentService } from '../../../src/core/simple-document-service';
+import { DocumentService } from '../../../src/core/services/document-service';
 import { ConversionOptions } from '../../../src/core/types';
 import { z } from 'zod';
 
@@ -23,7 +23,7 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const validatedData = ConvertRequestSchema.parse(body);
     
-    const documentService = new SimpleDocumentService();
+    const documentService = new DocumentService();
     
     const conversionOptions: ConversionOptions = {
       inputType: validatedData.inputType,

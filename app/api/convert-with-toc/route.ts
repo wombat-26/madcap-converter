@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SimpleBatchService } from '../../../src/core/simple-batch-service';
+import { BatchService } from '../../../src/core/services/batch-service';
+import { TOCDiscoveryService } from '../../../src/core/services/toc-discovery';
 import { writeFile, mkdir } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -58,8 +59,9 @@ export async function POST(request: NextRequest) {
     }
     
     // Discover and process TOCs
-    const batchService = new SimpleBatchService();
-    const tocDiscovery = await batchService.discoverTocs(inputDir);
+    const batchService = new BatchService();
+    const tocDiscoveryService = new TOCDiscoveryService();
+    const tocDiscovery = await tocDiscoveryService.discoverAllTOCs(inputDir);
     
     if (tocDiscovery.tocStructures.length === 0) {
       return NextResponse.json(
@@ -69,30 +71,22 @@ export async function POST(request: NextRequest) {
     }
     
     // Convert using TOC structure
-    const tocStructures = tocDiscovery.tocStructures.map(toc => toc.structure);
-    const result = await batchService.convertWithTocStructure(
+    const result = await batchService.convertFolder(
       inputDir,
       outputDir,
-      tocStructures,
       {
-        format: format as any,
+        format: format as 'asciidoc' | 'writerside-markdown' | 'zendesk',
+        useTOCStructure: true,
+        generateMasterDoc,
+        asciidocOptions: {
+          ...options.asciidocOptions,
+          ...bookOptions
+        },
         ...options
       }
     );
     
-    // Generate master document if requested
-    if (generateMasterDoc && tocStructures.length > 0) {
-      const masterDocFormat = format === 'asciidoc' ? 'adoc' : 'markdown';
-      const masterDoc = await batchService.generateMasterDoc(
-        tocStructures[0], // Use the first TOC structure
-        masterDocFormat,
-        bookOptions
-      );
-      
-      const masterDocExt = masterDocFormat === 'adoc' ? '.adoc' : '.md';
-      const masterDocPath = join(outputDir, `master${masterDocExt}`);
-      await writeFile(masterDocPath, masterDoc.content, 'utf-8');
-    }
+    // Master document generation is now handled internally by BatchService
     
     // Create zip file of results
     const zipPath = join(tempDir, 'converted-toc-project.zip');
@@ -128,7 +122,7 @@ export async function POST(request: NextRequest) {
           skippedFiles: result.skippedFiles,
           errors: result.errors.length,
           tocFilesFound: tocDiscovery.tocFiles.length,
-          tocStructuresProcessed: tocStructures.length,
+          tocStructuresProcessed: tocDiscovery.tocStructures.length,
           masterDocGenerated: generateMasterDoc
         }),
       },

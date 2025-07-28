@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { SimpleDocumentService } from '../../../src/core/simple-document-service';
+import { DocumentService } from '../../../src/core/services/document-service';
 import { writeFile, unlink } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
@@ -35,7 +35,7 @@ export async function POST(request: NextRequest) {
     await writeFile(tempFilePath, buffer);
     
     // Convert the file
-    const documentService = new SimpleDocumentService();
+    const documentService = new DocumentService();
     const result = await documentService.convertFile(tempFilePath, {
       format: format as any,
       ...options
