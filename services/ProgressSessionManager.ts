@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from 'uuid'
-import { ConversionSession, ProgressClient, ProgressEvent, ProgressEventType } from './progress-types'
+import { ConversionSession, ProgressClient, ProgressEvent, ProgressEventType, ProgressEventFactory, ProgressEventData } from './progress-types'
 
 export class ProgressSessionManager {
   private static instance: ProgressSessionManager
@@ -66,7 +66,7 @@ export class ProgressSessionManager {
       session.results = results
       session.lastUpdate = Date.now()
       
-      this.broadcastToSession(sessionId, ProgressEvent.create(
+      this.broadcastToSession(sessionId, ProgressEventFactory.create(
         sessionId,
         'conversion_complete',
         {
@@ -88,7 +88,7 @@ export class ProgressSessionManager {
       session.errors.push(error)
       session.lastUpdate = Date.now()
       
-      this.broadcastToSession(sessionId, ProgressEvent.create(
+      this.broadcastToSession(sessionId, ProgressEventFactory.create(
         sessionId,
         'conversion_error',
         { error, errorStack }
@@ -126,7 +126,7 @@ export class ProgressSessionManager {
     // Send initial session state
     const sessionData = this.getSession(sessionId)
     if (sessionData) {
-      this.sendToClient(clientId, ProgressEvent.create(
+      this.sendToClient(clientId, ProgressEventFactory.create(
         sessionId,
         'connection_established',
         {
@@ -166,9 +166,9 @@ export class ProgressSessionManager {
   broadcastProgress(
     sessionId: string, 
     type: ProgressEventType, 
-    data: ProgressEvent['data'] = {}
+    data: ProgressEventData = {}
   ): void {
-    const event = ProgressEvent.create(sessionId, type, data)
+    const event = ProgressEventFactory.create(sessionId, type, data)
     
     // Update session state based on progress
     this.updateSessionFromProgress(sessionId, event)
@@ -190,7 +190,7 @@ export class ProgressSessionManager {
     const client = this.clients.get(clientId)
     if (client) {
       try {
-        const sseData = ProgressEvent.toSSE(event)
+        const sseData = ProgressEventFactory.toSSE(event)
         client.controller.enqueue(new TextEncoder().encode(sseData))
         client.lastPing = Date.now()
       } catch (error) {
@@ -275,7 +275,7 @@ export class ProgressSessionManager {
 
   private cleanupSession(sessionId: string): void {
     // Notify clients of session expiration
-    this.broadcastToSession(sessionId, ProgressEvent.create(
+    this.broadcastToSession(sessionId, ProgressEventFactory.create(
       sessionId,
       'session_expired'
     ))

@@ -11,51 +11,53 @@ export type ProgressEventType =
   | 'connection_established'
   | 'session_expired'
 
+export interface ProgressEventData {
+  // Overall progress
+  totalFiles?: number
+  completedFiles?: number
+  currentFileIndex?: number
+  overallPercentage?: number
+  
+  // Current file info
+  currentFile?: string
+  currentFilePercentage?: number
+  
+  // Status and messaging
+  message?: string
+  phase?: string
+  
+  // Error information
+  error?: string
+  errorStack?: string
+  
+  // Timing information
+  startTime?: number
+  estimatedCompletionTime?: number
+  
+  // Statistics
+  processedSize?: number
+  totalSize?: number
+  filesPerSecond?: number
+  
+  // Results
+  results?: any[]
+  warnings?: string[]
+  
+  // Resource analysis for folder processing
+  resourceAnalysis?: {
+    totalFiles: number
+    supportedFiles: number
+    snippetFiles: number
+    imageFiles: number
+    usedFallbackStructure: boolean
+  }
+}
+
 export interface ProgressEvent {
   sessionId: string
   type: ProgressEventType
   timestamp: number
-  data: {
-    // Overall progress
-    totalFiles?: number
-    completedFiles?: number
-    currentFileIndex?: number
-    overallPercentage?: number
-    
-    // Current file info
-    currentFile?: string
-    currentFilePercentage?: number
-    
-    // Status and messaging
-    message?: string
-    phase?: string
-    
-    // Error information
-    error?: string
-    errorStack?: string
-    
-    // Timing information
-    startTime?: number
-    estimatedCompletionTime?: number
-    
-    // Statistics
-    processedSize?: number
-    totalSize?: number
-    filesPerSecond?: number
-    
-    // Results
-    results?: any[]
-    warnings?: string[]
-    
-    // Resource analysis for folder processing
-    resourceAnalysis?: {
-      totalFiles: number
-      supportedFiles: number
-      snippetFiles: number
-      imageFiles: number
-      usedFallbackStructure: boolean
-    }
-  }
+  data: ProgressEventData
 }
 
 export interface ConversionSession {
@@ -80,11 +82,11 @@ export interface ProgressClient {
   lastPing: number
 }
 
-export class ProgressEvent {
+export class ProgressEventFactory {
   static create(
     sessionId: string, 
     type: ProgressEventType, 
-    data: ProgressEvent['data'] = {}
+    data: ProgressEventData = {}
   ): ProgressEvent {
     return {
       sessionId,
@@ -99,8 +101,8 @@ export class ProgressEvent {
   }
   
   static heartbeat(sessionId: string): string {
-    return ProgressEvent.toSSE(
-      ProgressEvent.create(sessionId, 'connection_established')
+    return ProgressEventFactory.toSSE(
+      ProgressEventFactory.create(sessionId, 'connection_established')
     )
   }
 }

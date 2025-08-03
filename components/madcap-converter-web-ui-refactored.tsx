@@ -51,6 +51,7 @@ export default function MadCapConverterWebUI() {
     updateZendeskOptions,
     updateVariableOptions,
     files,
+    setFiles,
     addFiles,
     clearFiles,
     isProcessing,
@@ -204,6 +205,9 @@ export default function MadCapConverterWebUI() {
         currentFile: null,
         uploadProgress: 0
       })
+      
+      // Small delay to ensure session is ready for SSE connection
+      await new Promise(resolve => setTimeout(resolve, 100))
 
       info('Starting conversion', `Converting ${files.length} files...`)
 
@@ -424,13 +428,7 @@ export default function MadCapConverterWebUI() {
                 title="Batch File Conversion"
                 description="Convert multiple files or entire folders"
                 files={files}
-                onFilesChange={(newFiles) => {
-                  if (newFiles.length === 0) {
-                    clearFiles() // Handle clear all case
-                  } else {
-                    addFiles(newFiles) // Handle adding files case
-                  }
-                }}
+                onFilesChange={setFiles}
                 multiple
                 isFolder
                 accept=".html,.htm,.docx,.doc,.flsnp"

@@ -134,6 +134,7 @@ interface ConversionActions {
   updateVariableOptions: (options: Partial<ConversionOptions['variableOptions']>) => void
   
   // File actions
+  setFiles: (files: File[]) => void
   addFiles: (files: File[]) => void
   removeFile: (fileName: string) => void
   clearFiles: () => void
@@ -272,6 +273,8 @@ export const useConversionStore = create<ConversionStore>()(
           })),
         
         // File actions
+        setFiles: (files) => set({ files }),
+        
         addFiles: (files) =>
           set((state) => ({ files: [...state.files, ...files] })),
         

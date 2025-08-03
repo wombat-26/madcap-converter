@@ -1,6 +1,4 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { ProgressSessionManager } from '../../../../services/ProgressSessionManager'
-import { ProgressEvent } from '../../../../services/progress-types'
 
 export async function GET(
   request: NextRequest,
@@ -12,6 +10,10 @@ export async function GET(
     return new NextResponse('Session ID is required', { status: 400 })
   }
 
+  // Use dynamic imports to avoid ES module issues
+  const { ProgressSessionManager } = await import('../../../../services/ProgressSessionManager')
+  const { ProgressEventFactory } = await import('../../../../services/progress-types')
+  
   // Get the session manager instance
   const sessionManager = ProgressSessionManager.getInstance()
   
@@ -37,13 +39,13 @@ export async function GET(
       const clientId = sessionManager.addClient(sessionId, controller)
       
       // Send initial heartbeat
-      const heartbeat = ProgressEvent.heartbeat(sessionId)
+      const heartbeat = ProgressEventFactory.heartbeat(sessionId)
       controller.enqueue(new TextEncoder().encode(heartbeat))
       
       // Set up heartbeat interval to keep connection alive
       const heartbeatInterval = setInterval(() => {
         try {
-          const heartbeat = ProgressEvent.heartbeat(sessionId)
+          const heartbeat = ProgressEventFactory.heartbeat(sessionId)
           controller.enqueue(new TextEncoder().encode(heartbeat))
         } catch (error) {
           console.error('Heartbeat failed:', error)

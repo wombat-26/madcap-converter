@@ -1,11 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { ProgressSessionManager } from '../../../services/ProgressSessionManager'
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json()
     const { totalFiles = 0 } = body
     
+    // Use dynamic import to avoid ES module issues
+    const { ProgressSessionManager } = await import('../../../services/ProgressSessionManager')
     const sessionManager = ProgressSessionManager.getInstance()
     const sessionId = sessionManager.createSession(totalFiles)
     
@@ -15,12 +16,16 @@ export async function POST(request: NextRequest) {
     })
   } catch (error) {
     console.error('Failed to create progress session:', error)
-    return new NextResponse('Failed to create progress session', { status: 500 })
+    console.error('Error details:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return new NextResponse(`Failed to create progress session: ${errorMessage}`, { status: 500 })
   }
 }
 
 export async function GET() {
   try {
+    // Use dynamic import to avoid ES module issues
+    const { ProgressSessionManager } = await import('../../../services/ProgressSessionManager')
     const sessionManager = ProgressSessionManager.getInstance()
     
     const stats = {
@@ -31,6 +36,8 @@ export async function GET() {
     return NextResponse.json(stats)
   } catch (error) {
     console.error('Failed to get progress stats:', error)
-    return new NextResponse('Failed to get progress stats', { status: 500 })
+    console.error('Error details:', error)
+    const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+    return new NextResponse(`Failed to get progress stats: ${errorMessage}`, { status: 500 })
   }
 }
