@@ -1,22 +1,24 @@
 import { JSDOM } from 'jsdom';
 import { DocumentConverter, ConversionOptions, ConversionResult } from '../types/index';
 import { HTMLConverter } from './html-converter';
-import { EnhancedAsciiDocConverter } from './enhanced-asciidoc-converter';
+import { AsciiDocConverter } from './asciidoc-converter';
 import { MadCapPreprocessor } from '../services/madcap-preprocessor';
 
 export class MadCapConverter implements DocumentConverter {
   supportedInputTypes = ['html', 'htm', 'xml'];
   private htmlConverter: HTMLConverter;
-  private asciidocConverter: EnhancedAsciiDocConverter;
+  private asciidocConverter: AsciiDocConverter;
   private madcapPreprocessor: MadCapPreprocessor;
 
   constructor() {
     this.htmlConverter = new HTMLConverter();
-    this.asciidocConverter = new EnhancedAsciiDocConverter();
+    this.asciidocConverter = new AsciiDocConverter();
     this.madcapPreprocessor = new MadCapPreprocessor();
   }
 
   async convert(input: string, options: ConversionOptions): Promise<ConversionResult> {
+    // MadCap preprocessing and conversion
+    
     // Check if content should be skipped due to MadCap conditions
     if (this.madcapPreprocessor.shouldSkipContent(input)) {
       throw new Error('Content contains MadCap conditions that should not be converted (Black, Red, Gray, deprecated, paused, halted, discontinued, print-only, etc.)');

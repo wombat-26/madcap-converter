@@ -1,6 +1,6 @@
 import { readFile, writeFile, mkdir } from 'fs/promises';
 import { extname, dirname, basename, join } from 'path';
-import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter, AsciiDocConverter } from '../converters/index';
+import { HTMLConverter, WordConverter, MadCapConverter, ZendeskConverter, AsciiDocConverter, EnhancedAsciiDocConverter } from '../converters/index';
 import WritersideMarkdownConverter from '../converters/writerside-markdown-converter';
 import { ConversionOptions, ConversionResult, DocumentConverter } from '../types/index';
 import { errorHandler } from './error-handler';
@@ -19,7 +19,7 @@ export class DocumentService {
       ['madcap', new MadCapConverter()],
       ['xml', new MadCapConverter()],
       ['zendesk', new ZendeskConverter()],
-      ['asciidoc', new AsciiDocConverter()],
+      ['asciidoc', new EnhancedAsciiDocConverter()],
       ['writerside-markdown', new WritersideMarkdownConverter()]
     ]);
   }
@@ -101,10 +101,13 @@ export class DocumentService {
             inputType = 'madcap';
           }
         } else if (format === 'asciidoc') {
-          // Use regular AsciiDoc converter for asciidoc format
-          converter = this.converters.get('asciidoc')!;
+          // Check for MadCap content first
           if (this.containsMadCapContent(input)) {
             inputType = 'madcap';
+            converter = this.converters.get('xml')!; // Use MadCap converter for preprocessing
+          } else {
+            // Use direct AsciiDoc converter only for pure HTML content
+            converter = this.converters.get('asciidoc')!;
           }
         } else if (format === 'writerside-markdown') {
           // Use WritersideMarkdownConverter directly for Writerside format
@@ -126,7 +129,7 @@ export class DocumentService {
       outputDir: actualOptions.outputDir || (outputPath ? dirname(outputPath) : undefined),
       outputPath,
       rewriteLinks: actualOptions.rewriteLinks,
-      inputPath: inputPath,
+      inputPath: actualOptions.inputPath || inputPath, // Use inputPath from options if provided
       variableOptions: actualOptions.variableOptions,
       zendeskOptions: actualOptions.zendeskOptions,
       asciidocOptions: actualOptions.asciidocOptions
@@ -134,9 +137,12 @@ export class DocumentService {
 
     // Override converter based on output format  
     if (format === 'asciidoc' && inputType === 'html') {
-      // Only use AsciiDocConverter directly for pure HTML content
+      // Only use AsciiDocConverter directly for pure HTML content (non-MadCap)
       // MadCap content should go through MadCapConverter for proper preprocessing
-      converter = new AsciiDocConverter();
+      if (!this.containsMadCapContent(input as string)) {
+        converter = new AsciiDocConverter();
+      }
+      // If it contains MadCap content, keep using the MadCap converter selected above
     }
     
     const result = await converter.convert(input, conversionOptions);

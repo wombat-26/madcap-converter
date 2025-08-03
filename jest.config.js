@@ -5,6 +5,7 @@ export default {
   moduleNameMapper: {
     '^(\\.{1,2}/.*)\\.js$': '$1',
     '^@/(.*)$': '<rootDir>/$1',
+    '^.*madcap-htm-validator.*$': '<rootDir>/tests/__mocks__/madcap-htm-validator.js',
   },
   testEnvironment: 'node',
   roots: ['<rootDir>/src', '<rootDir>/tests', '<rootDir>/app', '<rootDir>/components'],
@@ -50,6 +51,7 @@ export default {
       moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@/(.*)$': '<rootDir>/$1',
+        '^.*madcap-htm-validator.*$': '<rootDir>/tests/__mocks__/madcap-htm-validator.js',
       },
       transform: {
         '^.+\\.ts$': ['ts-jest', {
@@ -75,6 +77,7 @@ export default {
       moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@/(.*)$': '<rootDir>/$1',
+        '^.*madcap-htm-validator.*$': '<rootDir>/tests/__mocks__/madcap-htm-validator.js',
       },
       transform: {
         '^.+\\.(ts|tsx)$': ['ts-jest', {
@@ -100,6 +103,7 @@ export default {
       moduleNameMapper: {
         '^(\\.{1,2}/.*)\\.js$': '$1',
         '^@/(.*)$': '<rootDir>/$1',
+        '^.*madcap-htm-validator.*$': '<rootDir>/tests/__mocks__/madcap-htm-validator.js',
       },
       transform: {
         '^.+\\.ts$': ['ts-jest', {

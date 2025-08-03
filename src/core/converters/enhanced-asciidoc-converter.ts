@@ -516,18 +516,71 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     const alt = img.getAttribute('alt') || '';
     const title = img.getAttribute('title');
     
+    // Normalize image path for AsciiDoc output
+    let normalizedSrc = this.normalizeImagePath(src);
+    
+    // Ensure alt text is meaningful
+    let normalizedAlt = alt || this.generateAltTextFromPath(normalizedSrc);
+    
     // Determine if inline or block
     const parent = img.parentElement;
     const isInline = parent?.tagName === 'P' && parent.childNodes.length > 1;
     
     if (isInline) {
-      return `image:${src}[${alt}]`;
+      return `image:${normalizedSrc}[${normalizedAlt}]`;
     } else {
-      let result = `\nimage::${src}[${alt}`;
-      if (title) result += `,title="${title}"`;
+      let result = `\nimage::${normalizedSrc}[${normalizedAlt}`;
+      if (title && title !== 'c' && title !== normalizedAlt) {
+        result += `,title="${title}"`;
+      }
       result += ']\n\n';
       return result;
     }
+  }
+  
+  private normalizeImagePath(src: string): string {
+    let normalized = src;
+    console.log(`DEBUG: Normalizing image path: "${src}"`);
+    
+    // Handle MadCap-specific path patterns first
+    if (normalized.includes('Content/Images/')) {
+      // Extract from Content/Images/ onward and map to Images/
+      const contentImagesIndex = normalized.indexOf('Content/Images/');
+      normalized = 'Images/' + normalized.substring(contentImagesIndex + 'Content/Images/'.length);
+      console.log(`DEBUG: Applied Content/Images/ pattern: "${normalized}"`);
+    } else if (normalized.includes('Content/Resources/Images/')) {
+      // Extract from Content/Resources/Images/ onward and map to Images/
+      const contentResourcesIndex = normalized.indexOf('Content/Resources/Images/');
+      normalized = 'Images/' + normalized.substring(contentResourcesIndex + 'Content/Resources/Images/'.length);
+      console.log(`DEBUG: Applied Content/Resources/Images/ pattern: "${normalized}"`);
+    } else if (normalized.includes('/Images/')) {
+      // Extract from the Images/ part onward
+      const imagesIndex = normalized.indexOf('/Images/');
+      normalized = normalized.substring(imagesIndex + 1);
+      console.log(`DEBUG: Applied /Images/ pattern: "${normalized}"`);
+    } else {
+      // Remove leading path traversals like ../../../../
+      normalized = normalized.replace(/^(\.\.\/)+/, '');
+      console.log(`DEBUG: Applied path traversal removal: "${normalized}"`);
+    }
+    
+    console.log(`DEBUG: Final normalized path: "${normalized}"`);
+    return normalized;
+  }
+  
+  private generateAltTextFromPath(src: string): string {
+    // Generate meaningful alt text from filename
+    const filename = src.split('/').pop() || '';
+    const nameWithoutExt = filename.replace(/\.[^.]*$/, '');
+    
+    // Remove dimension suffixes like _711x349
+    const cleanName = nameWithoutExt.replace(/_\d+x\d+$/, '');
+    
+    // Convert to readable text
+    return cleanName
+      .replace(/[_-]/g, ' ')
+      .replace(/([a-z])([A-Z])/g, '$1 $2') // Handle camelCase
+      .replace(/\b\w/g, l => l.toUpperCase()); // Capitalize words
   }
   
   private processLink(link: Element): string {
@@ -546,9 +599,25 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   private processInlineContent(element: Element, context: ConversionContext): string {
     let result = '';
     
-    for (const child of Array.from(element.childNodes)) {
+    for (let i = 0; i < element.childNodes.length; i++) {
+      const child = element.childNodes[i];
+      
       if (child.nodeType === 3) { // Text node
-        result += child.textContent;
+        let textContent = child.textContent || '';
+        
+        // Check if this text node ends with "see " and next node is a link
+        if (textContent.endsWith('see ') && i + 1 < element.childNodes.length) {
+          const nextChild = element.childNodes[i + 1];
+          if (nextChild.nodeType === 1 && (nextChild as Element).tagName.toLowerCase() === 'a') {
+            // Remove "see " from the text and let the link be processed normally
+            textContent = textContent.slice(0, -4); // Remove "see "
+            result += textContent + 'see ';
+          } else {
+            result += textContent;
+          }
+        } else {
+          result += textContent;
+        }
       } else if (child.nodeType === 1) { // Element node
         result += this.processElement(child as Element, context);
       }
@@ -604,6 +673,10 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   }
   
   private postProcess(content: string): string {
+    // Fix seexref: pattern to proper "see xref:" (multiple variations)
+    content = content.replace(/seexref:/g, 'see xref:');
+    content = content.replace(/see\s*xref:/g, 'see xref:');
+    
     // Clean up excessive newlines
     content = content.replace(/\n{4,}/g, '\n\n\n');
     

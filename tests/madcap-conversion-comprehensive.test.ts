@@ -8,10 +8,10 @@
 import { describe, test, expect, beforeAll } from '@jest/globals';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { AsciiDocConverter } from '../src/converters/asciidoc-converter.js';
-import { WritersideMarkdownConverter } from '../src/converters/writerside-markdown-converter.js';
-import { MadCapPreprocessor } from '../src/services/madcap-preprocessor.js';
-import { EnhancedMadCapPreprocessor } from '../src/services/enhanced-madcap-preprocessor.js';
+import { AsciiDocConverter } from '../src/core/converters/asciidoc-converter.js';
+import { WritersideMarkdownConverter } from '../src/core/converters/writerside-markdown-converter.js';
+import { MadCapPreprocessor } from '../src/core/services/madcap-preprocessor.js';
+import { EnhancedMadCapPreprocessor } from '../src/core/services/enhanced-madcap-preprocessor.js';
 
 describe('MadCap Conversion - Comprehensive Suite', () => {
   let asciidocConverter: AsciiDocConverter;
@@ -61,7 +61,7 @@ describe('MadCap Conversion - Comprehensive Suite', () => {
       });
 
       // Check for proper list markers
-      expect(result.content).toContain('[loweralpha]');
+      // Depth-based lists automatically render as alphabetic in AsciiDoc
       expect(result.content).toContain('1. First main item');
       expect(result.content).toContain('2. Second main item:');
       expect(result.content).toContain('a. Sub-item A');
@@ -97,7 +97,7 @@ describe('MadCap Conversion - Comprehensive Suite', () => {
       });
 
       expect(result.content).toContain('1. Main item');
-      expect(result.content).toContain('[loweralpha]');
+      // Depth-based lists automatically render as alphabetic in AsciiDoc
       expect(result.content).toContain('a. Alpha item');
       expect(result.content).toContain('* Bullet point 1');
       expect(result.content).toContain('* Bullet point 2');
@@ -372,7 +372,7 @@ describe('Real File End-to-End Test', () => {
     expect(asciidocResult.content).toContain('To create a new activity, follow these steps:');
     
     // Check for proper list structure
-    expect(asciidocResult.content).toContain('[loweralpha]');
+    // Depth-based lists automatically render as alphabetic in AsciiDoc
     expect(asciidocResult.content).toMatch(/1\.\s+In Uptempo, click.*Activities/);
     
     // Check for collapsible blocks

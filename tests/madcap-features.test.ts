@@ -1,9 +1,9 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
 import fs from 'fs/promises';
 import path from 'path';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
-import { FLVARParser } from '../src/services/flvar-parser.js';
-import { MadCapPreprocessor } from '../src/services/madcap-preprocessor.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
+import { FLVARParser } from '../src/core/services/flvar-parser.js';
+import { MadCapPreprocessor } from '../src/core/services/madcap-preprocessor.js';
 
 /**
  * Specialized tests for MadCap Flare-specific features

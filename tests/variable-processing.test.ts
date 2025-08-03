@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll } from '@jest/globals';
 import fs from 'fs/promises';
 import path from 'path';
-import { FLVARParser, VariableSet } from '../src/services/flvar-parser.js';
-import { WritersideVariableConverter } from '../src/services/writerside-variable-converter.js';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
-import { BatchService } from '../src/batch-service.js';
+import { FLVARParser, VariableSet } from '../src/core/services/flvar-parser.js';
+import { WritersideVariableConverter } from '../src/core/services/writerside-variable-converter.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
+import { BatchService } from '../src/core/services/batch-service.js';
 
 /**
  * Comprehensive tests for variable processing and FLVAR handling

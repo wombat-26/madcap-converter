@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
 import { JSDOM } from 'jsdom';
-import { AsciiDocConverter } from '../src/converters/asciidoc-converter.js';
+import { AsciiDocConverter } from '../src/core/converters/asciidoc-converter.js';
 
 describe('AsciiDocConverter - Image Line Break Handling', () => {
   let converter: AsciiDocConverter;

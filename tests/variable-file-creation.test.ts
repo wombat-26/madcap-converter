@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from '@jest/globals';
 import { promises as fs } from 'fs';
 import { join } from 'path';
 import { tmpdir } from 'os';
-import { WritersideProjectGenerator } from '../src/services/writerside-project-generator.js';
+import { WritersideProjectGenerator } from '../src/core/services/writerside-project-generator.js';
 
 describe('Variable File Creation Tests', () => {
   let tempDir: string;

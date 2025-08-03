@@ -4,7 +4,7 @@
 
 import { tmpdir } from 'os';
 import { join } from 'path';
-import { writeFile, mkdir, readFile, rmdir } from 'fs/promises';
+import { writeFile, mkdir, readFile, rm } from 'fs/promises';
 
 // Mock the problematic dependencies
 jest.mock('../../src/core/services/madcap-htm-validator', () => ({
@@ -35,7 +35,7 @@ describe('Conversion Pipeline Integration Tests', () => {
 
   afterAll(async () => {
     try {
-      await rmdir(testDir, { recursive: true });
+      await rm(testDir, { recursive: true });
     } catch (error) {
       // Directory might already be removed
     }

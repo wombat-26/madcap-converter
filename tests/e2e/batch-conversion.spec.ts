@@ -19,7 +19,7 @@ test.describe('Batch Conversion E2E Tests', () => {
   test.afterAll(async () => {
     // Cleanup test data
     try {
-      await fs.rmdir(testDataDir, { recursive: true });
+      await fs.rm(testDataDir, { recursive: true });
     } catch (error) {
       // Directory might already be removed
     }
@@ -129,7 +129,7 @@ test.describe('Batch Conversion E2E Tests', () => {
     // Verify MadCap-specific elements are converted
     const overviewContent = await zip.files['Content/overview.adoc'].async('string');
     expect(overviewContent).toContain('= Overview');
-    expect(overviewContent).toContain('[NOTE]');
+    expect(overviewContent).toContain('NOTE:');
   });
 
   test('should handle file renaming based on H1 content', async ({ page }) => {

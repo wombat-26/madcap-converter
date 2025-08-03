@@ -1,6 +1,6 @@
 import { describe, it, expect } from '@jest/globals';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
-import { ConversionOptions } from '../src/types/index.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
+import { ConversionOptions } from '../src/core/types/index.js';
 
 describe('Emphasis Spacing Tests', () => {
   const converters = [

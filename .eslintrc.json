@@ -1,0 +1,27 @@
+{
+  "extends": ["next/core-web-vitals"],
+  "rules": {
+    "prefer-const": "warn",
+    "no-var": "error",
+    "no-console": "warn",
+    "eqeqeq": "error",
+    "curly": "warn"
+  },
+  "env": {
+    "browser": true,
+    "node": true,
+    "es6": true,
+    "jest": true
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts", "**/*.test.tsx", "**/*.spec.ts", "**/*.spec.tsx"],
+      "env": {
+        "jest": true
+      },
+      "rules": {
+        "no-console": "off"
+      }
+    }
+  ]
+}

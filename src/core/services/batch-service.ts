@@ -28,6 +28,11 @@ export interface ConversionProgress {
   percentage: number;
   status: 'discovering' | 'converting' | 'completed' | 'error';
   message?: string;
+  phase?: string;
+  fileProgress?: number;
+  processedFiles?: number;
+  processedSize?: number;
+  totalSize?: number;
 }
 
 export interface BatchConversionResult {
@@ -393,18 +398,21 @@ export class BatchService {
     const outputDir = dirname(outputPath);
     
     for (const imagePath of images) {
+      if (imagePath.startsWith('data:') || imagePath.startsWith('http')) {
+        continue;
+      }
+      
+      const sourceImagePath = join(inputDir, imagePath);
+      const targetImagePath = join(outputDir, imagePath);
+      
       try {
-        if (imagePath.startsWith('data:') || imagePath.startsWith('http')) {
-          continue;
-        }
-        
-        const sourceImagePath = join(inputDir, imagePath);
-        const targetImagePath = join(outputDir, imagePath);
-        
         await this.ensureDirectoryExists(dirname(targetImagePath));
         await copyFile(sourceImagePath, targetImagePath);
+        console.log(`📸 Successfully copied image: ${imagePath} -> ${targetImagePath}`);
       } catch (error) {
-        // Failed to copy image ${imagePath}: ${error}
+        console.error(`❌ Failed to copy image ${imagePath}:`, error);
+        console.error(`  Source: ${sourceImagePath}`);
+        console.error(`  Target: ${targetImagePath}`);
       }
     }
   }
@@ -412,35 +420,80 @@ export class BatchService {
   private async copyImageDirectories(
     sourceRootDir: string,
     targetRootDir: string
-  ): Promise<void> {
+  ): Promise<{ success: boolean; copiedDirectories: string[]; errors: string[] }> {
     const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp']);
+    const result = {
+      success: false,
+      copiedDirectories: [] as string[],
+      errors: [] as string[]
+    };
     
-    try {
-      // Map source image directories to target locations
-      // For TOC-based conversions, images should be accessible from user/subfolder/ as ../../Images/
-      const imageDirMappings = [
-        // Source path -> Target path
-        { source: 'Content/Images', target: 'Images' },
-        { source: 'Content/Resources/Images', target: 'Images' },
-        { source: 'Images', target: 'Images' },
-        { source: 'Resources/Images', target: 'Images' },
-        { source: 'Resources/Multimedia', target: 'Images' }
-      ];
+    // Map source image directories to target locations
+    // For TOC-based conversions, images should be accessible from user/subfolder/ as ../../Images/
+    const imageDirMappings = [
+      // Source path -> Target path
+      { source: 'Content/Images', target: 'Images' },
+      { source: 'Content/Resources/Images', target: 'Images' },
+      { source: 'Images', target: 'Images' },
+      { source: 'Resources/Images', target: 'Images' },
+      { source: 'Resources/Multimedia', target: 'Images' }
+    ];
+    
+    console.log(`🔍 === IMAGE DIRECTORY DISCOVERY ===`);
+    console.log(`📂 Source root: ${sourceRootDir}`);
+    console.log(`📂 Target root: ${targetRootDir}`);
+    
+    for (const mapping of imageDirMappings) {
+      const sourceImageDir = join(sourceRootDir, mapping.source);
+      const targetImageDir = join(targetRootDir, mapping.target);
       
-      for (const mapping of imageDirMappings) {
-        const sourceImageDir = join(sourceRootDir, mapping.source);
-        const targetImageDir = join(targetRootDir, mapping.target);
-        
-        try {
-          await this.copyDirectoryRecursive(sourceImageDir, targetImageDir, imageExtensions);
-        } catch (error) {
-          // Directory might not exist, continue with next candidate
-          continue;
+      console.log(`🔍 Checking: ${mapping.source} -> ${sourceImageDir}`);
+      try {
+        const { stat } = await import('fs/promises');
+        const stats = await stat(sourceImageDir);
+        if (stats.isDirectory()) {
+          console.log(`✅ Found image directory: ${mapping.source}`);
+          console.log(`📂 Copying image directory: ${mapping.source} -> ${mapping.target}`);
+          
+          try {
+            await this.copyDirectoryRecursive(sourceImageDir, targetImageDir, imageExtensions);
+            console.log(`✅ Successfully copied image directory: ${mapping.source}`);
+            result.copiedDirectories.push(mapping.source);
+            result.success = true;
+          } catch (copyError) {
+            const errorMsg = `Failed to copy image directory ${mapping.source}: ${copyError instanceof Error ? copyError.message : String(copyError)}`;
+            console.error(`❌ ${errorMsg}`);
+            result.errors.push(errorMsg);
+            // Continue trying other directories even if one fails
+          }
         }
+      } catch (error) {
+        const nodeError = error as NodeJS.ErrnoException;
+        if (nodeError.code === 'ENOENT') {
+          // Directory doesn't exist - this is expected for many mappings
+          console.log(`❌ Image directory not found: ${mapping.source} (${sourceImageDir})`);
+        } else {
+          // Unexpected error (permissions, etc.) - log but continue
+          const errorMsg = `Error accessing ${mapping.source}: ${nodeError.message}`;
+          console.error(`❌ ${errorMsg}`);
+          result.errors.push(errorMsg);
+        }
+        continue;
       }
-    } catch (error) {
-      // Failed to copy image directories: ${error}
     }
+    
+    console.log(`🔍 === END IMAGE DIRECTORY DISCOVERY ===`);
+    console.log(`📊 Image copying results:`);
+    console.log(`  - Copied directories: ${result.copiedDirectories.length} (${result.copiedDirectories.join(', ') || 'none'})`);
+    console.log(`  - Errors: ${result.errors.length}`);
+    console.log(`  - Overall success: ${result.success}`);
+    
+    if (result.errors.length > 0) {
+      console.log(`⚠️ Image copying errors:`);
+      result.errors.forEach(error => console.log(`   - ${error}`));
+    }
+    
+    return result;
   }
 
   private async copyDirectoryRecursive(
@@ -453,13 +506,16 @@ export class BatchService {
     const normalizedTarget = targetDir.replace(/\/$/, '');
     
     if (normalizedSource === normalizedTarget || normalizedSource.startsWith(normalizedTarget + '/')) {
-      // Skipping recursive copy: source ${sourceDir} is within target ${targetDir}
+      console.log(`⚠️ [DEBUG] Skipping recursive copy: source ${sourceDir} is within target ${targetDir}`);
       return;
     }
+    
+    console.log(`📂 [DEBUG] copyDirectoryRecursive: ${sourceDir} -> ${targetDir}`);
     
     await this.ensureDirectoryExists(targetDir);
     
     const entries = await readdir(sourceDir);
+    console.log(`📋 [DEBUG] Found ${entries.length} entries in ${sourceDir}: ${entries.join(', ')}`);
     
     for (const entry of entries) {
       // Skip macOS metadata files
@@ -473,10 +529,16 @@ export class BatchService {
       const stats = await stat(sourcePath);
       
       if (stats.isDirectory()) {
+        console.log(`📁 [DEBUG] Recursively copying directory: ${sourcePath} -> ${targetPath}`);
         await this.copyDirectoryRecursive(sourcePath, targetPath, allowedExtensions);
       } else if (stats.isFile()) {
-        if (!allowedExtensions || allowedExtensions.has(extname(entry).toLowerCase())) {
+        const extension = extname(entry).toLowerCase();
+        if (!allowedExtensions || allowedExtensions.has(extension)) {
+          console.log(`📄 [DEBUG] Copying file: ${sourcePath} -> ${targetPath} (extension: ${extension})`);
           await copyFile(sourcePath, targetPath);
+          console.log(`✅ [DEBUG] Successfully copied file: ${targetPath}`);
+        } else {
+          console.log(`⏭️ [DEBUG] Skipping file (extension not allowed): ${sourcePath} (${extension})`);
         }
       }
     }
@@ -841,22 +903,16 @@ export class BatchService {
           }
         }
 
-        if (options.copyImages) {
-          if (conversionResult.metadata?.images) {
-            await this.copyReferencedImages(
-              actualInputPath,
-              finalOutputPath,
-              conversionResult.metadata.images,
-              options
-            );
-          }
-          
-          // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
-          if ((options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') && !imageDirectoriesCopied) {
-            await this.copyImageDirectories(inputDir, outputDir);
-            imageDirectoriesCopied = true;
-          }
-        }
+        // Handle image copying using the shared method
+        imageDirectoriesCopied = await this.handleImageCopying(
+          inputDir,
+          outputDir,
+          options,
+          imageDirectoriesCopied,
+          conversionResult,
+          actualInputPath,
+          finalOutputPath
+        );
 
         result.results.push({
           inputPath: actualInputPath,
@@ -1975,22 +2031,16 @@ export class BatchService {
           }
         }
 
-        if (options.copyImages) {
-          if (conversionResult.metadata?.images) {
-            await this.copyReferencedImages(
-              inputPath,
-              outputPath,
-              conversionResult.metadata.images,
-              options
-            );
-          }
-          
-          // For Zendesk and AsciiDoc conversions, copy all image directories once per batch
-          if ((options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') && !imageDirectoriesCopied) {
-            await this.copyImageDirectories(inputDir, outputDir);
-            imageDirectoriesCopied = true;
-          }
-        }
+        // Handle image copying using the shared method
+        imageDirectoriesCopied = await this.handleImageCopying(
+          inputDir,
+          outputDir,
+          options,
+          imageDirectoriesCopied,
+          conversionResult,
+          inputPath,
+          outputPath
+        );
 
         result.results.push({
           inputPath,
@@ -2250,6 +2300,194 @@ export class BatchService {
     }
   }
   
+  /**
+   * Handle image copying for batch conversion with proper error handling
+   */
+  private async handleImageCopying(
+    inputDir: string,
+    outputDir: string,
+    options: BatchConversionOptions,
+    imageDirectoriesCopied: boolean,
+    conversionResult: any,
+    inputPath: string,
+    outputPath: string
+  ): Promise<boolean> {
+    if (options.copyImages) {
+      // Copy individual image files referenced in the content
+      if (conversionResult.metadata?.images) {
+        await this.copyReferencedImages(
+          inputPath,
+          outputPath,
+          conversionResult.metadata.images,
+          options
+        );
+      }
+      
+      // Copy all image directories once per batch
+      console.log(`🔍 Image copy check: format=${options.format}, imageDirectoriesCopied=${imageDirectoriesCopied}, copyImages=${options.copyImages}`);
+      console.log(`🔍 Image copy condition breakdown:`);
+      console.log(`  - Format check: ${(options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown')}`);
+      console.log(`  - Not copied yet: ${!imageDirectoriesCopied}`);
+      console.log(`  - Copy enabled: ${(options.copyImages === undefined || options.copyImages === true)}`);
+      
+      const shouldCopyImages = (options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') && 
+                              !imageDirectoriesCopied && 
+                              (options.copyImages === undefined || options.copyImages === true);
+      
+      if (shouldCopyImages) {
+        console.log(`🚀 Starting image directory copying from ${inputDir} to ${outputDir}`);
+        try {
+          const copyResult = await this.copyImageDirectories(inputDir, outputDir);
+          if (copyResult.success) {
+            console.log(`✅ Image directory copying completed successfully`);
+            console.log(`📁 Copied ${copyResult.copiedDirectories.length} image directories: ${copyResult.copiedDirectories.join(', ')}`);
+            return true; // Signal that image directories were successfully copied
+          } else {
+            console.log(`⚠️ Image directory copying failed - no directories found or accessible`);
+            if (copyResult.errors.length > 0) {
+              console.log(`❌ Errors encountered: ${copyResult.errors.join('; ')}`);
+            }
+            return false; // Signal that copying failed
+          }
+        } catch (error) {
+          console.error(`❌ Image directory copying failed with exception:`, error);
+          return false; // Signal that copying failed with exception
+        }
+      } else {
+        console.log(`⏭️ Skipping image directory copying - reason: ${
+          imageDirectoriesCopied ? 'already copied' : 
+          !(options.format === 'zendesk' || options.format === 'asciidoc' || options.format === 'writerside-markdown') ? 'unsupported format' :
+          !(options.copyImages === undefined || options.copyImages === true) ? 'copyImages disabled' : 'unknown'
+        }`);
+        return imageDirectoriesCopied; // Return current state since no copying was attempted
+      }
+    } else {
+      console.log(`⏭️ Skipping all image copying - copyImages option is false`);
+      return imageDirectoriesCopied; // Return current state since copying is disabled
+    }
+  }
+
+  /**
+   * Analyze uploaded folder structure for diagnostics
+   */
+  async analyzeUploadedStructure(inputDir: string): Promise<{
+    totalFiles: number;
+    supportedFiles: number;
+    snippetFiles: number;
+    contentFiles: number;
+    imageFiles: number;
+    otherFiles: number;
+    foundSnippets: string[];
+    missingCommonDirs: string[];
+  }> {
+    const analysis = {
+      totalFiles: 0,
+      supportedFiles: 0,
+      snippetFiles: 0,
+      contentFiles: 0,
+      imageFiles: 0,
+      otherFiles: 0,
+      foundSnippets: [] as string[],
+      missingCommonDirs: [] as string[]
+    };
+
+    const imageExtensions = new Set(['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp']);
+    const contentExtensions = new Set(['.html', '.htm']);
+    
+    // Recursive function to analyze directory
+    const analyzeDir = async (dirPath: string): Promise<void> => {
+      try {
+        const entries = await readdir(dirPath);
+        
+        for (const entry of entries) {
+          // Skip system files
+          if (entry.startsWith('.') || entry.startsWith('._')) continue;
+          
+          const entryPath = join(dirPath, entry);
+          const stats = await stat(entryPath);
+          
+          if (stats.isDirectory()) {
+            await analyzeDir(entryPath);
+          } else {
+            analysis.totalFiles++;
+            const ext = extname(entry).toLowerCase();
+            
+            if (this.supportedExtensions.has(ext.slice(1))) {
+              analysis.supportedFiles++;
+              
+              if (ext === '.flsnp') {
+                analysis.snippetFiles++;
+                analysis.foundSnippets.push(relative(inputDir, entryPath));
+              } else if (contentExtensions.has(ext)) {
+                analysis.contentFiles++;
+              }
+            } else if (imageExtensions.has(ext)) {
+              analysis.imageFiles++;
+            } else {
+              analysis.otherFiles++;
+            }
+          }
+        }
+      } catch (error) {
+        // Skip directories we can't read
+      }
+    };
+
+    await analyzeDir(inputDir);
+
+    // Check for common MadCap directories
+    const commonDirs = ['Content', 'Content/Images', 'Content/Resources', 'Project', 'Resources'];
+    for (const dir of commonDirs) {
+      try {
+        await stat(join(inputDir, dir));
+      } catch (error) {
+        analysis.missingCommonDirs.push(dir);
+      }
+    }
+
+    return analysis;
+  }
+
+  /**
+   * Enhanced directory structure logging with file analysis
+   */
+  async logDirectoryStructureWithAnalysis(dirPath: string, prefix: string = '', maxDepth: number = 3): Promise<void> {
+    if (maxDepth <= 0) return;
+    
+    try {
+      const entries = await readdir(dirPath);
+      for (const entry of entries) {
+        // Skip system files
+        if (entry.startsWith('.') || entry.startsWith('._')) continue;
+        
+        const entryPath = join(dirPath, entry);
+        const stats = await stat(entryPath);
+        
+        if (stats.isDirectory()) {
+          console.log(`${prefix}📁 ${entry}/`);
+          await this.logDirectoryStructureWithAnalysis(entryPath, prefix + '  ', maxDepth - 1);
+        } else {
+          const ext = extname(entry).toLowerCase();
+          const sizeMB = (stats.size / 1024 / 1024).toFixed(2);
+          const fileType = this.supportedExtensions.has(ext.slice(1)) ? '✅' : 
+                          ['.png', '.jpg', '.jpeg', '.gif', '.bmp', '.svg', '.webp'].includes(ext) ? '🖼️' : '📄';
+          console.log(`${prefix}${fileType} ${entry} (${sizeMB} MB)`);
+          
+          // Special highlighting for important files
+          if (ext === '.flsnp') {
+            console.log(`${prefix}  🔹 SNIPPET FILE detected`);
+          } else if (ext === '.fltoc') {
+            console.log(`${prefix}  🔹 TOC FILE detected`);
+          } else if (ext === '.flvar') {
+            console.log(`${prefix}  🔹 VARIABLE FILE detected`);
+          }
+        }
+      }
+    } catch (error) {
+      console.log(`${prefix}❌ Error reading directory: ${error}`);
+    }
+  }
+
   /**
    * Update master document to include glossary reference
    */

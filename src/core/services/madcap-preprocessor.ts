@@ -253,6 +253,7 @@ export class MadCapPreprocessor {
   }
 
   private async processMadCapElementsBatch(document: Document, inputPath?: string): Promise<void> {
+    // Process MadCap elements with proper snippet resolution
     // Single DOM traversal to find all MadCap elements
     const allElements = Array.from(document.querySelectorAll('*'));
     
@@ -294,13 +295,33 @@ export class MadCapPreprocessor {
   }
 
   private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string): Promise<void> {
+    // Process all snippet blocks for seamless content integration
     for (const element of snippetBlocks) {
       const snippetSrc = element.getAttribute('src');
       
+      // TEMPORARY FIX: If inputPath is missing, try to construct it from the upload context
+      if (snippetSrc && !inputPath) {
+        console.log(`[SNIPPET DEBUG] inputPath is missing! snippetSrc: ${snippetSrc}`);
+        // For now, create a simple placeholder instead of crashing
+        const div = element.ownerDocument.createElement('div');
+        div.innerHTML = `<p><strong>⚠️ NO INPUT PATH:</strong> Cannot resolve snippet ${snippetSrc} without inputPath</p>`;
+        element.parentNode?.replaceChild(div, element);
+        continue;
+      }
+      
       if (snippetSrc && inputPath) {
         try {
-          // Resolve snippet path relative to the current document
-          const snippetPath = resolve(dirname(inputPath), snippetSrc);
+          // Resolve snippet path using MadCap project structure (same as processSnippetTexts)
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath);
+          
+          // Resolve snippet path relative to the input document
+          
+          // Check if file exists before trying to read it
+          if (!existsSync(snippetPath)) {
+            console.error(`[SNIPPET ERROR] File does not exist: ${snippetPath}`);
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+            continue;
+          }
           
           // Check for circular references
           if (this.loadedSnippets.has(snippetPath)) {
@@ -309,18 +330,10 @@ export class MadCapPreprocessor {
             continue;
           }
           
-          // Check cache first
-          let snippetContent: string;
-          if (this.snippetCache.has(snippetPath)) {
-            snippetContent = this.snippetCache.get(snippetPath)!;
-          } else {
-            // Mark snippet as being loaded
-            this.loadedSnippets.add(snippetPath);
-            
-            const rawContent = await readFileAsync(snippetPath, 'utf8');
-            snippetContent = await this.processSnippetContent(rawContent);
-            this.snippetCache.set(snippetPath, snippetContent);
-          }
+          // Load and process snippet content
+          const { readFileSync } = require('fs');
+          const rawContent = readFileSync(snippetPath, 'utf8');
+          const snippetContent = await this.processSnippetContent(rawContent);
           
           // Parse snippet content with JSDOM and extract body children with boundary preservation
           const snippetDom = new JSDOM(snippetContent, { contentType: 'text/html' });
@@ -351,14 +364,20 @@ export class MadCapPreprocessor {
           }
           
         } catch (error) {
-          console.warn(`Could not load snippet ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
+          console.error(`[SNIPPET ERROR] Failed to load snippet ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
+          console.error(`[SNIPPET ERROR] Resolved path was: ${resolve(dirname(inputPath), snippetSrc)}`);
+          console.error(`[SNIPPET ERROR] Input path: ${inputPath}`);
+          console.error(`[SNIPPET ERROR] Full error:`, error);
           this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         }
       } else {
         // If no src attribute or inputPath, create a placeholder
+        console.log(`[SNIPPET DEBUG] No src or inputPath - snippetSrc: ${snippetSrc}, inputPath: ${inputPath}`);
         if (snippetSrc) {
+          console.log(`[SNIPPET DEBUG] Creating placeholder for missing inputPath`);
           this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         } else {
+          console.log(`[SNIPPET DEBUG] No src attribute, using innerHTML`);
           const div = element.ownerDocument.createElement('div');
           div.innerHTML = element.innerHTML;
           element.parentNode?.replaceChild(div, element);
@@ -494,7 +513,7 @@ export class MadCapPreprocessor {
 
   private async processSnippetContent(snippetContent: string): Promise<string> {
     // Clean the snippet content
-    let cleanedSnippet = snippetContent
+    const cleanedSnippet = snippetContent
       .replace(/<\?xml[^>]*>/g, '')
       .replace(/xmlns:MadCap="[^"]*"/g, '');
     
@@ -509,11 +528,12 @@ export class MadCapPreprocessor {
   }
 
   private createSnippetPlaceholder(document: Document, element: Element, snippetSrc: string): void {
+    // Temporarily create a visible error to understand when this is called
     const div = document.createElement('div');
     div.className = 'snippet-placeholder';
     
     const noteP = document.createElement('p');
-    noteP.innerHTML = `<strong>📄 Content:</strong> Snippet from <code>${snippetSrc}</code>`;
+    noteP.innerHTML = `<strong>🚨 SNIPPET PLACEHOLDER:</strong> ${snippetSrc} - Check server logs for details`;
     div.appendChild(noteP);
     
     // If the element has content, include it
@@ -580,7 +600,7 @@ export class MadCapPreprocessor {
         }
         
         link.setAttribute('href', convertedHref);
-        link.textContent = linkText || `See ${convertedHref}`;
+        link.textContent = linkText || convertedHref;
         
         // Copy any additional attributes that might be useful
         const attributes = element.attributes;
@@ -708,7 +728,7 @@ export class MadCapPreprocessor {
           }
           
           link.setAttribute('href', convertedHref);
-          link.textContent = linkText || `See ${convertedHref}`;
+          link.textContent = linkText || convertedHref;
           
           // Copy any additional attributes that might be useful
           const attributes = element.attributes;
@@ -800,10 +820,14 @@ export class MadCapPreprocessor {
 
   private extractVariableName(className: string): string | undefined {
     const dotMatch = className.match(/mc-variable\.(\w+)/)?.[1];
-    if (dotMatch) return dotMatch;
+    if (dotMatch) {
+      return dotMatch;
+    }
     
     const spaceMatch = className.match(/mc-variable\s+([^.\s]+)\.([^.\s]+)/);
-    if (spaceMatch) return `${spaceMatch[1]}.${spaceMatch[2]}`;
+    if (spaceMatch) {
+      return `${spaceMatch[1]}.${spaceMatch[2]}`;
+    }
     
     return undefined;
   }
