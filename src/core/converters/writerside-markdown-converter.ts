@@ -60,10 +60,10 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
         
         if (shouldMergeSnippets) {
           // Default behavior: merge snippet content inline
-          preprocessedHtml = await this.madcapPreprocessor.preprocessMadCapContent(processedInput, options.inputPath, 'writerside-markdown');
+          preprocessedHtml = await this.madcapPreprocessor.preprocessMadCapContent(processedInput, options.inputPath, 'writerside-markdown', options.projectRootPath, options);
         } else {
           // Convert snippets to include references instead of merging content
-          preprocessedHtml = await this.preprocessWithSnippetIncludes(processedInput, options.inputPath);
+          preprocessedHtml = await this.preprocessWithSnippetIncludes(processedInput, options.inputPath, options);
         }
         
         // Reset preserve variables flag for next use
@@ -212,7 +212,7 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
   /**
    * Preprocess MadCap content but convert snippets to include references instead of merging content
    */
-  private async preprocessWithSnippetIncludes(input: string, inputPath?: string): Promise<string> {
+  private async preprocessWithSnippetIncludes(input: string, inputPath?: string, options?: ConversionOptions): Promise<string> {
     // Parse as HTML first
     const dom = new JSDOM(input, { contentType: 'text/html' });
     const document = dom.window.document;
@@ -264,7 +264,7 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
     }
 
     // Continue with regular MadCap preprocessing for variables, conditions, etc.
-    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(document.documentElement.outerHTML, inputPath, 'writerside-markdown');
+    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(document.documentElement.outerHTML, inputPath, 'writerside-markdown', undefined, options);
     
     return processedHtml;
   }

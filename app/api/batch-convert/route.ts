@@ -66,6 +66,20 @@ export async function POST(request: NextRequest) {
     const options = formData.get('options') ? JSON.parse(formData.get('options') as string) : {};
     const outputFolderName = formData.get('outputFolderName') as string || 'converted-files';
     
+    console.log(`📋 [Batch Convert API] Raw options object:`, JSON.stringify(options, null, 2));
+    console.log(`📋 [Batch Convert API] Received options:`, {
+      format,
+      options,
+      copyImages: options.copyImages,
+      preserveStructure: options.preserveStructure,
+      renameFiles: options.renameFiles,
+      recursive: options.recursive,
+      variableOptions: options.variableOptions,
+      extractVariables: options.variableOptions?.extractVariables,
+      asciidocOptions: options.asciidocOptions,
+      glossaryOptions: options.glossaryOptions
+    });
+    
     // Extract or create session ID for progress tracking
     sessionId = options.sessionId || formData.get('sessionId') as string;
     
@@ -149,9 +163,37 @@ export async function POST(request: NextRequest) {
     
     // Enhanced diagnostics: Show the complete uploaded folder structure with detailed analysis
     console.log(`📂 === ENHANCED FOLDER STRUCTURE ANALYSIS ===`);
+    
+    // Show actual directory tree
+    console.log(`📁 Directory structure:`);
+    const showDirectoryTree = async (dir: string, prefix: string = '') => {
+      const entries = await readdir(dir, { withFileTypes: true });
+      const dirs = entries.filter(e => e.isDirectory()).sort((a, b) => a.name.localeCompare(b.name));
+      const files = entries.filter(e => e.isFile()).sort((a, b) => a.name.localeCompare(b.name));
+      
+      // Show directories first
+      for (let i = 0; i < dirs.length; i++) {
+        const isLast = i === dirs.length - 1 && files.length === 0;
+        console.log(`${prefix}${isLast ? '└── ' : '├── '}📁 ${dirs[i].name}/`);
+        await showDirectoryTree(join(dir, dirs[i].name), prefix + (isLast ? '    ' : '│   '));
+      }
+      
+      // Show files
+      for (let i = 0; i < files.length; i++) {
+        const isLast = i === files.length - 1;
+        const ext = files[i].name.split('.').pop()?.toLowerCase();
+        const icon = ['png', 'jpg', 'jpeg', 'gif', 'svg'].includes(ext || '') ? '🖼️' : 
+                     ['htm', 'html'].includes(ext || '') ? '📄' :
+                     ext === 'flsnp' ? '📌' : '📋';
+        console.log(`${prefix}${isLast ? '└── ' : '├── '}${icon} ${files[i].name}`);
+      }
+    };
+    
+    await showDirectoryTree(inputDir);
+    
     const diagnosticsBatchService = new BatchService();
     const folderAnalysis = await diagnosticsBatchService.analyzeUploadedStructure(inputDir);
-    console.log(`📊 File Summary:`);
+    console.log(`\n📊 File Summary:`);
     console.log(`  - Total files: ${folderAnalysis.totalFiles}`);
     console.log(`  - Supported files: ${folderAnalysis.supportedFiles}`);
     console.log(`  - Snippet files (.flsnp): ${folderAnalysis.snippetFiles}`);
@@ -193,10 +235,29 @@ export async function POST(request: NextRequest) {
     
     // Perform batch conversion with progress tracking
     const batchService = new BatchService();
-    const result = await batchService.convertFolder(inputDir, outputDir, {
+    
+    // Ensure all options are properly passed
+    const conversionOptions = {
       format: format as any,
       ...options,
+      // Explicitly ensure these options are passed
+      copyImages: options.copyImages,
+      preserveStructure: options.preserveStructure,
+      renameFiles: options.renameFiles,
+      recursive: options.recursive,
+      variableOptions: options.variableOptions,
+      asciidocOptions: options.asciidocOptions,
+      glossaryOptions: options.glossaryOptions,
       onProgress: (progress: ConversionProgress) => {
+        console.log(`🔄 [Batch API] Progress callback received:`, {
+          currentFileIndex: progress.currentFileIndex,
+          totalFiles: progress.totalFiles || files.length,
+          percentage: progress.percentage,
+          currentFile: progress.currentFile,
+          message: progress.message,
+          sessionId: sessionId
+        });
+        
         lastProgress = progress;
         
         // Stream progress updates via SSE
@@ -216,23 +277,32 @@ export async function POST(request: NextRequest) {
         // Determine event type based on progress state
         if (sessionId) {
           if (progress.currentFile && progress.fileProgress === 0) {
+            console.log(`📡 [Batch API] Broadcasting file_start event for session ${sessionId}`);
             sessionManager.broadcastProgress(sessionId, 'file_start', {
               ...progressData,
               message: `Starting: ${progress.currentFile}`
             });
           } else if (progress.currentFile && progress.fileProgress === 100) {
+            console.log(`📡 [Batch API] Broadcasting file_complete event for session ${sessionId}`);
             sessionManager.broadcastProgress(sessionId, 'file_complete', {
               ...progressData,
               message: `Completed: ${progress.currentFile}`
             });
           } else {
+            console.log(`📡 [Batch API] Broadcasting file_progress event for session ${sessionId}: ${progress.percentage}%`);
             sessionManager.broadcastProgress(sessionId, 'file_progress', progressData);
           }
+        } else {
+          console.log(`⚠️ [Batch API] No sessionId - cannot broadcast progress events`);
         }
         
         console.log(`Progress: ${progress.percentage}% - ${progress.message}`);
       }
-    });
+    };
+    
+    console.log(`📋 [Batch Convert API] Final conversion options being passed:`, JSON.stringify(conversionOptions, null, 2));
+    
+    const result = await batchService.convertFolder(inputDir, outputDir, conversionOptions);
     
     // Create zip file of results with enhanced logging
     console.log(`📦 === ZIP CREATION ANALYSIS ===`);
@@ -245,6 +315,34 @@ export async function POST(request: NextRequest) {
     
     console.log(`📁 Output Directory Structure:`);
     await batchService.logDirectoryStructureWithAnalysis(outputDir, '', 3);
+    
+    console.log(`🔍 [ZIP DEBUG] Detailed output directory inspection before ZIP creation:`);
+    
+    // Show detailed file listing of output directory
+    try {
+      const { readdir, stat, lstat } = await import('fs/promises');
+      
+      const inspectDirectory = async (dir: string, prefix = '') => {
+        const entries = await readdir(dir);
+        for (const entry of entries) {
+          const fullPath = join(dir, entry);
+          const stats = await lstat(fullPath);
+          if (stats.isDirectory()) {
+            console.log(`${prefix}📁 ${entry}/`);
+            await inspectDirectory(fullPath, prefix + '  ');
+          } else {
+            const size = stats.size;
+            const ext = entry.split('.').pop()?.toLowerCase();
+            const icon = ['png', 'jpg', 'jpeg', 'gif', 'bmp', 'svg', 'webp'].includes(ext || '') ? '🖼️' : '📄';
+            console.log(`${prefix}${icon} ${entry} (${size} bytes)`);
+          }
+        }
+      };
+      
+      await inspectDirectory(outputDir);
+    } catch (inspectionError) {
+      console.error(`❌ Failed to inspect output directory:`, inspectionError);
+    }
     
     const zipPath = join(tempDir, 'converted-files.zip');
     const zipStream = createWriteStream(zipPath);
@@ -288,6 +386,7 @@ export async function POST(request: NextRequest) {
     console.log(`📦 === END ZIP ANALYSIS ===`);
     
     // Complete the conversion session with resource analysis
+    console.log(`🔔 [Batch Convert API] About to complete session: ${sessionId}`);
     sessionManager.completeSession(sessionId, {
       ...result,
       resourceSummary: {
@@ -297,6 +396,7 @@ export async function POST(request: NextRequest) {
         resourcesPreserved: outputAnalysis.totalFiles > outputAnalysis.supportedFiles
       }
     });
+    console.log(`✅ [Batch Convert API] Session completion called for: ${sessionId}`);
     
     // Clean up temp directory
     const { rm } = await import('fs/promises');
@@ -305,7 +405,7 @@ export async function POST(request: NextRequest) {
     console.log(`✅ Conversion completed for session ${sessionId}`);
     
     // Return zip file with session ID and enhanced conversion details in headers
-    return new NextResponse(zipBuffer, {
+    return new NextResponse(zipBuffer as any, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': `attachment; filename=${outputFolderName}.zip`,

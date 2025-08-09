@@ -63,12 +63,32 @@ export class AsciiDocConverter implements DocumentConverter {
       // MadCap-specific conversions (highest priority)
       {
         name: 'MadCap cross-references',
-        pattern: (el) => el.tagName === 'MADCAP:XREF',
+        pattern: (el: Element): boolean => {
+          // Handle various MadCap cross-reference formats
+          return el.tagName === 'MADCAP:XREF' || 
+                 el.tagName.toLowerCase() === 'madcap:xref' ||
+                 (el.tagName === 'A' && (el.getAttribute('href')?.includes('.htm') ?? false));
+        },
         handler: (el: Element) => {
           const href = el.getAttribute('href') || '';
-          const text = el.textContent || '';
-          const cleanHref = href.replace(/\.htm(l)?/, '.adoc');
-          return `xref:${cleanHref}[${text}]`;
+          const text = el.textContent?.trim() || '';
+          
+          if (!href) {
+            return text; // If no href, just return the text
+          }
+          
+          // Convert .htm/.html to .adoc for cross-references (handle hash fragments)
+          let cleanHref = href;
+          if (href.match(/\.htm(l)?(#|$)/)) {
+            cleanHref = href.replace(/\.htm(l)?(#|$)/, '.adoc$2');
+          }
+          
+          // Remove path prefixes if they exist (e.g., "../" or "subfolder/")
+          const fileName = cleanHref.split('/').pop() || cleanHref;
+          
+          console.log(`[XREF] Converting cross-reference: href="${href}" -> "${fileName}", text="${text}"`);
+          
+          return `xref:${fileName}[${text}]`;
         },
         priority: 100
       },
@@ -146,40 +166,103 @@ export class AsciiDocConverter implements DocumentConverter {
         priority: 85
       },
       
-      // Admonitions (notes, warnings, tips)
+      // MadCap Admonitions - Completely rewritten for proper detection and formatting
       {
-        name: 'Note blocks',
-        pattern: (el) => el.classList.contains('note') || el.classList.contains('mc-note'),
+        name: 'MadCap Note blocks',
+        pattern: (el) => {
+          // Detect MadCap note structure: <div class="note"> containing <span class="noteInDiv">
+          if (el.tagName === 'DIV' && el.classList.contains('note')) {
+            return true;
+          }
+          
+          // Also detect standalone note paragraphs: <p><span class="noteInDiv">Note:</span>content</p>
+          if (el.tagName === 'P') {
+            const noteSpan = el.querySelector('span.noteInDiv');
+            if (noteSpan && noteSpan.textContent?.trim().toLowerCase().startsWith('note')) {
+              return true;
+            }
+          }
+          
+          return false;
+        },
         handler: (el: Element, context?: ConversionContext) => {
-          const content = this.processChildElements(el, context || this.createContext());
-          return `\nNOTE: ${content.trim()}\n\n`;
+          return this.processAdmonition(el, 'NOTE', context || this.createContext());
         },
         priority: 80
       },
       {
-        name: 'Warning blocks',
-        pattern: (el) => el.classList.contains('warning') || el.classList.contains('mc-warning'),
+        name: 'MadCap Warning blocks',
+        pattern: (el) => {
+          if (el.tagName === 'DIV' && el.classList.contains('warning')) {
+            return true;
+          }
+          if (el.tagName === 'P') {
+            const warnSpan = el.querySelector('span.noteInDiv, span.warningInDiv');
+            if (warnSpan && warnSpan.textContent?.trim().toLowerCase().startsWith('warning')) {
+              return true;
+            }
+          }
+          return false;
+        },
         handler: (el: Element, context?: ConversionContext) => {
-          const content = this.processChildElements(el, context || this.createContext());
-          return `\nWARNING: ${content.trim()}\n\n`;
+          return this.processAdmonition(el, 'WARNING', context || this.createContext());
         },
         priority: 80
       },
       {
-        name: 'Tip blocks',
-        pattern: (el) => el.classList.contains('tip') || el.classList.contains('mc-tip'),
+        name: 'MadCap Tip blocks',
+        pattern: (el) => {
+          if (el.tagName === 'DIV' && el.classList.contains('tip')) {
+            return true;
+          }
+          if (el.tagName === 'P') {
+            const tipSpan = el.querySelector('span.noteInDiv, span.tipInDiv');
+            if (tipSpan && tipSpan.textContent?.trim().toLowerCase().startsWith('tip')) {
+              return true;
+            }
+          }
+          return false;
+        },
         handler: (el: Element, context?: ConversionContext) => {
-          const content = this.processChildElements(el, context || this.createContext());
-          return `\nTIP: ${content.trim()}\n\n`;
+          return this.processAdmonition(el, 'TIP', context || this.createContext());
         },
         priority: 80
       },
       {
-        name: 'Caution blocks',
-        pattern: (el) => el.classList.contains('caution') || el.classList.contains('mc-caution'),
+        name: 'MadCap Caution blocks', 
+        pattern: (el) => {
+          if (el.tagName === 'DIV' && el.classList.contains('caution')) {
+            return true;
+          }
+          if (el.tagName === 'P') {
+            const cautionSpan = el.querySelector('span.noteInDiv, span.cautionInDiv');
+            if (cautionSpan && cautionSpan.textContent?.trim().toLowerCase().startsWith('caution')) {
+              return true;
+            }
+          }
+          return false;
+        },
         handler: (el: Element, context?: ConversionContext) => {
-          const content = this.processChildElements(el, context || this.createContext());
-          return `\nCAUTION: ${content.trim()}\n\n`;
+          return this.processAdmonition(el, 'CAUTION', context || this.createContext());
+        },
+        priority: 80
+      },
+      {
+        name: 'MadCap Important blocks',
+        pattern: (el) => {
+          if (el.tagName === 'DIV' && el.classList.contains('important')) {
+            return true;
+          }
+          if (el.tagName === 'P') {
+            const importantSpan = el.querySelector('span.noteInDiv, span.importantInDiv');
+            if (importantSpan && importantSpan.textContent?.trim().toLowerCase().startsWith('important')) {
+              return true;
+            }
+          }
+          return false;
+        },
+        handler: (el: Element, context?: ConversionContext) => {
+          return this.processAdmonition(el, 'IMPORTANT', context || this.createContext());
         },
         priority: 80
       },
@@ -320,7 +403,9 @@ export class AsciiDocConverter implements DocumentConverter {
         }
       }
       
-      return result.trim() + '\n';
+      // Apply post-processing fixes
+      const processedResult = this.postProcess(result);
+      return processedResult;
       
     } catch (error) {
       console.error('Error in convertChunk:', error);
@@ -362,23 +447,17 @@ export class AsciiDocConverter implements DocumentConverter {
             }
             break;
           case 'li':
-            const itemText = childElement.textContent?.trim() || '';
-            if (itemText) {
-              result += `* ${itemText}\n`;
-            }
+            // List items should only be processed within processListElement context
+            // Skip individual li processing to avoid duplication
             break;
           case 'ol':
           case 'ul':
-            result += '\n';
-            // Process list items without recursion
-            const items = childElement.querySelectorAll('li');
-            items.forEach(li => {
-              const itemText = li.textContent?.trim() || '';
-              if (itemText) {
-                result += tagName === 'ol' ? `. ${itemText}\n` : `* ${itemText}\n`;
-              }
-            });
-            result += '\n';
+            // Delegate to proper list processing method
+            const context = this.createContext();
+            const style = childElement.getAttribute('style') || '';
+            const listStyle = this.extractListStyle(style);
+            const listType = tagName === 'ol' ? 'ordered' : 'unordered';
+            result += this.processListElement(childElement, listType, context, listStyle);
             break;
           default:
             // For other elements, just get text content
@@ -491,10 +570,11 @@ export class AsciiDocConverter implements DocumentConverter {
         return '\n---\n\n';
         
       case 'ol':
-        return this.processOrderedList(element, context);
+        const style = this.extractListStyle(element.getAttribute('style') || '');
+        return this.processListElement(element, 'ordered', context, style);
         
       case 'ul':
-        return this.processUnorderedList(element, context);
+        return this.processListElement(element, 'unordered', context);
         
       default:
         // Process children for unknown elements
@@ -518,41 +598,104 @@ export class AsciiDocConverter implements DocumentConverter {
     style?: string
   ): string {
     let result = '';
-    const items = list.querySelectorAll(':scope > li');
+    // Manually filter for direct child li elements to avoid JSDOM issues
+    const items = Array.from(list.children).filter(child => child.tagName === 'LI');
     
     // Update context
     const newContext = { ...context, inList: true };
     const level = context.listStack.length;
     
+    // Log list processing
+    console.log(`[LIST] Processing ${type} list at level ${level} with ${items.length} items`);
+    if (style) {
+      console.log(`[LIST] List style: ${style}`);
+    }
+    
+    // Add style attribute for ordered lists if needed
+    let styleAttribute = '';
+    if (type === 'ordered') {
+      if (style) {
+        // Explicit style from CSS
+        switch (style) {
+          case 'lower-alpha':
+            styleAttribute = '[loweralpha]\n';
+            break;
+          case 'upper-alpha':
+            styleAttribute = '[upperalpha]\n';
+            break;
+          case 'lower-roman':
+            styleAttribute = '[lowerroman]\n';
+            break;
+          case 'upper-roman':
+            styleAttribute = '[upperroman]\n';
+            break;
+          case 'decimal':
+            styleAttribute = '[arabic]\n';
+            break;
+        }
+      } else if (level > 0) {
+        // Apply AsciiDoc default nesting styles when no explicit style is set
+        // Level 0: arabic (1, 2, 3) - default, no attribute needed
+        // Level 1: loweralpha (a, b, c)
+        // Level 2: lowerroman (i, ii, iii)
+        // Level 3: upperalpha (A, B, C)
+        // Level 4: upperroman (I, II, III)
+        const nestedStyles = ['', '[loweralpha]\n', '[lowerroman]\n', '[upperalpha]\n', '[upperroman]\n'];
+        if (level < nestedStyles.length) {
+          styleAttribute = nestedStyles[level];
+        }
+      }
+      
+      // Add style attribute if we have one
+      if (styleAttribute) {
+        result += styleAttribute;
+      }
+    }
+    
     for (const [index, item] of Array.from(items).entries()) {
       // Determine marker based on type and level
       let marker = '';
       if (type === 'ordered') {
+        // Use correct AsciiDoc ordered list markers for each level
+        // Level 0: . (arabic numerals)
+        // Level 1: .. (lower case letters)
+        // Level 2: ... (lower case roman numerals)
+        // Level 3: .... (upper case letters)
+        // Level 4: ..... (upper case roman numerals)
         marker = '.'.repeat(level + 1);
-        
-        // Apply style if specified
-        if (style === 'lower-alpha') {
-          result += '[loweralpha]\n';
-        }
       } else {
+        // Unordered lists use asterisks
         marker = '*'.repeat(level + 1);
       }
       
       // Process item content
       let itemContent = '';
+      let hasNestedList = false;
+      
       for (const child of Array.from(item.childNodes)) {
         if (child.nodeType === 3) { // Text node
           itemContent += child.textContent;
         } else if (child.nodeType === 1) { // Element node
           const childEl = child as Element;
+          
           if (childEl.tagName === 'UL' || childEl.tagName === 'OL') {
-            // Nested list - process with increased level
+            // Mark that we found a nested list
+            hasNestedList = true;
+            
+            // Nested list - process directly to avoid duplication
             const nestedContext = {
               ...newContext,
-              listStack: [...context.listStack, { level, type, itemCount: 0 }]
+              listStack: [...context.listStack, { 
+                level: level + 1, 
+                type: childEl.tagName === 'OL' ? 'ordered' : 'unordered' as 'ordered' | 'unordered', 
+                itemCount: 0 
+              } as ListContext]
             };
-            itemContent += '\n' + this.processElement(childEl, nestedContext);
+            const nestedStyle = childEl.tagName === 'OL' ? this.extractListStyle(childEl.getAttribute('style') || '') : undefined;
+            const nestedType = childEl.tagName === 'OL' ? 'ordered' : 'unordered';
+            itemContent += '\n' + this.processListElement(childEl, nestedType, nestedContext, nestedStyle);
           } else {
+            // Process non-list elements normally
             itemContent += this.processElement(childEl, newContext);
           }
         }
@@ -560,8 +703,8 @@ export class AsciiDocConverter implements DocumentConverter {
       
       result += `${marker} ${itemContent.trim()}\n`;
       
-      // Add continuation marker if needed
-      if (item.querySelector('ul, ol, pre, div.note')) {
+      // Add continuation marker only for nested lists, not for other elements
+      if (hasNestedList) {
         result += '+\n';
       }
     }
@@ -592,9 +735,9 @@ export class AsciiDocConverter implements DocumentConverter {
     const href = link.getAttribute('href') || '';
     const text = link.textContent || '';
     
-    // Convert .htm/.html to .adoc for cross-references
-    if (href.match(/\.htm(l)?$/)) {
-      const cleanHref = href.replace(/\.htm(l)?$/, '.adoc');
+    // Convert .htm/.html to .adoc for cross-references (handle hash fragments)
+    if (href.match(/\.htm(l)?(#|$)/)) {
+      const cleanHref = href.replace(/\.htm(l)?(#|$)/, '.adoc$2');
       return `xref:${cleanHref}[${text}]`;
     }
     
@@ -606,9 +749,24 @@ export class AsciiDocConverter implements DocumentConverter {
     
     for (const child of Array.from(element.childNodes)) {
       if (child.nodeType === 3) { // Text node
-        result += child.textContent;
+        const text = child.textContent || '';
+        result += text;
       } else if (child.nodeType === 1) { // Element node
-        result += this.processElement(child as Element, context);
+        const elementResult = this.processElement(child as Element, context);
+        
+        // Ensure proper spacing around processed elements
+        if (elementResult && result && !result.endsWith(' ') && !elementResult.startsWith(' ')) {
+          // Check if the previous character and first character of element result need spacing
+          const lastChar = result.slice(-1);
+          const firstChar = elementResult.charAt(0);
+          
+          // Add space if needed between text and element (like "see xref:")
+          if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+            result += ' ';
+          }
+        }
+        
+        result += elementResult;
       }
     }
     
@@ -635,9 +793,30 @@ export class AsciiDocConverter implements DocumentConverter {
   private processChildElements(element: Element, context: ConversionContext): string {
     let result = '';
     
-    for (const child of Array.from(element.children)) {
-      // Skip edge case rules and process directly
-      result += this.processElementDirect(child as Element, context);
+    // Process ALL child nodes (text nodes AND element nodes)
+    for (const child of Array.from(element.childNodes)) {
+      if (child.nodeType === 3) { // Text node
+        const text = child.textContent || '';
+        result += text;
+      } else if (child.nodeType === 1) { // Element node
+        // Check if this should use edge case rules (like cross-references)
+        // Use normal processElement for edge cases like cross-references
+        const elementResult = this.processElement(child as Element, context);
+        
+        // Ensure proper spacing around processed elements
+        if (elementResult && result && !result.endsWith(' ') && !elementResult.startsWith(' ')) {
+          // Check if the previous character and first character of element result need spacing
+          const lastChar = result.slice(-1);
+          const firstChar = elementResult.charAt(0);
+          
+          // Add space if needed between text and element (like "see xref:")
+          if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+            result += ' ';
+          }
+        }
+        
+        result += elementResult;
+      }
     }
     
     return result;
@@ -667,9 +846,10 @@ export class AsciiDocConverter implements DocumentConverter {
         }
         return divContent;
       case 'ol':
-        return this.processOrderedList(element, context);
+        const style = this.extractListStyle(element.getAttribute('style') || '');
+        return this.processListElement(element, 'ordered', context, style);
       case 'ul':
-        return this.processUnorderedList(element, context);
+        return this.processListElement(element, 'unordered', context);
       default:
         // Process children for unknown elements
         let content = '';
@@ -684,81 +864,40 @@ export class AsciiDocConverter implements DocumentConverter {
     }
   }
 
-  private processOrderedList(element: Element, context: ConversionContext): string {
-    let result = '\n';
-    const items = Array.from(element.children).filter(child => child.tagName === 'LI');
-    const depth = context.listStack.length;
-    const marker = '.'.repeat(depth + 1);
-    
-    // Process ordered list with proper depth-based markers
-    
-    for (const item of items) {
-      let itemContent = '';
-      
-      // Process each child of the list item
-      for (const child of Array.from(item.childNodes)) {
-        if (child.nodeType === 3) { // Text node
-          itemContent += child.textContent || '';
-        } else if (child.nodeType === 1) { // Element node
-          const childElement = child as Element;
-          if (childElement.tagName === 'OL' || childElement.tagName === 'UL') {
-            // Nested list - increase depth
-            const nestedContext = {
-              ...context,
-              listStack: [...context.listStack, { level: depth, type: 'ordered' as const, itemCount: 0, parent: undefined }]
-            };
-            itemContent += '\n' + this.processElement(childElement, nestedContext);
-          } else {
-            itemContent += this.processElement(childElement, context);
-          }
-        }
-      }
-      
-      result += `${marker} ${itemContent.trim()}\n`;
-    }
-    
-    return result + '\n';
-  }
-
-  private processUnorderedList(element: Element, context: ConversionContext): string {
-    let result = '\n';
-    const items = Array.from(element.children).filter(child => child.tagName === 'LI');
-    const depth = context.listStack.length;
-    const marker = '*'.repeat(depth + 1);
-    
-    for (const item of items) {
-      let itemContent = '';
-      
-      // Process each child of the list item
-      for (const child of Array.from(item.childNodes)) {
-        if (child.nodeType === 3) { // Text node
-          itemContent += child.textContent || '';
-        } else if (child.nodeType === 1) { // Element node
-          const childElement = child as Element;
-          if (childElement.tagName === 'OL' || childElement.tagName === 'UL') {
-            // Nested list - increase depth
-            const nestedContext = {
-              ...context,
-              listStack: [...context.listStack, { level: depth, type: 'unordered' as const, itemCount: 0, parent: undefined }]
-            };
-            itemContent += '\n' + this.processElement(childElement, nestedContext);
-          } else {
-            itemContent += this.processElement(childElement, context);
-          }
-        }
-      }
-      
-      result += `${marker} ${itemContent.trim()}\n`;
-    }
-    
-    return result + '\n';
-  }
   
   private extractListStyle(style: string): string | undefined {
-    if (style.includes('lower-alpha')) return 'lower-alpha';
-    if (style.includes('upper-alpha')) return 'upper-alpha';
+    // Check CSS list-style-type property
+    const listStyleMatch = style.match(/list-style-type:\s*([^;]+)/i);
+    if (listStyleMatch) {
+      const listStyleType = listStyleMatch[1].trim();
+      switch (listStyleType) {
+        case 'lower-alpha':
+        case 'lower-latin':
+        case 'a':
+          return 'lower-alpha';
+        case 'upper-alpha':
+        case 'upper-latin':
+        case 'A':
+          return 'upper-alpha';
+        case 'lower-roman':
+        case 'i':
+          return 'lower-roman';
+        case 'upper-roman':
+        case 'I':
+          return 'upper-roman';
+        case 'decimal':
+        case '1':
+          return 'decimal';
+      }
+    }
+    
+    // Fallback to checking for keywords in style
+    if (style.includes('lower-alpha') || style.includes('lower-latin')) return 'lower-alpha';
+    if (style.includes('upper-alpha') || style.includes('upper-latin')) return 'upper-alpha';
     if (style.includes('lower-roman')) return 'lower-roman';
     if (style.includes('upper-roman')) return 'upper-roman';
+    if (style.includes('decimal')) return 'decimal';
+    
     return undefined;
   }
   
@@ -786,6 +925,95 @@ export class AsciiDocConverter implements DocumentConverter {
       .replace(/`/g, '\\`');
   }
   
+  /**
+   * Process MadCap admonitions properly
+   * Handles both <div class="note"> and standalone <p><span class="noteInDiv"> structures
+   */
+  private processAdmonition(el: Element, type: 'NOTE' | 'WARNING' | 'TIP' | 'CAUTION' | 'IMPORTANT', context: ConversionContext): string {
+    
+    let contentParagraphs: string[] = [];
+    
+    if (el.tagName === 'DIV') {
+      // Handle <div class="note"> structure
+      const paragraphs = el.children;
+      
+      for (let i = 0; i < paragraphs.length; i++) {
+        const para = paragraphs[i];
+        
+        if (para.tagName === 'P') {
+          // Check if this paragraph contains the label span (e.g., <span class="noteInDiv">Note:</span>)
+          const labelSpan = para.querySelector('span.noteInDiv, span.warningInDiv, span.tipInDiv, span.cautionInDiv, span.importantInDiv');
+          
+          if (labelSpan && i === 0) {
+            // This is the first paragraph with the label - check if it has content after the label
+            const paraClone = para.cloneNode(true) as Element;
+            
+            // Remove the label span
+            const labelSpanInClone = paraClone.querySelector('span.noteInDiv, span.warningInDiv, span.tipInDiv, span.cautionInDiv, span.importantInDiv');
+            if (labelSpanInClone) {
+              labelSpanInClone.remove();
+            }
+            
+            // Remove non-breaking spaces and clean up
+            let content = this.processChildElements(paraClone, context).trim();
+            content = content.replace(/^\s*&nbsp;\s*|\s*&nbsp;\s*$/g, '').trim();
+            content = content.replace(/^\s*&#160;\s*|\s*&#160;\s*$/g, '').trim();
+            
+            // Only add if there's actual content beyond the label
+            if (content && content.length > 0) {
+              contentParagraphs.push(content);
+            }
+            // If first paragraph only contains label, skip it and process subsequent paragraphs
+          } else {
+            // Regular content paragraph
+            const content = this.processChildElements(para, context).trim();
+            if (content) {
+              contentParagraphs.push(content);
+            }
+          }
+        }
+      }
+    } else if (el.tagName === 'P') {
+      // Handle standalone <p><span class="noteInDiv">Note:</span>content</p> structure
+      const elClone = el.cloneNode(true) as Element;
+      
+      // Remove the label span
+      const labelSpan = elClone.querySelector('span.noteInDiv, span.warningInDiv, span.tipInDiv, span.cautionInDiv, span.importantInDiv');
+      if (labelSpan) {
+        labelSpan.remove();
+      }
+      
+      // Extract remaining content
+      let content = this.processChildElements(elClone, context).trim();
+      content = content.replace(/^\s*:?\s*&nbsp;\s*|\s*&nbsp;\s*$/g, '').trim();
+      
+      if (content) {
+        contentParagraphs.push(content);
+      }
+    }
+    
+    // Filter out empty paragraphs
+    contentParagraphs = contentParagraphs.filter(p => p.trim().length > 0);
+    
+    
+    if (contentParagraphs.length === 0) {
+      console.warn(`[ADMONITION] No content found for ${type} admonition`);
+      return '';
+    }
+    
+    // Format as AsciiDoc
+    if (contentParagraphs.length === 1) {
+      // Single paragraph - use simple syntax
+      const result = `\n${type}: ${contentParagraphs[0]}\n\n`;
+      return result;
+    } else {
+      // Multiple paragraphs - use block syntax
+      const blockContent = contentParagraphs.join('\n\n');
+      const result = `\n[${type}]\n====\n${blockContent}\n====\n\n`;
+      return result;
+    }
+  }
+  
   private postProcess(content: string): string {
     // Clean up excessive newlines
     content = content.replace(/\n{4,}/g, '\n\n\n');
@@ -800,6 +1028,9 @@ export class AsciiDocConverter implements DocumentConverter {
     // Fix image block spacing
     content = content.replace(/\nimage::/g, '\n\nimage::');
     content = content.replace(/\]\n(?!\n)/g, ']\n\n');
+    
+    // Fix inline image spacing issues
+    content = content.replace(/\]([a-zA-Z])/g, '] $1'); // Add space after inline images
     
     // Clean up code block spacing
     content = content.replace(/\n----\n/g, '\n----\n');

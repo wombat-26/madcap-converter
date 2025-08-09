@@ -101,13 +101,11 @@ export class DocumentService {
             inputType = 'madcap';
           }
         } else if (format === 'asciidoc') {
-          // Check for MadCap content first
+          // Always use EnhancedAsciiDocConverter for asciidoc format
+          // It has MadCap preprocessing built in
+          converter = this.converters.get('asciidoc')!;
           if (this.containsMadCapContent(input)) {
             inputType = 'madcap';
-            converter = this.converters.get('xml')!; // Use MadCap converter for preprocessing
-          } else {
-            // Use direct AsciiDoc converter only for pure HTML content
-            converter = this.converters.get('asciidoc')!;
           }
         } else if (format === 'writerside-markdown') {
           // Use WritersideMarkdownConverter directly for Writerside format
@@ -129,34 +127,60 @@ export class DocumentService {
       outputDir: actualOptions.outputDir || (outputPath ? dirname(outputPath) : undefined),
       outputPath,
       rewriteLinks: actualOptions.rewriteLinks,
-      inputPath: actualOptions.inputPath || inputPath, // Use inputPath from options if provided
+      inputPath: inputPath, // Always use the actual file path for proper snippet resolution
       variableOptions: actualOptions.variableOptions,
       zendeskOptions: actualOptions.zendeskOptions,
       asciidocOptions: actualOptions.asciidocOptions
     };
 
-    // Override converter based on output format  
-    if (format === 'asciidoc' && inputType === 'html') {
-      // Only use AsciiDocConverter directly for pure HTML content (non-MadCap)
-      // MadCap content should go through MadCapConverter for proper preprocessing
-      if (!this.containsMadCapContent(input as string)) {
-        converter = new AsciiDocConverter();
-      }
-      // If it contains MadCap content, keep using the MadCap converter selected above
-    }
+    // Note: Converter selection is already done above based on format and content type
+    // No need for additional overrides here
+    
+    console.log(`🔍 [DocumentService] Converting file: ${inputPath} -> ${outputPath}`);
+    console.log(`🔍 [DocumentService] File extension: ${extension}, Converter: ${converterKey}, Input type: ${inputType}`);
+    console.log(`🔍 [DocumentService] Options received:`, {
+      format,
+      extractVariables: actualOptions.variableOptions?.extractVariables,
+      variableOptions: actualOptions.variableOptions,
+      outputDir: actualOptions.outputDir
+    });
     
     const result = await converter.convert(input, conversionOptions);
+    
+    console.log(`🔍 [DocumentService] Conversion result:`, {
+      hasContent: !!result.content,
+      contentLength: result.content?.length || 0,
+      hasVariablesFile: !!result.variablesFile,
+      variablesFileLength: result.variablesFile?.length || 0,
+      hasMetadata: !!result.metadata
+    });
 
     if (outputPath) {
+      console.log(`📁 [DocumentService] Creating directory: ${dirname(outputPath)}`);
       await errorHandler.safeCreateDirectory(dirname(outputPath));
+      
+      console.log(`📄 [DocumentService] Writing main file: ${outputPath} (${result.content.length} chars)`);
       await errorHandler.safeWriteFile(outputPath, result.content, 'utf8');
+      
+      // Debug variables file generation
+      console.log(`🔍 [DocumentService] Variables file check:`, {
+        hasVariablesFile: !!result.variablesFile,
+        extractVariables: !!actualOptions.variableOptions?.extractVariables,
+        skipFileGeneration: !!actualOptions.variableOptions?.skipFileGeneration,
+        shouldWriteVariables: !!(result.variablesFile && actualOptions.variableOptions?.extractVariables && 
+                                !actualOptions.variableOptions?.skipFileGeneration)
+      });
       
       // Write variables file if it was generated (skip if batch processing)
       if (result.variablesFile && actualOptions.variableOptions?.extractVariables && 
           !actualOptions.variableOptions?.skipFileGeneration) {
         const variablesPath = actualOptions.variableOptions.variablesOutputPath || 
                              this.getDefaultVariablesPath(outputPath, actualOptions.variableOptions.variableFormat);
+        console.log(`📄 [DocumentService] Writing variables file: ${variablesPath} (${result.variablesFile.length} chars)`);
         await errorHandler.safeWriteFile(variablesPath, result.variablesFile, 'utf8');
+        console.log(`✅ [DocumentService] Variables file written successfully: ${variablesPath}`);
+      } else {
+        console.log(`⏭️ [DocumentService] Skipping variables file - conditions not met`);
       }
 
       // Validate links in converted content if requested

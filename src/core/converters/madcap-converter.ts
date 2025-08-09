@@ -20,8 +20,8 @@ export class MadCapConverter implements DocumentConverter {
     // MadCap preprocessing and conversion
     
     // Check if content should be skipped due to MadCap conditions
-    if (this.madcapPreprocessor.shouldSkipContent(input)) {
-      throw new Error('Content contains MadCap conditions that should not be converted (Black, Red, Gray, deprecated, paused, halted, discontinued, print-only, etc.)');
+    if (this.madcapPreprocessor.shouldSkipContent(input, options)) {
+      throw new Error('Content contains MadCap conditions that should not be converted based on condition filtering settings');
     }
     
     // Set variable extraction mode if enabled
@@ -30,7 +30,13 @@ export class MadCapConverter implements DocumentConverter {
     }
     
     // Use shared MadCap preprocessing with output format
-    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(input, options.inputPath, options.format);
+    const processedHtml = await this.madcapPreprocessor.preprocessMadCapContent(
+      input, 
+      options.inputPath, 
+      options.format, 
+      options.projectRootPath,
+      options
+    );
     
     // Get extracted variables from preprocessor
     const extractedVars = this.madcapPreprocessor.getExtractedVariables();
@@ -139,7 +145,7 @@ export class MadCapConverter implements DocumentConverter {
   }
 
   // Public method for batch service to check if file should be skipped
-  public static shouldSkipFile(content: string): boolean {
-    return MadCapPreprocessor.shouldSkipFile(content);
+  public static shouldSkipFile(content: string, options?: ConversionOptions): boolean {
+    return MadCapPreprocessor.shouldSkipFile(content, options);
   }
 }

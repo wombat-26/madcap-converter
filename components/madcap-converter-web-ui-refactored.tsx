@@ -29,9 +29,11 @@ import { AsciidocOptions } from '@/components/options/AsciidocOptions'
 import { MarkdownOptions } from '@/components/options/MarkdownOptions'
 import { ZendeskOptions } from '@/components/options/ZendeskOptions'
 import { VariableOptions } from '@/components/options/VariableOptions'
+import { GlossaryOptions } from '@/components/options/GlossaryOptions'
 import { useConversionStore } from '@/stores/useConversionStore'
 import { useSettingsStore } from '@/stores/useSettingsStore'
 import { useNotificationStore } from '@/stores/useNotificationStore'
+import { ConditionSelectionModal } from '@/components/ConditionSelectionModal'
 import JSZip from 'jszip'
 
 export default function MadCapConverterWebUI() {
@@ -50,6 +52,7 @@ export default function MadCapConverterWebUI() {
     updateMarkdownOptions,
     updateZendeskOptions,
     updateVariableOptions,
+    updateGlossaryOptions,
     files,
     setFiles,
     addFiles,
@@ -57,6 +60,15 @@ export default function MadCapConverterWebUI() {
     isProcessing,
     sessionId,
     setProcessingState,
+    // Condition-related state
+    conditionAnalysisResult,
+    showConditionModal,
+    isAnalyzingConditions,
+    selectedExcludeConditions,
+    selectedIncludeConditions,
+    setShowConditionModal,
+    setSelectedConditions,
+    analyzeConditions,
   } = useConversionStore()
   
   const { preferences, toggleAdvancedOptions } = useSettingsStore()
@@ -185,18 +197,89 @@ export default function MadCapConverterWebUI() {
     }
 
     try {
-      // Create a progress session with accurate file count
-      const sessionResponse = await fetch('/api/progress', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ totalFiles: files.length })
-      })
+      // Create a progress session with accurate file count - with enhanced retry logic
+      let sessionResponse: Response | undefined;
+      let retryCount = 0;
+      const maxRetries = 5; // Increased from 3 to 5
+      let lastError: Error | null = null;
+      let lastStatusCode: number | null = null;
+      
+      console.log(`🔄 Starting session creation with ${maxRetries} max retries for ${files.length} files`);
+      
+      while (retryCount < maxRetries) {
+        try {
+          console.log(`🔄 Session creation attempt ${retryCount + 1}/${maxRetries}`);
+          
+          sessionResponse = await fetch('/api/progress', {
+            method: 'POST',
+            headers: { 
+              'Content-Type': 'application/json',
+              'User-Agent': 'MadCapConverter/1.1.0'
+            },
+            body: JSON.stringify({ totalFiles: files.length })
+          })
+          
+          lastStatusCode = sessionResponse.status;
+          
+          if (sessionResponse.ok) {
+            console.log(`✅ Session creation succeeded on attempt ${retryCount + 1}`);
+            break;
+          }
+          
+          // Try to get error details from response
+          let errorDetails = '';
+          try {
+            const errorText = await sessionResponse.text();
+            errorDetails = errorText || `HTTP ${sessionResponse.status}`;
+          } catch (textError) {
+            errorDetails = `HTTP ${sessionResponse.status} (could not read error details)`;
+          }
+          
+          console.warn(`⚠️ Session creation failed (attempt ${retryCount + 1}/${maxRetries}):`, {
+            status: sessionResponse.status,
+            statusText: sessionResponse.statusText,
+            errorDetails,
+            headers: Object.fromEntries(sessionResponse.headers.entries())
+          });
+          
+          lastError = new Error(`HTTP ${sessionResponse.status}: ${errorDetails}`);
+          
+        } catch (error) {
+          lastError = error instanceof Error ? error : new Error(String(error));
+          console.error(`❌ Session creation error (attempt ${retryCount + 1}/${maxRetries}):`, {
+            error: lastError.message,
+            stack: lastError.stack,
+            name: lastError.name
+          });
+        }
+        
+        retryCount++;
+        
+        if (retryCount < maxRetries) {
+          // Progressive backoff: 1s, 2s, 4s, 8s
+          const delayMs = Math.min(1000 * Math.pow(2, retryCount - 1), 8000);
+          console.log(`⏳ Waiting ${delayMs}ms before retry ${retryCount + 1}...`);
+          await new Promise(resolve => setTimeout(resolve, delayMs));
+        }
+      }
 
-      if (!sessionResponse.ok) {
-        throw new Error('Failed to create progress session')
+      if (!sessionResponse || !sessionResponse.ok) {
+        const errorMessage = lastError 
+          ? `${lastError.message}` 
+          : `HTTP ${lastStatusCode || 'unknown'} after ${maxRetries} attempts`;
+          
+        console.error('❌ All session creation attempts failed:', {
+          attempts: maxRetries,
+          lastError: lastError?.message,
+          lastStatusCode,
+          totalFiles: files.length
+        });
+        
+        throw new Error(`Failed to create progress session: ${errorMessage}`);
       }
 
       const { sessionId: newSessionId } = await sessionResponse.json()
+      console.log(`Progress session created successfully: ${newSessionId}`);
       
       // Update store with session ID and processing state
       setProcessingState({
@@ -206,8 +289,7 @@ export default function MadCapConverterWebUI() {
         uploadProgress: 0
       })
       
-      // Small delay to ensure session is ready for SSE connection
-      await new Promise(resolve => setTimeout(resolve, 100))
+      // No artificial delay needed - SessionReadyManager handles synchronization
 
       info('Starting conversion', `Converting ${files.length} files...`)
 
@@ -221,6 +303,8 @@ export default function MadCapConverterWebUI() {
         renameFiles,
         copyImages,
         recursive,
+        excludeConditions: selectedExcludeConditions,
+        includeConditions: selectedIncludeConditions,
       }))
 
       const response = await fetch('/api/batch-convert', {
@@ -269,6 +353,46 @@ export default function MadCapConverterWebUI() {
         return 'html'
       default:
         return 'txt'
+    }
+  }
+
+  // Check if files contain MadCap content and trigger condition analysis
+  const handleBatchFilesChange = async (newFiles: File[]) => {
+    setFiles(newFiles)
+    
+    if (newFiles.length === 0) {
+      return
+    }
+    
+    // Check if any files are MadCap files (HTML/HTM with MadCap content)
+    const madCapFiles = newFiles.filter(file => 
+      (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.flsnp')) &&
+      file.type.includes('text/html') || file.name.endsWith('.flsnp')
+    )
+    
+    if (madCapFiles.length > 0) {
+      info('MadCap files detected', `Analyzing ${madCapFiles.length} files for conditions...`)
+      
+      // Trigger condition analysis
+      try {
+        await analyzeConditions()
+      } catch (error) {
+        console.error('Failed to analyze conditions:', error)
+        showError('Analysis failed', 'Could not analyze MadCap conditions')
+      }
+    }
+  }
+
+  // Handle condition modal confirmation
+  const handleConditionSelection = (conditions: { excludeConditions: string[], includeConditions: string[] }) => {
+    setSelectedConditions(conditions)
+    setShowConditionModal(false)
+    
+    if (conditions.excludeConditions.length > 0 || conditions.includeConditions.length > 0) {
+      success(
+        'Conditions selected',
+        `Excluding ${conditions.excludeConditions.length} and including ${conditions.includeConditions.length} conditions`
+      )
     }
   }
 
@@ -428,7 +552,7 @@ export default function MadCapConverterWebUI() {
                 title="Batch File Conversion"
                 description="Convert multiple files or entire folders"
                 files={files}
-                onFilesChange={setFiles}
+                onFilesChange={handleBatchFilesChange}
                 multiple
                 isFolder
                 accept=".html,.htm,.docx,.doc,.flsnp"
@@ -534,6 +658,7 @@ export default function MadCapConverterWebUI() {
                   </AccordionItem>
                   
                   <VariableOptions />
+                  <GlossaryOptions />
                   
                   {format === 'asciidoc' && <AsciidocOptions />}
                   {format === 'writerside-markdown' && <MarkdownOptions />}
@@ -585,6 +710,15 @@ export default function MadCapConverterWebUI() {
             </Button>
           </div>
         </div>
+
+        {/* MadCap Condition Selection Modal */}
+        <ConditionSelectionModal
+          isOpen={showConditionModal}
+          onClose={() => setShowConditionModal(false)}
+          onConfirm={handleConditionSelection}
+          analysisResult={conditionAnalysisResult}
+          isLoading={isAnalyzingConditions}
+        />
       </div>
     </div>
   )

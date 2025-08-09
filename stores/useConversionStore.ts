@@ -81,6 +81,19 @@ export interface ConversionOptions {
     excludePatterns?: string[]
     flvarFiles?: string[]
   }
+  
+  // Glossary options
+  glossaryOptions?: {
+    generateGlossary?: boolean
+    glossaryTitle?: string
+    glossaryFile?: string
+    extractToSeparateFile?: boolean
+    includeGlossary?: boolean
+    glossaryPath?: string
+    filterConditions?: string[] | boolean
+    glossaryFormat?: 'inline' | 'separate' | 'book-appendix'
+    generateAnchors?: boolean
+  }
 }
 
 export interface ConversionResult {
@@ -110,6 +123,13 @@ interface ConversionState {
   files: File[]
   uploadProgress: number
   
+  // Condition analysis and selection
+  conditionAnalysisResult: any | null
+  showConditionModal: boolean
+  isAnalyzingConditions: boolean
+  selectedExcludeConditions: string[]
+  selectedIncludeConditions: string[]
+  
   // Conversion results
   results: ConversionResult[]
   isProcessing: boolean
@@ -132,6 +152,7 @@ interface ConversionActions {
   updateMarkdownOptions: (options: Partial<ConversionOptions['markdownOptions']>) => void
   updateZendeskOptions: (options: Partial<ConversionOptions['zendeskOptions']>) => void
   updateVariableOptions: (options: Partial<ConversionOptions['variableOptions']>) => void
+  updateGlossaryOptions: (options: Partial<ConversionOptions['glossaryOptions']>) => void
   
   // File actions
   setFiles: (files: File[]) => void
@@ -139,6 +160,13 @@ interface ConversionActions {
   removeFile: (fileName: string) => void
   clearFiles: () => void
   setUploadProgress: (progress: number) => void
+  
+  // Condition actions
+  setConditionAnalysisResult: (result: any) => void
+  setShowConditionModal: (show: boolean) => void
+  setIsAnalyzingConditions: (analyzing: boolean) => void
+  setSelectedConditions: (conditions: { excludeConditions: string[], includeConditions: string[] }) => void
+  analyzeConditions: () => Promise<void>
   
   // Conversion actions
   startConversion: () => Promise<void>
@@ -202,7 +230,7 @@ const initialState: ConversionState = {
       preserveAnchors: false,
     },
     variableOptions: {
-      extractVariables: false,
+      extractVariables: true,
       variableMode: 'flatten',
       variableFormat: 'adoc',
       autoDiscoverFLVAR: true,
@@ -216,9 +244,28 @@ const initialState: ConversionState = {
       excludePatterns: [],
       flvarFiles: [],
     },
+    glossaryOptions: {
+      generateGlossary: false,
+      glossaryTitle: 'Glossary',
+      glossaryFile: '',
+      extractToSeparateFile: false,
+      includeGlossary: true,
+      glossaryPath: '',
+      filterConditions: false,
+      glossaryFormat: 'inline',
+      generateAnchors: true,
+    },
   },
   files: [],
   uploadProgress: 0,
+  
+  // Condition analysis initial state
+  conditionAnalysisResult: null,
+  showConditionModal: false,
+  isAnalyzingConditions: false,
+  selectedExcludeConditions: [],
+  selectedIncludeConditions: [],
+  
   results: [],
   isProcessing: false,
   currentFile: null,
@@ -272,6 +319,14 @@ export const useConversionStore = create<ConversionStore>()(
             },
           })),
         
+        updateGlossaryOptions: (options) =>
+          set((state) => ({
+            options: {
+              ...state.options,
+              glossaryOptions: { ...(state.options.glossaryOptions || {}), ...options },
+            },
+          })),
+        
         // File actions
         setFiles: (files) => set({ files }),
         
@@ -286,6 +341,75 @@ export const useConversionStore = create<ConversionStore>()(
         clearFiles: () => set({ files: [], uploadProgress: 0, completedFiles: 0 }),
         
         setUploadProgress: (progress) => set({ uploadProgress: progress }),
+        
+        // Condition actions
+        setConditionAnalysisResult: (result) => set({ conditionAnalysisResult: result }),
+        
+        setShowConditionModal: (show) => set({ showConditionModal: show }),
+        
+        setIsAnalyzingConditions: (analyzing) => set({ isAnalyzingConditions: analyzing }),
+        
+        setSelectedConditions: ({ excludeConditions, includeConditions }) =>
+          set({ 
+            selectedExcludeConditions: excludeConditions,
+            selectedIncludeConditions: includeConditions 
+          }),
+        
+        analyzeConditions: async () => {
+          const { files } = get()
+          if (files.length === 0) return
+          
+          set({ isAnalyzingConditions: true })
+          
+          try {
+            const formData = new FormData()
+            files.forEach(file => formData.append('files', file))
+            
+            // Convert files to the format expected by analyze-conditions API
+            const filePromises = files.map(file => {
+              return new Promise<{ name: string, content: string, isBase64: boolean }>((resolve) => {
+                const reader = new FileReader()
+                reader.onload = () => {
+                  resolve({
+                    name: file.name,
+                    content: reader.result as string,
+                    isBase64: false
+                  })
+                }
+                reader.readAsText(file)
+              })
+            })
+            
+            const fileContents = await Promise.all(filePromises)
+            
+            const response = await fetch('/api/analyze-conditions', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                files: fileContents,
+                sessionId: `analysis-${Date.now()}`
+              })
+            })
+            
+            if (response.ok) {
+              const result = await response.json()
+              if (result.success) {
+                set({ 
+                  conditionAnalysisResult: result.analysis,
+                  showConditionModal: true 
+                })
+              } else {
+                get().addError('Failed to analyze conditions: ' + result.error)
+              }
+            } else {
+              get().addError('Failed to analyze conditions')
+            }
+          } catch (error) {
+            get().addError('Error analyzing conditions: ' + (error instanceof Error ? error.message : 'Unknown error'))
+          } finally {
+            set({ isAnalyzingConditions: false })
+          }
+        },
         
         // Conversion actions
         startConversion: async () => {

@@ -2,6 +2,7 @@ import { JSDOM } from 'jsdom';
 import { readFile, stat, readdir, existsSync } from 'fs';
 import { readFile as readFileAsync, stat as statAsync, readdir as readdirAsync } from 'fs/promises';
 import { resolve, dirname, join } from 'path';
+import { ConversionOptions } from '../types/index';
 
 /**
  * Shared MadCap preprocessing service used by both MadCapConverter and ZendeskConverter
@@ -48,7 +49,7 @@ export class MadCapPreprocessor {
   /**
    * Main preprocessing method - cleans up MadCap elements, resolves variables, processes snippets
    */
-  async preprocessMadCapContent(html: string, inputPath?: string, outputFormat?: string): Promise<string> {
+  async preprocessMadCapContent(html: string, inputPath?: string, outputFormat?: string, projectRootPath?: string, options?: ConversionOptions): Promise<string> {
     // Reset snippet loading cache for each conversion
     this.loadedSnippets.clear();
     
@@ -67,11 +68,11 @@ export class MadCapPreprocessor {
     const dom = new JSDOM(cleanedHtml, { contentType: 'text/html' });
     const document = dom.window.document;
     
-    // Remove elements with skip conditions before processing
-    this.removeSkipConditionElements(document);
+    // Remove elements with conditions based on user selection
+    this.removeConditionElements(document, options);
     
     // Batch process all MadCap elements in one pass
-    await this.processMadCapElementsBatch(document, inputPath);
+    await this.processMadCapElementsBatch(document, inputPath, projectRootPath);
     
     // Clean up DOM structure for all converters
     this.cleanupDOMStructure(document, outputFormat);
@@ -82,8 +83,8 @@ export class MadCapPreprocessor {
   /**
    * Check if content should be skipped due to MadCap conditions
    */
-  shouldSkipContent(html: string): boolean {
-    return this.checkSkipConditions(html);
+  shouldSkipContent(html: string, options?: ConversionOptions): boolean {
+    return this.checkConditionsForSkip(html, options);
   }
 
   /**
@@ -137,64 +138,30 @@ export class MadCapPreprocessor {
     }
   }
 
-  private checkSkipConditions(content: string): boolean {
-    // Regex patterns for deprecation and exclusion conditions
-    const skipPatterns = [
-      // Color-based conditions (case insensitive)
-      /\b(Black|Red|Gray|Grey)\b/i,
-      
-      // Deprecation patterns (various forms)
-      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
-      
-      // Status patterns
-      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
-      
-      // Print-only patterns
-      /\b(print[\s\-_]?only|printonly)\b/i,
-      
-      // Development status
-      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
-      
-      // Hidden/internal patterns
-      /\b(hidden|internal|private|draft)\b/i
-    ];
-    
-    // Check for madcap:conditions attributes
-    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
-    const matches = content.matchAll(conditionPattern);
-    
-    for (const match of matches) {
-      const conditions = match[1];
-      // Check if any skip pattern matches the conditions
-      if (skipPatterns.some(pattern => pattern.test(conditions))) {
-        return true;
-      }
+  private checkConditionsForSkip(content: string, options?: ConversionOptions): boolean {
+    if (!options || (!options.excludeConditions && !options.includeConditions)) {
+      // No condition filtering specified - don't skip any content
+      return false;
     }
     
-    return false;
+    // Only skip entire content if ALL conditional content would be excluded
+    // For individual element filtering, let removeConditionElements handle it
+    
+    // This method is used by batch processing to skip files that would be entirely empty
+    // after condition filtering. For typical use cases, we should not skip content here
+    // as individual elements can be filtered during preprocessing.
+    
+    // TODO: In future, could implement logic to detect if document would be completely empty
+    // after filtering, but for now, let individual element filtering handle this
+    
+    return false; // Don't skip entire content - let element filtering handle it
   }
 
-  private removeSkipConditionElements(document: Document): void {
-    // Regex patterns for deprecation and exclusion conditions
-    const skipPatterns = [
-      // Color-based conditions (case insensitive)
-      /\b(Black|Red|Gray|Grey)\b/i,
-      
-      // Deprecation patterns (various forms)
-      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
-      
-      // Status patterns
-      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
-      
-      // Print-only patterns
-      /\b(print[\s\-_]?only|printonly)\b/i,
-      
-      // Development status
-      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
-      
-      // Hidden/internal patterns
-      /\b(hidden|internal|private|draft)\b/i
-    ];
+  private removeConditionElements(document: Document, options?: ConversionOptions): void {
+    if (!options || (!options.excludeConditions && !options.includeConditions)) {
+      // No condition filtering specified - don't remove any elements
+      return;
+    }
     
     // Find elements with madcap:conditions attributes
     const conditionalElements = document.querySelectorAll('[madcap\\:conditions], [data-mc-conditions]');
@@ -202,19 +169,65 @@ export class MadCapPreprocessor {
     conditionalElements.forEach(element => {
       const madcapConditions = element.getAttribute('madcap:conditions') || '';
       const dataMcConditions = element.getAttribute('data-mc-conditions') || '';
-      const allConditions = madcapConditions + ' ' + dataMcConditions;
+      const allConditionsString = madcapConditions + ' ' + dataMcConditions;
+      const conditions = this.parseConditionString(allConditionsString);
       
-      // Check if any skip patterns match the conditions
-      const shouldSkip = skipPatterns.some(pattern => pattern.test(allConditions));
+      let shouldRemove = false;
       
-      if (shouldSkip) {
+      // If includeConditions is specified, only include content with those conditions
+      if (options.includeConditions && options.includeConditions.length > 0) {
+        const hasIncludedCondition = conditions.some(condition => 
+          options.includeConditions!.includes(condition)
+        );
+        if (!hasIncludedCondition) {
+          shouldRemove = true; // Remove content that doesn't have any included conditions
+        }
+      }
+      
+      // If excludeConditions is specified, exclude content with those conditions
+      if (options.excludeConditions && options.excludeConditions.length > 0) {
+        const hasExcludedCondition = conditions.some(condition => 
+          options.excludeConditions!.includes(condition)
+        );
+        if (hasExcludedCondition) {
+          shouldRemove = true; // Remove content with excluded conditions
+        }
+      }
+      
+      if (shouldRemove) {
         // Add a comment indicating the removed content
+        const conditionsList = conditions.join(', ');
         const comment = document.createComment(
-          ` Removed content with MadCap conditions: ${madcapConditions || dataMcConditions} `
+          ` Removed content with MadCap conditions: ${conditionsList} `
         );
         element.parentNode?.replaceChild(comment, element);
       }
     });
+  }
+  
+  /**
+   * Parse a condition string into individual conditions
+   * Handles comma-separated, semicolon-separated, and space-separated conditions
+   */
+  private parseConditionString(conditionString: string): string[] {
+    if (!conditionString.trim()) {
+      return [];
+    }
+    
+    // Split by common separators and clean up
+    return conditionString
+      .split(/[,;]/)
+      .map(condition => condition.trim())
+      .filter(condition => condition.length > 0)
+      .map(condition => {
+        // Remove common prefixes/suffixes
+        return condition
+          .replace(/^["']|["']$/g, '') // Remove quotes
+          .replace(/^General\./i, '') // Remove "General." prefix
+          .replace(/^Default\./i, '') // Remove "Default." prefix
+          .trim();
+      })
+      .filter(condition => condition.length > 0);
   }
 
   private removeMicrosoftProperties(html: string): string {
@@ -252,7 +265,7 @@ export class MadCapPreprocessor {
     return result;
   }
 
-  private async processMadCapElementsBatch(document: Document, inputPath?: string): Promise<void> {
+  private async processMadCapElementsBatch(document: Document, inputPath?: string, projectRootPath?: string): Promise<void> {
     // Process MadCap elements with proper snippet resolution
     // Single DOM traversal to find all MadCap elements
     const allElements = Array.from(document.querySelectorAll('*'));
@@ -281,8 +294,8 @@ export class MadCapPreprocessor {
     }
     
     // Process each type efficiently
-    await this.processSnippetBlocks(snippetBlocks, inputPath);
-    await this.processSnippetTexts(snippetTexts, inputPath);
+    await this.processSnippetBlocks(snippetBlocks, inputPath, projectRootPath);
+    await this.processSnippetTexts(snippetTexts, inputPath, projectRootPath);
     this.processDropDowns(dropDowns);
     this.processXrefs(xrefs);
     this.processVariables(variables);
@@ -294,7 +307,7 @@ export class MadCapPreprocessor {
     this.processRemainingXrefs(document);
   }
 
-  private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string): Promise<void> {
+  private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string, projectRootPath?: string): Promise<void> {
     // Process all snippet blocks for seamless content integration
     for (const element of snippetBlocks) {
       const snippetSrc = element.getAttribute('src');
@@ -312,7 +325,7 @@ export class MadCapPreprocessor {
       if (snippetSrc && inputPath) {
         try {
           // Resolve snippet path using MadCap project structure (same as processSnippetTexts)
-          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath);
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath, projectRootPath);
           
           // Resolve snippet path relative to the input document
           
@@ -386,20 +399,37 @@ export class MadCapPreprocessor {
     }
   }
 
-  private async processSnippetTexts(snippetTexts: Element[], inputPath?: string): Promise<void> {
+  private async processSnippetTexts(snippetTexts: Element[], inputPath?: string, projectRootPath?: string): Promise<void> {
     for (const element of snippetTexts) {
       const snippetSrc = element.getAttribute('src');
+      
+      // TEMPORARY FIX: If inputPath is missing, try to construct it from the upload context
+      if (snippetSrc && !inputPath) {
+        console.log(`[SNIPPET DEBUG] inputPath is missing for snippetText! snippetSrc: ${snippetSrc}`);
+        // Create a placeholder similar to processSnippetBlocks
+        const div = element.ownerDocument.createElement('div');
+        div.innerHTML = `<p><strong>⚠️ NO INPUT PATH:</strong> Cannot resolve snippet text ${snippetSrc} without inputPath</p>`;
+        element.parentNode?.replaceChild(div, element);
+        continue;
+      }
       
       if (snippetSrc && inputPath) {
         try {
           // Resolve snippet path from MadCap project root, not relative to current document
           // Snippets are always in /Content/Resources/Snippets/ directory
-          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath);
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath, projectRootPath);
+          
+          // Check if file exists before trying to read it
+          if (!existsSync(snippetPath)) {
+            console.error(`[SNIPPET ERROR] Snippet text file does not exist: ${snippetPath}`);
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+            continue;
+          }
           
           // Check for circular references
           if (this.loadedSnippets.has(snippetPath)) {
             console.warn(`Circular snippet reference detected: ${snippetPath}`);
-            element.remove();
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
             continue;
           }
           
@@ -442,74 +472,111 @@ export class MadCapPreprocessor {
           
         } catch (error) {
           console.warn(`Could not load snippet text ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
-          element.remove();
+          // Create a placeholder instead of removing
+          this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         }
       } else {
-        // Remove element if no valid src
-        element.remove();
+        // Create placeholder if no valid src
+        if (snippetSrc) {
+          console.log(`[SNIPPET DEBUG] Creating placeholder for snippet text with missing inputPath`);
+          this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+        } else {
+          console.log(`[SNIPPET DEBUG] No src attribute on snippet text, removing element`);
+          element.remove();
+        }
       }
     }
+  }
+
+  /**
+   * Find the MadCap project root from an input file path
+   * The project root is the directory that contains Content/, Project/, etc.
+   */
+  private findMadCapProjectRoot(inputPath: string): string {
+    let currentDir = dirname(inputPath);
+    
+    // Walk up the directory tree looking for MadCap project indicators
+    while (currentDir !== dirname(currentDir)) { // Stop at filesystem root
+      const contentDir = join(currentDir, 'Content');
+      const projectDir = join(currentDir, 'Project');
+      
+      // Check if this directory looks like a MadCap project root
+      if (existsSync(contentDir) || existsSync(projectDir)) {
+        console.log(`[SNIPPET RESOLVE] Found MadCap project root: ${currentDir}`);
+        return currentDir;
+      }
+      
+      // Move up one directory level
+      currentDir = dirname(currentDir);
+    }
+    
+    // If we didn't find a clear project root, assume the directory containing the input file
+    const fallbackRoot = dirname(inputPath);
+    console.log(`[SNIPPET RESOLVE] Using fallback project root: ${fallbackRoot}`);
+    return fallbackRoot;
   }
 
   /**
    * Resolve snippet path from MadCap project structure
    * Snippets are always in /Content/Resources/Snippets/ directory
    */
-  private resolveSnippetPath(snippetSrc: string, inputPath: string): string {
-    // Find the MadCap project root by looking for /Content/ directory
-    const projectRoot = this.findMadCapProjectRoot(inputPath);
+  private resolveSnippetPath(snippetSrc: string, inputPath: string, projectRootPath?: string): string {
+    console.log(`[SNIPPET RESOLVE] Resolving snippet: "${snippetSrc}" from input: "${inputPath}", projectRoot: "${projectRootPath}"`);
+    
+    // Use provided project root path if available, otherwise find it from input path
+    const projectRoot = projectRootPath || this.findMadCapProjectRoot(inputPath);
     
     // Clean the snippet source path
     let cleanSnippetSrc = snippetSrc;
     
     // Remove leading ../ patterns that try to go relative
+    const originalSnippetSrc = cleanSnippetSrc;
     cleanSnippetSrc = cleanSnippetSrc.replace(/^(\.\.\/)+/, '');
+    if (originalSnippetSrc !== cleanSnippetSrc) {
+      console.log(`[SNIPPET RESOLVE] Removed relative path prefix: "${originalSnippetSrc}" -> "${cleanSnippetSrc}"`);
+    }
+    
+    // Try multiple possible paths for the snippet
+    const possiblePaths = [];
     
     // If the path already contains Resources/Snippets/, use it directly from Content root
-    if (cleanSnippetSrc.startsWith('Resources/Snippets/')) {
-      const snippetPath = join(projectRoot, 'Content', cleanSnippetSrc);
-      return snippetPath;
+    if (cleanSnippetSrc.includes('Resources/Snippets/') || cleanSnippetSrc.includes('Resources\\Snippets\\')) {
+      const normalizedPath = cleanSnippetSrc.replace(/\\/g, '/');
+      const snippetPart = normalizedPath.substring(normalizedPath.indexOf('Resources/Snippets/'));
+      possiblePaths.push(join(projectRoot, 'Content', snippetPart));
     }
     
-    // Remove leading Snippets/ if present (since we'll add the full path)
-    cleanSnippetSrc = cleanSnippetSrc.replace(/^Snippets\//, '');
+    // Try standard MadCap snippet location
+    const baseSnippetName = cleanSnippetSrc.replace(/^(Resources[\/\\])?Snippets[\/\\]/, '');
+    possiblePaths.push(join(projectRoot, 'Content', 'Resources', 'Snippets', baseSnippetName));
     
-    // Construct the full snippet path
-    const snippetPath = join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
+    // Try relative to current file
+    if (snippetSrc.startsWith('../') || snippetSrc.startsWith('..\\')) {
+      const relativePath = resolve(dirname(inputPath), snippetSrc);
+      possiblePaths.push(relativePath);
+    }
     
-    return snippetPath;
+    // Try as absolute path (in case it's already resolved)
+    if (existsSync(snippetSrc)) {
+      possiblePaths.push(snippetSrc);
+    }
+    
+    // Log all paths we're trying
+    console.log(`[SNIPPET RESOLVE] Trying ${possiblePaths.length} possible paths:`);
+    for (const [index, path] of possiblePaths.entries()) {
+      console.log(`[SNIPPET RESOLVE]   ${index + 1}. ${path}`);
+      if (existsSync(path)) {
+        console.log(`[SNIPPET RESOLVE] ✓ Found at path #${index + 1}: ${path}`);
+        return path;
+      }
+    }
+    
+    // If none found, return the most likely path
+    const defaultPath = possiblePaths[0] || join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
+    console.log(`[SNIPPET RESOLVE] ✗ No snippet found, using default: ${defaultPath}`);
+    return defaultPath;
   }
 
-  /**
-   * Find the MadCap project root directory by walking up from input path
-   */
-  private findMadCapProjectRoot(inputPath: string): string {
-    let currentDir = dirname(inputPath);
-    
-    // Walk up directory tree to find Content directory
-    while (currentDir !== dirname(currentDir)) {
-      const contentDir = join(currentDir, 'Content');
-      try {
-        // Check if Content directory exists
-        if (existsSync(contentDir)) {
-          return currentDir;
-        }
-      } catch (error) {
-        // Continue searching
-      }
-      currentDir = dirname(currentDir);
-    }
-    
-    // Fallback: if no Content directory found, assume current directory structure
-    // Extract path before /Content/ if it exists
-    const contentIndex = inputPath.indexOf('/Content/');
-    if (contentIndex >= 0) {
-      return inputPath.substring(0, contentIndex);
-    }
-    
-    // Ultimate fallback
-    return dirname(inputPath);
-  }
 
   private async processSnippetContent(snippetContent: string): Promise<string> {
     // Clean the snippet content
@@ -1775,8 +1842,8 @@ export class MadCapPreprocessor {
   /**
    * Static method for batch service to check if file should be skipped
    */
-  static shouldSkipFile(content: string): boolean {
+  static shouldSkipFile(content: string, options?: ConversionOptions): boolean {
     const preprocessor = new MadCapPreprocessor();
-    return preprocessor.shouldSkipContent(content);
+    return preprocessor.shouldSkipContent(content, options);
   }
 }

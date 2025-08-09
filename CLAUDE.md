@@ -6,177 +6,159 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **MadCap Converter** - A comprehensive Next.js web application that converts MadCap Flare source files to multiple formats including Markdown, AsciiDoc, and Zendesk-optimized HTML. Provides both modern web interface and MCP server capabilities for AI workflow integration.
 
-## ✅ Status: FULLY RESTORED (July 2025)
-
-All advanced functionality lost in commit b3e2996 has been completely restored:
-- ✅ **28,156 lines** of advanced code from git history  
-- ✅ **20x performance improvement** (0.051s processing time)
-- ✅ **All specialized converters**: AsciiDoc (3,885 lines), HTML (3,119 lines), Writerside Markdown (1,957 lines)
-- ✅ **Enterprise batch processing**: BatchService (2,219 lines) with TOC support
-- ✅ **Complete project generation**: WritersideBatchService (645 lines)
-- ✅ **Production ready**: Build ✅, APIs ✅, UI ✅, Tests ✅ (21+ passing)
-
 ## Key Commands
 
 ```bash
-# Main application
+# Development
 npm run dev           # Next.js development server (port 3000)
 npm run build         # Build for production
 npm start             # Production server
+npm run clean         # Clean build artifacts
+npm run clean:cache   # Clean all caches
 
 # Testing
-npm test              # Complete test suite (Jest + Playwright)
+npm test              # Run all tests
+npm run test:api      # API tests only
+npm run test:components # Component tests only
+npm run test:coverage # Generate coverage report
+npm run test:e2e      # Playwright end-to-end tests
+
+# Code Quality
 npm run lint          # ESLint checks
 npm audit fix --force # Security fixes
-
-# Legacy MCP server (still available)
-npm run build:server  # Build MCP server to build/
-npx @modelcontextprotocol/inspector node build/index.js  # Debug interface
 ```
 
 ## Architecture
 
-### Web Application Structure
+### Core Conversion Flow
 ```
-app/api/              # REST API endpoints
-├── convert/          # Text conversion
-├── convert-file/     # File upload
-├── batch-convert/    # Folder processing
-└── convert-with-toc/ # TOC-based conversion
-
-src/core/             # Conversion logic
-├── converters/       # Format-specific converters
-├── services/         # Processing services
-└── types/           # TypeScript interfaces
+Input → MadCapPreprocessor → Format-Specific Converter → Post-Processing → Output
 ```
 
-### Data Flow
-Web UI → API Routes → Core Services → Converter Classes → Output
+### Key Services and Their Responsibilities
 
-## Output Formats
+**DocumentService** (`src/core/services/document-service.ts`)
+- Main orchestrator for single file conversions
+- Routes to appropriate converter based on format
+- Handles file I/O and error recovery
 
-### Primary Formats (Type System)
-- **`asciidoc`**: Clean AsciiDoc with advanced MadCap Flare support
-- **`writerside-markdown`**: CommonMark-compliant for JetBrains Writerside  
-- **`zendesk`**: Zendesk-optimized HTML with metadata
+**BatchService** (`src/core/services/batch-service.ts`)  
+- Manages folder/batch conversions with progress tracking
+- Two paths: Regular conversion and TOC-based conversion
+- Handles resource copying (images, snippets, variables)
+- **Critical**: Progress calculation must exclude .flsnp files from total count
 
-*Note: Additional converters exist in codebase but not exposed via type system*
+**MadCapPreprocessor** (`src/core/services/madcap-preprocessor.ts`)
+- Processes MadCap-specific elements before conversion
+- Resolves snippets, variables, and cross-references
+- **Known Issue**: Complex nested HTML in snippets can cause stack overflow
 
-## Key Features
+### Converter Classes
 
-### Enhanced Resource Copying System
-- ✅ **No silent failures**: Explicit success/failure reporting
-- ✅ **Smart project structure inference**: Auto-reconstructs MadCap directories
-- ✅ **Real-time progress tracking**: Comprehensive user feedback
-- **Resource types**: Images, snippets (.flsnp), variables (.flvar), TOC files (.fltoc)
+**EnhancedAsciiDocConverter** (`src/core/converters/asciidoc-converter.ts`)
+- Rule-based HTML to AsciiDoc conversion
+- Handles lists, tables, images, and special MadCap elements
+- Generates glossary from .flglo files
 
-### MadCap Flare Processing
-- **Conditional text** (`data-mc-conditions`) → HTML comments or exclusion
-- **Variables** (`data-mc-variable`) → preserved references  
-- **Cross-references** (`data-mc-xref`) → standard links
-- **Snippets** (`data-mc-snippet`) → documented includes
-- **Keyboard formatting** (`<span class="Keyboard">`) → AsciiDoc `kbd:[]` macros
+**WritersideMarkdownConverter** (`src/core/converters/writerside-markdown-converter.ts`)
+- CommonMark 0.31.2 compliant output
+- Optimized for JetBrains Writerside
 
-### AsciiDoc Converter Philosophy
-**Lightweight, syntax-compliant approach** with minimal post-processing:
-- Convert pre-processed HTML to clean AsciiDoc
-- Enhanced list handling with proper nesting
-- **CRITICAL FIX**: Resolved nested alphabetic list numbering (1,2,3 → a,b,c)
-- Proper document structure with attributes and includes
+**ZendeskConverter** (`src/core/converters/zendesk-converter.ts`)
+- Generates Help Center optimized HTML
+- Converts dropdowns to collapsible details
+- Applies inline CSS styling
 
-### Writerside Project Conversion
-Complete MadCap Flare → Writerside project conversion:
-- **Project setup**: `writerside.cfg`, `buildprofiles.xml`, directory structure
-- **Multiple instances**: Auto-generated based on MadCap conditions
-- **Variable integration**: FLVAR → Writerside `v.list` format
-- **Semantic markup**: `<procedure>`, `<note>`, `<tip>` elements
+### Progress Tracking System
 
-### Specialized Content Handlers
-Three advanced handlers integrated into enhanced converters:
+**ProgressSessionManager** (`services/ProgressSessionManager.ts`)
+- Manages Server-Sent Events (SSE) for real-time progress
+- Broadcasts events: file_start, file_progress, file_complete, conversion_complete
+- Sessions expire after 30 minutes
 
-**MathNotationHandler**: LaTeX math, subscripts/superscripts, mathematical symbols
-**CitationHandler**: Academic citations, footnotes, bibliography generation  
-**PerformanceOptimizer**: Document chunking, memory management, parallel processing
+**useProgressStream Hook** (`hooks/useProgressStream.ts`)
+- Client-side SSE connection management
+- **Important**: Only depend on sessionId in useEffect to avoid infinite loops
 
-## File Handling
+## Critical Implementation Details
 
-### Automatic Exclusions
-- **macOS metadata**: `._*` files, `.DS_Store`
-- **MadCap conditions**: `deprecated`, `internal`, `print-only`, etc.
+### File Type Support
+- **Convertible**: .html, .htm, .docx, .doc, .xml
+- **Resources**: .flsnp (snippets), .flvar (variables), .flglo (glossary), .fltoc (TOC)
+- **Excluded from conversion count**: .flsnp files (processed inline)
 
-### Resource Discovery
-Images discovered from standard MadCap locations:
-- `Content/Images/` → `Images/`
-- `Content/Resources/Images/` → `Images/`
-- `Resources/Images/` → `Images/`
-- `Resources/Multimedia/` → `Images/`
+### Variable Extraction
+When extracting variables, the `variableFormat` must be set:
+- AsciiDoc: `'adoc'`
+- Writerside: `'writerside'`
 
-## API Endpoints
+### Resource Discovery Paths
+Images are searched in these locations:
+1. `Content/Images/`
+2. `Content/Resources/Images/`
+3. `Resources/Images/`
+4. `Resources/Multimedia/`
 
-### Core Routes
-- **`POST /api/convert`**: Text/HTML conversion
-- **`POST /api/convert-file`**: Single file upload
-- **`POST /api/batch-convert`**: Folder processing with ZIP output
-- **`POST /api/convert-with-toc`**: TOC-based conversion
-- **`GET /api/formats`**: Supported formats
-
-### Features
-- File upload support (single files and folders)
-- Real-time processing with streaming responses
-- Automatic ZIP generation for batch conversions
-- Comprehensive error handling with Zod validation
-
-## Legacy MCP Tools
-
-12 main tools for AI workflow integration:
-- `convert_document`, `convert_file`, `convert_folder`
-- `convert_to_writerside_project`, `analyze_folder`
-- `discover_tocs`, `convert_with_toc_structure`
-- `parse_toc`, `generate_master_doc`
-- `get_supported_formats`, `validate_links`, `validate_input`
-
-## TypeScript Configuration
-
-- **ES Modules**: `"type": "module"` with `.js` imports
-- **Strict Mode**: Full TypeScript strict mode
-- **Build Target**: ES2022 with ESNext modules
-- **Output**: Compiled to `build/` with source maps
-
-## Development Workflow
-
-1. Edit TypeScript source in `src/`
-2. Run `npm run build` to compile and test
-3. Use MCP inspector for debugging
-4. Test with sample documents in `test-docs/`
-
-## Claude Desktop Integration
-
-```json
+### API Request Format
+Batch conversion with all options:
+```javascript
 {
-  "mcpServers": {
-    "madcap-converter": {
-      "command": "node",
-      "args": ["/absolute/path/to/madcap-converter/build/index.js"]
-    }
+  format: 'asciidoc',
+  copyImages: true,
+  preserveStructure: true,
+  variableOptions: { extractVariables: true },
+  asciidocOptions: { 
+    glossaryOptions: { includeGlossary: true }
   }
 }
 ```
 
-## AsciiDoc Project Structure Reference
+## Common Development Tasks
 
-```
-projekt/
-  src/docs/asciidoc/
-    includes/
-      attributes.adoc       # Central variables/attributes
-      variables.adoc
-    chapters/
-      01_introduction.adoc
-      02_grundlagen/
-        01_uebersicht.adoc
-        02_details.adoc
-    images/
-    main.adoc              # Master document with includes
+### Running a Single Test
+```bash
+# Run specific test file
+npm test -- path/to/test.test.ts
+
+# Run tests matching pattern
+npm test -- --testNamePattern="should convert"
+
+# Debug test
+node --inspect-brk node_modules/.bin/jest --runInBand path/to/test.test.ts
 ```
 
-Variables can be stored in one or multiple files across different directories, commonly in `includes/`, `common/`, or `locale/` folders. They're included via `include::` directives for project-wide usage.
+### Testing File Conversions
+```bash
+# Test single file conversion
+curl -F "file=@test.html" -F "format=asciidoc" http://localhost:3000/api/convert-file
+
+# Test batch conversion
+curl -F "files=@file1.html" -F "files=@file2.html" -F "format=asciidoc" \
+  -F "options={\"copyImages\":true}" http://localhost:3000/api/batch-convert
+```
+
+### Debugging Progress Issues
+1. Check server logs for "BatchService TOC" entries
+2. Verify file count analysis shows correct convertible vs total files
+3. Look for progress percentage calculations in logs
+
+## TypeScript Configuration
+
+- **ES Modules**: All imports must use `.js` extension
+- **Path Aliases**: `@/` maps to project root
+- **Strict Mode**: Enabled - handle all nullable types
+- **Target**: ES2022 with ESNext module resolution
+
+## Testing Strategy
+
+- **API Tests**: Test REST endpoints with real file conversions
+- **Component Tests**: React component behavior with jsdom
+- **Core Tests**: Converter logic and service functionality
+- **E2E Tests**: Full user workflows with Playwright
+
+## Recent Critical Fixes
+
+1. **Progress Tracking**: Fixed .flsnp files inflating progress denominator
+2. **Variable Extraction**: Added missing variableFormat parameter
+3. **SSE Memory Leak**: Fixed useEffect dependency causing infinite reconnections
+4. **Duplicate Methods**: Resolved duplicate findMadCapProjectRoot implementations

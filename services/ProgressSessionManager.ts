@@ -1,8 +1,10 @@
-import { v4 as uuidv4 } from 'uuid'
 import { ConversionSession, ProgressClient, ProgressEvent, ProgressEventType, ProgressEventFactory, ProgressEventData } from './progress-types'
+import { randomUUID } from 'crypto'
+import { SessionReadyManager } from './SessionReadyManager'
 
 export class ProgressSessionManager {
   private static instance: ProgressSessionManager
+  private static instancePromise: Promise<ProgressSessionManager> | null = null
   private sessions: Map<string, ConversionSession> = new Map()
   private clients: Map<string, ProgressClient> = new Map()
   private sessionClients: Map<string, Set<string>> = new Map()
@@ -12,43 +14,125 @@ export class ProgressSessionManager {
   private readonly CLEANUP_INTERVAL = 1000 * 60     // 1 minute
   
   private cleanupInterval?: NodeJS.Timeout
+  private isInitialized = false
 
   private constructor() {
-    this.startCleanup()
+    console.log('📊 [SessionManager] Initializing ProgressSessionManager')
+    this.initialize()
+  }
+
+  private async initialize() {
+    try {
+      await this.startCleanup()
+      this.isInitialized = true
+      console.log('📊 [SessionManager] ProgressSessionManager initialized successfully')
+    } catch (error) {
+      console.error('❌ [SessionManager] Failed to initialize ProgressSessionManager:', error)
+      throw error
+    }
   }
 
   static getInstance(): ProgressSessionManager {
-    if (!ProgressSessionManager.instance) {
-      ProgressSessionManager.instance = new ProgressSessionManager()
+    try {
+      if (!ProgressSessionManager.instance) {
+        console.log('📊 [SessionManager] Creating new singleton instance')
+        ProgressSessionManager.instance = new ProgressSessionManager()
+      } else {
+        console.log('📊 [SessionManager] Returning existing singleton instance')
+      }
+      
+      // Verify instance is properly initialized
+      if (!ProgressSessionManager.instance.isInitialized) {
+        console.warn('⚠️ [SessionManager] Instance not fully initialized yet')
+      }
+      
+      return ProgressSessionManager.instance
+    } catch (error) {
+      console.error('❌ [SessionManager] Failed to get singleton instance:', error)
+      throw new Error(`Singleton initialization failed: ${error instanceof Error ? error.message : String(error)}`)
     }
-    return ProgressSessionManager.instance
+  }
+
+  // Health check method for serverless environments
+  public isHealthy(): boolean {
+    return this.isInitialized && 
+           this.sessions !== undefined && 
+           this.clients !== undefined && 
+           this.sessionClients !== undefined
+  }
+
+  // UUID generation with fallback
+  private generateUUID(): string {
+    try {
+      // Use Node.js built-in crypto.randomUUID (Node 19+)
+      return randomUUID()
+    } catch (error) {
+      console.warn('crypto.randomUUID not available, using fallback UUID generation')
+      // Fallback to simple UUID v4 implementation
+      return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
+        const r = Math.random() * 16 | 0
+        const v = c === 'x' ? r : (r & 0x3 | 0x8)
+        return v.toString(16)
+      })
+    }
   }
 
   // Session Management
   createSession(totalFiles: number = 0): string {
-    const sessionId = uuidv4()
-    const session: ConversionSession = {
-      id: sessionId,
-      startTime: Date.now(),
-      status: 'active',
-      totalFiles,
-      completedFiles: 0,
-      errors: [],
-      warnings: [],
-      results: [],
-      lastUpdate: Date.now(),
-      clientCount: 0
+    try {
+      const sessionId = this.generateUUID()
+      console.log(`📊 Generating session ID: ${sessionId}`)
+      
+      // Register session as pending with SessionReadyManager
+      const sessionReadyManager = SessionReadyManager.getInstance()
+      sessionReadyManager.registerPendingSession(sessionId)
+      
+      const session: ConversionSession = {
+        id: sessionId,
+        startTime: Date.now(),
+        status: 'active',
+        totalFiles,
+        completedFiles: 0,
+        errors: [],
+        warnings: [],
+        results: [],
+        lastUpdate: Date.now(),
+        clientCount: 0
+      }
+      
+      this.sessions.set(sessionId, session)
+      this.sessionClients.set(sessionId, new Set())
+      
+      // Mark session as ready for connections
+      sessionReadyManager.markSessionReady(sessionId)
+      
+      console.log(`📊 Successfully created session ${sessionId} for ${totalFiles} files`)
+      console.log(`📊 Total active sessions: ${this.sessions.size}`)
+      
+      return sessionId
+    } catch (error) {
+      console.error('❌ Failed to create session:', error)
+      console.error('Error details:', {
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+        totalFiles,
+        timestamp: new Date().toISOString()
+      })
+      throw new Error(`Session creation failed: ${error instanceof Error ? error.message : String(error)}`)
     }
-    
-    this.sessions.set(sessionId, session)
-    this.sessionClients.set(sessionId, new Set())
-    
-    console.log(`📊 Created session ${sessionId} for ${totalFiles} files`)
-    return sessionId
   }
 
   getSession(sessionId: string): ConversionSession | undefined {
     return this.sessions.get(sessionId)
+  }
+  
+  sessionExists(sessionId: string): boolean {
+    return this.sessions.has(sessionId)
+  }
+  
+  getSessionStatus(sessionId: string): string | null {
+    const session = this.sessions.get(sessionId)
+    return session ? session.status : null
   }
 
   updateSession(sessionId: string, updates: Partial<ConversionSession>): void {
@@ -60,12 +144,17 @@ export class ProgressSessionManager {
   }
 
   completeSession(sessionId: string, results: any = []): void {
+    console.log(`🔔 [SessionManager] Completing session ${sessionId} with results:`, results);
     const session = this.sessions.get(sessionId)
     if (session) {
+      const sessionClientSet = this.sessionClients.get(sessionId);
+      const connectionCount = sessionClientSet?.size || 0;
+      console.log(`📊 [SessionManager] Session found: ${connectionCount} connections`);
       session.status = 'completed'
       session.results = results
       session.lastUpdate = Date.now()
       
+      console.log(`📡 [SessionManager] Broadcasting conversion_complete to ${connectionCount} connections`);
       this.broadcastToSession(sessionId, ProgressEventFactory.create(
         sessionId,
         'conversion_complete',
@@ -77,8 +166,15 @@ export class ProgressSessionManager {
         }
       ))
       
-      console.log(`✅ Completed session ${sessionId}`)
+      console.log(`✅ [SessionManager] Completed session ${sessionId}`)
+    } else {
+      console.log(`⚠️ [SessionManager] Session ${sessionId} not found for completion!`);
     }
+      
+    // Keep session alive for 30 seconds after completion to allow final SSE connections
+    setTimeout(() => {
+      this.cleanupSession(sessionId)
+    }, 30000)
   }
 
   errorSession(sessionId: string, error: string, errorStack?: string): void {
@@ -100,7 +196,7 @@ export class ProgressSessionManager {
 
   // Client Management
   addClient(sessionId: string, controller: ReadableStreamDefaultController): string {
-    const clientId = uuidv4()
+    const clientId = this.generateUUID()
     const client: ProgressClient = {
       id: clientId,
       sessionId,

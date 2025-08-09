@@ -101,6 +101,12 @@ export function ProgressTracker({
     return () => clearInterval(interval)
   }, [isProcessing, startTime])
 
+  // Calculate statistics first (needed by useEffect dependencies)
+  const totalFiles = files.length
+  const errorCount = errors.length
+  const warningCount = warnings.length
+  const remainingFiles = totalFiles - completedFiles - errorCount
+
   // Reset on new session
   useEffect(() => {
     if (sessionId) {
@@ -111,7 +117,20 @@ export function ProgressTracker({
 
   // Handle completion
   useEffect(() => {
-    if (!isProcessing && uploadProgress === 100 && results.length > 0) {
+    console.log(`🔍 [ProgressTracker] Completion check:`, {
+      isProcessing,
+      uploadProgress,
+      resultsLength: results.length,
+      completedFiles,
+      totalFiles,
+      sessionId
+    });
+    
+    // Check if conversion completed - either by having results or by reaching 100% with completed files
+    const hasCompleted = !isProcessing && uploadProgress === 100 && (results.length > 0 || completedFiles > 0);
+    
+    if (hasCompleted) {
+      console.log(`✅ [ProgressTracker] Calling onComplete() - conversion finished`);
       onComplete?.()
       if (autoHide) {
         setTimeout(() => {
@@ -119,13 +138,7 @@ export function ProgressTracker({
         }, 3000)
       }
     }
-  }, [isProcessing, uploadProgress, results.length, onComplete, autoHide])
-
-  // Calculate statistics
-  const totalFiles = files.length
-  const errorCount = errors.length
-  const warningCount = warnings.length
-  const remainingFiles = totalFiles - completedFiles - errorCount
+  }, [isProcessing, uploadProgress, results.length, completedFiles, totalFiles, onComplete, autoHide, sessionId])
   
   const estimatedTimeRemaining = completedFiles > 0 && elapsedTime > 0
     ? ((elapsedTime / completedFiles) * remainingFiles)

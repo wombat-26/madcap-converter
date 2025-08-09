@@ -299,8 +299,8 @@ export class InputValidator {
 
     // Validate boolean options
     if (typeof options.extractVariables !== 'undefined' && typeof options.extractVariables !== 'boolean') {
-      warnings.push('extractVariables should be boolean, defaulting to false');
-      sanitizedOptions.extractVariables = false;
+      warnings.push('extractVariables should be boolean, defaulting to true');
+      sanitizedOptions.extractVariables = true;
     }
 
     if (typeof options.preserveVariableStructure !== 'undefined' && typeof options.preserveVariableStructure !== 'boolean') {

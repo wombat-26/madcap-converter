@@ -112,7 +112,7 @@ export async function POST(request: NextRequest) {
     await rm(tempDir, { recursive: true, force: true });
     
     // Return zip file
-    return new NextResponse(zipBuffer, {
+    return new NextResponse(zipBuffer as any, {
       headers: {
         'Content-Type': 'application/zip',
         'Content-Disposition': 'attachment; filename=converted-toc-project.zip',

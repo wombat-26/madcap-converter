@@ -301,12 +301,11 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   
   private async convertChunk(input: string, options: ConversionOptions): Promise<string> {
     // MadCap preprocessing
-    const preprocessed = await this.madCapPreprocessor.preprocessMadCapContent(input, options.inputPath);
+    const preprocessed = await this.madCapPreprocessor.preprocessMadCapContent(input, options.inputPath, undefined, options.projectRootPath, options);
     
     // HTML preprocessing
     const cleaned = await this.htmlPreprocessor.preprocess(preprocessed);
     
-    console.log('EnhancedAsciiDocConverter: Cleaned HTML:', cleaned.substring(0, 500));
     
     // Parse with JSDOM
     const dom = new JSDOM(cleaned);
@@ -587,9 +586,9 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     const href = link.getAttribute('href') || '';
     const text = link.textContent || '';
     
-    // Convert .htm/.html to .adoc for cross-references
-    if (href.match(/\.htm(l)?$/)) {
-      const cleanHref = href.replace(/\.htm(l)?$/, '.adoc');
+    // Convert .htm/.html to .adoc for cross-references (handle hash fragments)
+    if (href.match(/\.htm(l)?(#|$)/)) {
+      const cleanHref = href.replace(/\.htm(l)?(#|$)/, '.adoc$2');
       return `xref:${cleanHref}[${text}]`;
     }
     

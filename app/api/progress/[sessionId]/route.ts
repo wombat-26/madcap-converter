@@ -13,9 +13,21 @@ export async function GET(
   // Use dynamic imports to avoid ES module issues
   const { ProgressSessionManager } = await import('../../../../services/ProgressSessionManager')
   const { ProgressEventFactory } = await import('../../../../services/progress-types')
+  const { SessionReadyManager } = await import('../../../../services/SessionReadyManager')
   
   // Get the session manager instance
   const sessionManager = ProgressSessionManager.getInstance()
+  const sessionReadyManager = SessionReadyManager.getInstance()
+  
+  // Check if session is pending and wait for it to be ready
+  if (sessionReadyManager.isSessionPending(sessionId)) {
+    console.log(`⏳ Session ${sessionId} is pending initialization, waiting...`)
+    const isReady = await sessionReadyManager.waitForSession(sessionId, 5000)
+    if (!isReady) {
+      console.error(`❌ Session ${sessionId} initialization timeout`)
+      return new NextResponse('Session initialization timeout', { status: 408 })
+    }
+  }
   
   // Check if session exists
   console.log(`🔍 Looking for session ${sessionId}`)
@@ -29,6 +41,34 @@ export async function GET(
   }
   
   console.log(`✅ Found session ${sessionId}:`, session.status)
+  
+  // If session is already completed, send completion event immediately and close
+  if (session.status === 'completed') {
+    console.log(`📋 Session ${sessionId} already completed, sending completion event`)
+    const completionStream = new ReadableStream({
+      start(controller) {
+        const completionEvent = ProgressEventFactory.create(sessionId, 'conversion_complete', {
+          totalFiles: session.totalFiles,
+          completedFiles: session.completedFiles,
+          results: session.results,
+          overallPercentage: 100
+        })
+        controller.enqueue(new TextEncoder().encode(ProgressEventFactory.toSSE(completionEvent)))
+        setTimeout(() => controller.close(), 100)
+      }
+    })
+    
+    return new NextResponse(completionStream, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive',
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'GET, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      },
+    })
+  }
 
   // Create a ReadableStream for Server-Sent Events
   const stream = new ReadableStream({

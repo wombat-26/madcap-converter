@@ -54,6 +54,7 @@ export class BatchService {
   private documentService: DocumentService;
   private tocDiscoveryService: TOCDiscoveryService;
   private tocService: TocService;
+  // Include all MadCap file types including .flsnp for proper resource availability
   private supportedExtensions = new Set(['html', 'htm', 'docx', 'doc', 'xml', 'flsnp', 'flpgl', 'fltoc']);
 
   constructor() {
@@ -67,6 +68,9 @@ export class BatchService {
     outputDir: string,
     options: BatchConversionOptions = {}
   ): Promise<BatchConversionResult> {
+    console.log(`🚀 [BatchService] Starting conversion: ${inputDir} -> ${outputDir}`);
+    console.log(`🚀 [BatchService] Options:`, JSON.stringify(options, null, 2));
+    console.log(`🚀 [BatchService] Has onProgress callback:`, !!options.onProgress);
     // TODO: Restore WritersideBatchService for Writerside project generation
     /*
     if (options.format === 'writerside-markdown' && options.writersideOptions?.createProject) {
@@ -117,10 +121,12 @@ export class BatchService {
 
     // Handle TOC-based conversion if requested
     if (options.useTOCStructure) {
+      console.log(`📋 [BatchService] Using TOC-based conversion (useTOCStructure=true)`);
       return this.convertFolderWithTOCStructure(inputDir, outputDir, options, result);
     }
 
     // Use regular folder conversion for non-TOC based conversions
+    console.log(`📋 [BatchService] Using regular folder conversion (useTOCStructure=false/undefined)`);
     return this.convertFolderRegular(inputDir, outputDir, options, result);
   }
 
@@ -443,6 +449,7 @@ export class BatchService {
     console.log(`📂 Source root: ${sourceRootDir}`);
     console.log(`📂 Target root: ${targetRootDir}`);
     
+    // First, check for standard MadCap directory structures
     for (const mapping of imageDirMappings) {
       const sourceImageDir = join(sourceRootDir, mapping.source);
       const targetImageDir = join(targetRootDir, mapping.target);
@@ -479,6 +486,58 @@ export class BatchService {
           result.errors.push(errorMsg);
         }
         continue;
+      }
+    }
+    
+    // If no standard directories were found, search for any directories containing images
+    if (!result.success) {
+      console.log(`🔍 No standard image directories found. Searching for any directories with images...`);
+      const foundImageDirs = await this.searchForImageDirectories(sourceRootDir, imageExtensions);
+      
+      if (foundImageDirs.length > 0) {
+        console.log(`✅ Found ${foundImageDirs.length} directories containing images:`);
+        foundImageDirs.forEach(dir => console.log(`  - ${dir}`));
+        
+        const targetImageDir = join(targetRootDir, 'Images');
+        
+        for (const imageDir of foundImageDirs) {
+          try {
+            console.log(`📂 Copying images from: ${imageDir}`);
+            await this.copyDirectoryRecursive(imageDir, targetImageDir, imageExtensions);
+            result.copiedDirectories.push(imageDir.replace(sourceRootDir + '/', ''));
+            result.success = true;
+          } catch (copyError) {
+            const errorMsg = `Failed to copy images from ${imageDir}: ${copyError instanceof Error ? copyError.message : String(copyError)}`;
+            console.error(`❌ ${errorMsg}`);
+            result.errors.push(errorMsg);
+          }
+        }
+      } else {
+        console.log(`❌ No directories containing images found in the uploaded content`);
+        
+        // Last resort: search for individual image files anywhere in the structure
+        console.log(`🔍 Searching for individual image files...`);
+        const imageFiles = await this.findAllImageFiles(sourceRootDir, imageExtensions);
+        
+        if (imageFiles.length > 0) {
+          console.log(`✅ Found ${imageFiles.length} image files scattered in the structure`);
+          const targetImageDir = join(targetRootDir, 'Images');
+          await this.ensureDirectoryExists(targetImageDir);
+          
+          for (const imagePath of imageFiles) {
+            try {
+              const fileName = basename(imagePath);
+              const targetPath = join(targetImageDir, fileName);
+              await copyFile(imagePath, targetPath);
+              console.log(`📸 Copied: ${fileName}`);
+            } catch (copyError) {
+              console.error(`❌ Failed to copy ${imagePath}:`, copyError);
+            }
+          }
+          
+          result.success = imageFiles.length > 0;
+          result.copiedDirectories.push('(individual files)');
+        }
       }
     }
     
@@ -529,6 +588,12 @@ export class BatchService {
       const stats = await stat(sourcePath);
       
       if (stats.isDirectory()) {
+        // Check if this directory should be excluded
+        if (this.shouldExcludeDirectory(sourcePath, entry)) {
+          console.log(`🚫 [DEBUG] Excluding directory: ${sourcePath} (${this.getExclusionReason(sourcePath, entry)})`);
+          continue;
+        }
+        
         console.log(`📁 [DEBUG] Recursively copying directory: ${sourcePath} -> ${targetPath}`);
         await this.copyDirectoryRecursive(sourcePath, targetPath, allowedExtensions);
       } else if (stats.isFile()) {
@@ -542,6 +607,69 @@ export class BatchService {
         }
       }
     }
+  }
+
+  /**
+   * Determines if a directory should be excluded from copying
+   */
+  private shouldExcludeDirectory(fullPath: string, dirName: string): boolean {
+    // Convert to lowercase for case-insensitive matching
+    const normalizedPath = fullPath.toLowerCase();
+    const normalizedName = dirName.toLowerCase();
+    
+    // Exclude snippets directories - these contain .flsnp source files that get converted to content
+    if (normalizedName === 'snippets' || normalizedPath.includes('/snippets')) {
+      console.log(`🚫 [EXCLUSION DEBUG] Excluding snippets directory: ${fullPath} (${dirName})`);
+      return true;
+    }
+    
+    // Exclude PageLayouts directories - design templates not needed in output
+    if (normalizedName === 'pagelayouts' || normalizedPath.includes('/pagelayouts')) {
+      return true;
+    }
+    
+    // Exclude VariableSets directories - .flvar files get processed into variables.adoc
+    if (normalizedName === 'variablesets' || normalizedPath.includes('/variablesets')) {
+      return true;
+    }
+    
+    // Exclude TOCs directories - .fltoc files get processed into structure
+    if (normalizedName === 'tocs' || normalizedPath.includes('/tocs')) {
+      return true;
+    }
+    
+    // Exclude Stylesheets directories - CSS gets embedded or processed separately
+    if (normalizedName === 'stylesheets' || normalizedPath.includes('/stylesheets')) {
+      return true;
+    }
+    
+    return false;
+  }
+
+  /**
+   * Gets the reason why a directory was excluded (for logging)
+   */
+  private getExclusionReason(fullPath: string, dirName: string): string {
+    const normalizedPath = fullPath.toLowerCase();
+    const normalizedName = dirName.toLowerCase();
+    
+    if (normalizedName === 'snippets' || normalizedPath.includes('/snippets')) {
+      return 'snippets directory - content gets converted, source files not needed';
+    }
+    if (normalizedName === 'pagelayouts' || normalizedPath.includes('/pagelayouts')) {
+      return 'page layouts directory - design templates not needed';
+    }
+    if (normalizedName === 'variablesets' || normalizedPath.includes('/variablesets')) {
+      return 'variable sets directory - .flvar files processed into variables.adoc';
+    }
+    if (normalizedName === 'tocs' || normalizedPath.includes('/tocs')) {
+      return 'TOCs directory - .fltoc files processed into document structure';
+    }
+    if (normalizedName === 'stylesheets' || normalizedPath.includes('/stylesheets')) {
+      return 'stylesheets directory - CSS handled separately';
+    }
+    
+    return 'unknown exclusion reason';
   }
 
   private determineInputType(extension: string): 'html' | 'word' | 'madcap' {
@@ -665,11 +793,13 @@ export class BatchService {
     options: BatchConversionOptions,
     result: BatchConversionResult
   ): Promise<BatchConversionResult> {
-    // Starting TOC-based conversion from ${inputDir} to ${outputDir}
+    console.log(`📖 [BatchService TOC] Starting TOC-based conversion from ${inputDir} to ${outputDir}`);
+    console.log(`📖 [BatchService TOC] Has onProgress callback:`, !!options.onProgress);
     
     try {
       // Discover all TOC files in the project
       const tocDiscovery = await this.tocDiscoveryService.discoverAllTOCs(inputDir);
+      console.log(`📖 [BatchService TOC] Found ${tocDiscovery.tocStructures.length} TOC files`);
       
       if (tocDiscovery.tocStructures.length === 0) {
         // No TOC files found or parsed successfully. Falling back to regular folder conversion.
@@ -733,9 +863,25 @@ export class BatchService {
         }
       }
       
-      // Process glossary files if requested (only for AsciiDoc format)
-      if (options.format === 'asciidoc' && options.asciidocOptions?.glossaryOptions?.includeGlossary) {
+      // Process glossary files if requested (only for AsciiDoc format)  
+      // Check both nested (asciidocOptions.glossaryOptions) and top-level (glossaryOptions) structures
+      const shouldProcessGlossaryTOC = options.format === 'asciidoc' && (
+        options.asciidocOptions?.glossaryOptions?.includeGlossary || 
+        (options as any).glossaryOptions?.includeGlossary
+      );
+      
+      console.log(`🔍 [BatchService TOC] Glossary processing check:`, {
+        format: options.format,
+        nestedGlossaryOptions: !!options.asciidocOptions?.glossaryOptions?.includeGlossary,
+        topLevelGlossaryOptions: !!(options as any).glossaryOptions?.includeGlossary,
+        shouldProcessGlossary: shouldProcessGlossaryTOC
+      });
+      
+      if (shouldProcessGlossaryTOC) {
+        console.log(`📚 [BatchService TOC] Processing glossary files...`);
         await this.processGlossaryFiles(inputDir, outputDir, options, result);
+      } else {
+        console.log(`⏭️ [BatchService TOC] Skipping glossary processing - format: ${options.format}`);
       }
       
       // TOC-BASED CONVERSION SUMMARY:
@@ -782,7 +928,53 @@ export class BatchService {
     }
     
     // Process each file according to TOC mapping
-    for (const [originalPath, targetPath] of fileMapping.entries()) {
+    const fileMappingEntries = Array.from(fileMapping.entries());
+    
+    // Calculate actual convertible files (exclude .flsnp files from progress calculation)
+    const convertibleFiles = fileMappingEntries.filter(([originalPath]) => 
+      !originalPath.toLowerCase().endsWith('.flsnp')
+    );
+    const totalFiles = convertibleFiles.length;
+    
+    console.log(`📖 [BatchService TOC] File count analysis:`, {
+      totalMappedFiles: fileMappingEntries.length,
+      convertibleFiles: totalFiles,
+      snippetFiles: fileMappingEntries.length - totalFiles
+    });
+    
+    let convertibleFileIndex = 0; // Counter for actual convertible files
+    
+    for (let fileIndex = 0; fileIndex < fileMappingEntries.length; fileIndex++) {
+      const [originalPath, targetPath] = fileMappingEntries[fileIndex];
+      
+      // Skip .flsnp files - they should only be processed inline during MadCap conversion
+      if (originalPath.toLowerCase().endsWith('.flsnp')) {
+        console.log(`⏭️ [TOC] Skipping snippet file (will be processed inline): ${originalPath}`);
+        continue;
+      }
+      
+      // Increment convertible file counter
+      convertibleFileIndex++;
+      
+      // Report progress for current convertible file
+      if (options.onProgress) {
+        const percentage = Math.round((convertibleFileIndex / totalFiles) * 100);
+        console.log(`📖 [BatchService TOC] Sending progress: ${convertibleFileIndex}/${totalFiles} (${percentage}%) - ${basename(originalPath)}`);
+        options.onProgress({
+          currentFile: basename(originalPath),
+          currentFileIndex: convertibleFileIndex,
+          totalFiles: totalFiles,
+          percentage,
+          status: 'converting',
+          message: `Converting ${basename(originalPath)}...`
+        });
+      }
+      
+      // Declare variables at function scope so they're available in catch block and image copying
+      let conversionResult: any;
+      let actualInputPath: string = originalPath; // Default to originalPath
+      let finalOutputPath: string = join(outputDir, targetPath); // Default path
+      
       try {
         // Resolve full input path (originalPath is relative to Content directory)
         const fullInputPath = this.resolveContentPath(originalPath, inputDir);
@@ -801,10 +993,11 @@ export class BatchService {
         }
         
         // Use the resolved path for processing
-        const actualInputPath = resolvedPath;
+        actualInputPath = resolvedPath;
+        
         
         // Handle renameFiles option: if enabled, extract H1 for filename but preserve TOC directory structure
-        let finalOutputPath = fullOutputPath;
+        finalOutputPath = fullOutputPath;
         if (options.renameFiles) {
           try {
             const h1Text = await this.extractH1Text(actualInputPath);
@@ -829,8 +1022,8 @@ export class BatchService {
         const content = await readFile(actualInputPath, 'utf8');
         if (this.containsMadCapContent(content)) {
           const shouldSkip = options.format === 'zendesk' 
-            ? ZendeskConverter.shouldSkipFile(content)
-            : MadCapConverter.shouldSkipFile(content);
+            ? ZendeskConverter.shouldSkipFile(content, options as ConversionOptions)
+            : MadCapConverter.shouldSkipFile(content, options as ConversionOptions);
             
           if (shouldSkip) {
             const reason = `MadCap conditions indicate content should be skipped`;
@@ -876,6 +1069,7 @@ export class BatchService {
           outputDir: dirname(finalOutputPath),
           rewriteLinks: true,
           pathDepth, // Pass path depth for image path resolution
+          projectRootPath: inputDir, // Pass the temp project root for snippet resolution
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
             variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
@@ -884,11 +1078,44 @@ export class BatchService {
           zendeskOptions: options.zendeskOptions
         };
 
-        const conversionResult = await this.documentService.convertFile(
-          actualInputPath,
-          finalOutputPath,
-          conversionOptions
-        );
+        // Add timeout with heartbeat to prevent individual files from stalling entire batch
+        const FILE_CONVERSION_TIMEOUT = 30000; // 30 seconds per file
+        const HEARTBEAT_INTERVAL = 5000; // Send heartbeat every 5 seconds
+        
+        let heartbeatTimer: NodeJS.Timeout | null = null;
+        
+        try {
+          // Start heartbeat to keep progress connection alive during long file conversions
+          if (options.onProgress) {
+            heartbeatTimer = setInterval(() => {
+              options.onProgress!({
+                currentFile: basename(originalPath),
+                currentFileIndex: fileIndex + 1,
+                totalFiles: totalFiles,
+                percentage: Math.round((fileIndex / totalFiles) * 100),
+                status: 'converting',
+                message: `Processing ${basename(originalPath)}... (${Math.floor((Date.now() % 60000) / 1000)}s)`,
+                phase: 'file_processing'
+              });
+            }, HEARTBEAT_INTERVAL);
+          }
+          
+          conversionResult = await Promise.race([
+            this.documentService.convertFile(
+              actualInputPath,
+              finalOutputPath,
+              conversionOptions
+            ),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`File conversion timeout after ${FILE_CONVERSION_TIMEOUT/1000}s`)), FILE_CONVERSION_TIMEOUT)
+            )
+          ]);
+        } finally {
+          // Always clear heartbeat timer
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+          }
+        }
 
         // Handle external stylesheet generation (write only once per batch)
         if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
@@ -903,17 +1130,6 @@ export class BatchService {
           }
         }
 
-        // Handle image copying using the shared method
-        imageDirectoriesCopied = await this.handleImageCopying(
-          inputDir,
-          outputDir,
-          options,
-          imageDirectoriesCopied,
-          conversionResult,
-          actualInputPath,
-          finalOutputPath
-        );
-
         result.results.push({
           inputPath: actualInputPath,
           outputPath: finalOutputPath,
@@ -925,11 +1141,41 @@ export class BatchService {
         
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        // ERROR: ${originalPath} - ${errorMessage}
+        console.error(`❌ [TOC Batch] File conversion failed: ${originalPath}`, {
+          error: errorMessage,
+          actualInputPath,
+          finalOutputPath,
+          fileIndex: fileIndex + 1,
+          totalFiles
+        });
+        
         result.errors.push({
           file: originalPath,
-          error: errorMessage
+          error: `[File ${fileIndex + 1}/${totalFiles}] ${errorMessage}`
         });
+        
+        // Create a dummy conversionResult for failed files so image copying still works
+        conversionResult = { metadata: { images: [] } };
+      }
+
+      // Handle image copying OUTSIDE try/catch so it always runs  
+      // This ensures image directories are copied even if some individual files fail
+      console.log(`🔥 [CRITICAL TOC] About to call handleImageCopying for file: ${actualInputPath}`);
+      console.log(`🔥 [CRITICAL TOC] Options received: copyImages=${options.copyImages}, format=${options.format}`);
+      try {
+        imageDirectoriesCopied = await this.handleImageCopying(
+          inputDir,
+          outputDir,
+          options,
+          imageDirectoriesCopied,
+          conversionResult,
+          actualInputPath,
+          finalOutputPath
+        );
+        console.log(`🔥 [CRITICAL TOC] handleImageCopying completed, imageDirectoriesCopied=${imageDirectoriesCopied}`);
+      } catch (imageCopyError) {
+        console.error(`❌ Image copying failed for ${actualInputPath}:`, imageCopyError);
+        // Don't let image copying errors stop the entire process
       }
     }
     
@@ -950,12 +1196,16 @@ export class BatchService {
           const includesDir = join(outputDir, 'includes');
           await this.ensureDirectoryExists(includesDir);
           variablesPath = join(includesDir, 'variables.adoc');
+          console.log(`📄 [BatchService] Using AsciiDoc variables path: ${variablesPath}`);
         }
         
         // Ensure directory exists for the variables file
+        console.log(`📁 [BatchService] Creating directory: ${dirname(variablesPath)}`);
         await this.ensureDirectoryExists(dirname(variablesPath));
+        
+        console.log(`📄 [BatchService] Writing variables file: ${variablesPath} (${variablesFile.length} chars)`);
         await writeFile(variablesPath, variablesFile, 'utf8');
-        // Generated combined variables file at ${variablesPath}
+        console.log(`✅ [BatchService] Generated combined variables file at ${variablesPath}`);
       }
     }
     
@@ -1873,8 +2123,12 @@ export class BatchService {
     options: BatchConversionOptions,
     result: BatchConversionResult
   ): Promise<BatchConversionResult> {
+    console.log(`📁 [BatchService Regular] Starting regular folder conversion from ${inputDir} to ${outputDir}`);
+    console.log(`📁 [BatchService Regular] Has onProgress callback:`, !!options.onProgress);
+    
     // Report discovery phase
     if (options.onProgress) {
+      console.log(`📁 [BatchService Regular] Sending discovery progress event`);
       options.onProgress({
         currentFile: '',
         currentFileIndex: 0,
@@ -1906,15 +2160,36 @@ export class BatchService {
     let imageDirectoriesCopied = false;
     
     // Create a shared variable extractor for batch processing
+    console.log(`🔍 [BatchService Regular] Variable extraction setup:`, {
+      extractVariables: options.variableOptions?.extractVariables,
+      variableOptions: options.variableOptions,
+      inputDir
+    });
+    
     const { VariableExtractor } = await import('./variable-extractor');
     const batchVariableExtractor = options.variableOptions?.extractVariables 
       ? new VariableExtractor()
       : null;
     
+    console.log(`🔍 [BatchService Regular] VariableExtractor created:`, {
+      hasExtractor: !!batchVariableExtractor,
+      extractVariables: options.variableOptions?.extractVariables
+    });
+    
     // Extract all variables from .flvar files in the Flare project
     if (batchVariableExtractor) {
-      const projectRoot = this.findProjectRoot(inputDir);
-      await batchVariableExtractor.extractAllVariablesFromProject(projectRoot);
+      // Use inputDir as project root since uploaded files contain the full project structure
+      const projectRoot = inputDir;
+      console.log(`🔍 [BatchService Regular] Extracting variables from project root: ${projectRoot}`);
+      try {
+        await batchVariableExtractor.extractAllVariablesFromProject(projectRoot);
+        const extractedVariablesCount = batchVariableExtractor.getVariables().length;
+        console.log(`✅ [BatchService Regular] Variable extraction completed - found ${extractedVariablesCount} variables`);
+      } catch (error) {
+        console.error(`❌ [BatchService Regular] Variable extraction failed:`, error);
+      }
+    } else {
+      console.log(`⏭️ [BatchService Regular] Skipping variable extraction - no extractor created`);
     }
 
     // Process files in batches to prevent memory exhaustion
@@ -1930,6 +2205,7 @@ export class BatchService {
         // Report progress for current file
         if (options.onProgress) {
           const percentage = Math.round((fileIndex / files.length) * 100);
+          console.log(`📁 [BatchService Regular] Sending progress: ${fileIndex + 1}/${files.length} (${percentage}%) - ${basename(inputPath)}`);
           options.onProgress({
             currentFile: basename(inputPath),
             currentFileIndex: fileIndex + 1,
@@ -1940,17 +2216,27 @@ export class BatchService {
           });
         }
         
+        // Skip .flsnp files - they should only be processed inline during MadCap conversion
+        if (inputPath.toLowerCase().endsWith('.flsnp')) {
+          console.log(`⏭️ Skipping snippet file (will be processed inline): ${inputPath}`);
+          continue;
+        }
+        
+        // Declare variables at function scope so they're available in catch block and image copying
+        let conversionResult: any;
+        let outputPath: string = inputPath; // Default path in case of early errors
+        
         try {
           // Check if file should be skipped due to MadCap conditions (applies to all formats)
           const content = await readFile(inputPath, 'utf8');
           if (this.containsMadCapContent(content)) {
             // Use appropriate converter's skip check based on format
             const shouldSkip = options.format === 'zendesk' 
-              ? ZendeskConverter.shouldSkipFile(content)
-              : MadCapConverter.shouldSkipFile(content);
+              ? ZendeskConverter.shouldSkipFile(content, options as ConversionOptions)
+              : MadCapConverter.shouldSkipFile(content, options as ConversionOptions);
               
             if (shouldSkip) {
-              const reason = `MadCap conditions indicate content should be skipped (Black, Red, Gray, deprecated, paused, print-only, etc.)`;
+              const reason = `MadCap conditions indicate content should be skipped`;
               // SKIPPED: ${inputPath} - ${reason}
               result.skippedFiles++;
               result.skippedFilesList.push({ file: inputPath, reason });
@@ -1959,7 +2245,7 @@ export class BatchService {
           }
 
         const relativePath = relative(inputDir, inputPath);
-        const outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
+        outputPath = await this.generateOutputPath(relativePath, outputDir, options.format || 'markdown', inputPath, options.renameFiles);
         
         // Track filename mapping for cross-reference updates
         if (options.renameFiles && result.filenameMapping) {
@@ -2004,6 +2290,7 @@ export class BatchService {
           outputDir: dirname(outputPath),
           rewriteLinks: true,  // Enable link rewriting for batch conversions
           pathDepth, // Pass path depth for image path resolution
+          projectRootPath: inputDir, // Pass the temp project root for snippet resolution
           variableOptions: options.variableOptions ? {
             ...options.variableOptions,
             variablesOutputPath: calculatedVariablesPath, // Include calculated variables path
@@ -2012,11 +2299,44 @@ export class BatchService {
           zendeskOptions: options.zendeskOptions
         };
 
-        const conversionResult = await this.documentService.convertFile(
-          inputPath,
-          outputPath,
-          conversionOptions
-        );
+        // Add timeout with heartbeat to prevent individual files from stalling entire batch
+        const FILE_CONVERSION_TIMEOUT = 30000; // 30 seconds per file
+        const HEARTBEAT_INTERVAL = 5000; // Send heartbeat every 5 seconds
+        
+        let heartbeatTimer: NodeJS.Timeout | null = null;
+        
+        try {
+          // Start heartbeat to keep progress connection alive during long file conversions
+          if (options.onProgress) {
+            heartbeatTimer = setInterval(() => {
+              options.onProgress!({
+                currentFile: basename(inputPath),
+                currentFileIndex: fileIndex + 1,
+                totalFiles: files.length,
+                percentage: Math.round((fileIndex / files.length) * 100),
+                status: 'converting',
+                message: `Processing ${basename(inputPath)}... (${Math.floor((Date.now() % 60000) / 1000)}s)`,
+                phase: 'file_processing'
+              });
+            }, HEARTBEAT_INTERVAL);
+          }
+          
+          conversionResult = await Promise.race([
+            this.documentService.convertFile(
+              inputPath,
+              outputPath,
+              conversionOptions
+            ),
+            new Promise((_, reject) => 
+              setTimeout(() => reject(new Error(`File conversion timeout after ${FILE_CONVERSION_TIMEOUT/1000}s`)), FILE_CONVERSION_TIMEOUT)
+            )
+          ]);
+        } finally {
+          // Always clear heartbeat timer
+          if (heartbeatTimer) {
+            clearInterval(heartbeatTimer);
+          }
+        }
 
         // Handle external stylesheet generation for batch conversions (write only once per batch)
         if (conversionResult.stylesheet && options.format === 'zendesk' && options.zendeskOptions?.generateStylesheet && !stylesheetWritten) {
@@ -2031,17 +2351,6 @@ export class BatchService {
           }
         }
 
-        // Handle image copying using the shared method
-        imageDirectoriesCopied = await this.handleImageCopying(
-          inputDir,
-          outputDir,
-          options,
-          imageDirectoriesCopied,
-          conversionResult,
-          inputPath,
-          outputPath
-        );
-
         result.results.push({
           inputPath,
           outputPath,
@@ -2051,11 +2360,42 @@ export class BatchService {
         result.convertedFiles++;
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-        // ERROR: ${inputPath} - ${errorMessage}
+        console.error(`❌ [Regular Batch] File conversion failed: ${inputPath}`, {
+          error: errorMessage,
+          outputPath,
+          fileIndex: fileIndex + 1,
+          totalFiles: files.length,
+          batchIndex: i,
+          batchPosition: j
+        });
+        
         result.errors.push({
           file: inputPath,
-          error: errorMessage
+          error: `[File ${fileIndex + 1}/${files.length}] ${errorMessage}`
         });
+        
+        // Create a dummy conversionResult for failed files so image copying still works
+        conversionResult = { metadata: { images: [] } };
+      }
+
+      // Handle image copying OUTSIDE try/catch so it always runs
+      // This ensures image directories are copied even if some individual files fail
+      console.log(`🔥 [CRITICAL] About to call handleImageCopying for file: ${inputPath}`);
+      console.log(`🔥 [CRITICAL] Options received: copyImages=${options.copyImages}, format=${options.format}`);
+      try {
+        imageDirectoriesCopied = await this.handleImageCopying(
+          inputDir,
+          outputDir,
+          options,
+          imageDirectoriesCopied,
+          conversionResult,
+          inputPath,
+          outputPath
+        );
+        console.log(`🔥 [CRITICAL] handleImageCopying completed, imageDirectoriesCopied=${imageDirectoriesCopied}`);
+      } catch (imageCopyError) {
+        console.error(`❌ Image copying failed for ${inputPath}:`, imageCopyError);
+        // Don't let image copying errors stop the entire process
       }
     }
     
@@ -2092,8 +2432,30 @@ export class BatchService {
     }
     
     // Write combined variables file at the end if extraction is enabled
+    console.log(`🔍 [BatchService Regular END] Variables file generation check:`, {
+      hasBatchVariableExtractor: !!batchVariableExtractor,
+      extractVariables: options.variableOptions?.extractVariables,
+      variablesFileWritten,
+      shouldWriteVariables: !!(batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten),
+      format: options.format
+    });
+    
     if (batchVariableExtractor && options.variableOptions?.extractVariables && !variablesFileWritten) {
-      const variablesFile = batchVariableExtractor.generateVariablesFile(options.variableOptions);
+      console.log(`🔍 [BatchService Regular END] Generating variables file from extractor...`);
+      
+      // Add required variableFormat based on conversion format
+      const variableExtractionOptions = {
+        ...options.variableOptions,
+        variableFormat: options.format === 'asciidoc' ? 'adoc' as const : 'writerside' as const
+      };
+      
+      const variablesFile = batchVariableExtractor.generateVariablesFile(variableExtractionOptions);
+      
+      console.log(`🔍 [BatchService Regular END] Variables file generated:`, {
+        hasVariablesFile: !!variablesFile,
+        variablesFileLength: variablesFile?.length || 0
+      });
+      
       if (variablesFile) {
         let variablesPath: string;
         
@@ -2108,18 +2470,38 @@ export class BatchService {
           const includesDir = join(outputDir, 'includes');
           await this.ensureDirectoryExists(includesDir);
           variablesPath = join(includesDir, 'variables.adoc');
+          console.log(`📄 [BatchService] Using AsciiDoc variables path: ${variablesPath}`);
         }
         
         // Ensure directory exists for the variables file
+        console.log(`📁 [BatchService] Creating directory: ${dirname(variablesPath)}`);
         await this.ensureDirectoryExists(dirname(variablesPath));
+        
+        console.log(`📄 [BatchService] Writing variables file: ${variablesPath} (${variablesFile.length} chars)`);
         await writeFile(variablesPath, variablesFile, 'utf8');
-        // Generated combined variables file at ${variablesPath}
+        console.log(`✅ [BatchService] Generated combined variables file at ${variablesPath}`);
       }
     }
     
     // Process glossary files if requested (only for AsciiDoc format)
-    if (options.format === 'asciidoc' && options.asciidocOptions?.glossaryOptions?.includeGlossary) {
+    // Check both nested (asciidocOptions.glossaryOptions) and top-level (glossaryOptions) structures
+    const shouldProcessGlossary = options.format === 'asciidoc' && (
+      options.asciidocOptions?.glossaryOptions?.includeGlossary || 
+      (options as any).glossaryOptions?.includeGlossary
+    );
+    
+    console.log(`🔍 [BatchService] Glossary processing check:`, {
+      format: options.format,
+      nestedGlossaryOptions: !!options.asciidocOptions?.glossaryOptions?.includeGlossary,
+      topLevelGlossaryOptions: !!(options as any).glossaryOptions?.includeGlossary,
+      shouldProcessGlossary
+    });
+    
+    if (shouldProcessGlossary) {
+      console.log(`📚 [BatchService] Processing glossary files...`);
       await this.processGlossaryFiles(inputDir, outputDir, options, result);
+    } else {
+      console.log(`⏭️ [BatchService] Skipping glossary processing - format: ${options.format}`);
     }
     
     // Update cross-references if files were renamed
@@ -2168,6 +2550,10 @@ export class BatchService {
     options: BatchConversionOptions,
     result: BatchConversionResult
   ): Promise<void> {
+    console.log(`📚 [Glossary] Starting glossary processing...`);
+    console.log(`📚 [Glossary] Input directory: ${inputDir}`);
+    console.log(`📚 [Glossary] Output directory: ${outputDir}`);
+    
     try {
       const { FlgloParser } = await import('./flglo-parser');
       const { GlossaryConverter } = await import('../converters/glossary-converter');
@@ -2175,15 +2561,26 @@ export class BatchService {
       const glossaryParser = new FlgloParser();
       const glossaryConverter = new GlossaryConverter();
       
-      // Find project root to search for glossary files
-      const projectRoot = this.findProjectRoot(inputDir);
+      // Use inputDir as project root since uploaded files contain the full project structure
+      const projectRoot = inputDir;
+      console.log(`📚 [Glossary] Project root: ${projectRoot}`);
       
       // Discover glossary files (.flglo) in the project
       let glossaryFiles: string[] = [];
       
+      // Check both nested and top-level glossary options
+      const glossaryPath = options.asciidocOptions?.glossaryOptions?.glossaryPath || 
+                           (options as any).glossaryOptions?.glossaryPath;
+      
+      console.log(`📚 [Glossary] Checking for glossary path:`, {
+        nestedPath: options.asciidocOptions?.glossaryOptions?.glossaryPath,
+        topLevelPath: (options as any).glossaryOptions?.glossaryPath,
+        glossaryPath
+      });
+      
       // Check if a specific glossary file path was provided
-      if (options.asciidocOptions?.glossaryOptions?.glossaryPath) {
-        const specifiedPath = join(projectRoot, options.asciidocOptions.glossaryOptions.glossaryPath);
+      if (glossaryPath) {
+        const specifiedPath = join(projectRoot, glossaryPath);
         try {
           await stat(specifiedPath);
           glossaryFiles = [specifiedPath];
@@ -2196,11 +2593,11 @@ export class BatchService {
       // If no specific file or file not found, auto-discover
       if (glossaryFiles.length === 0) {
         glossaryFiles = await glossaryParser.findGlossaryFiles(projectRoot);
-        console.error(`Auto-discovered ${glossaryFiles.length} glossary file(s)`);
+        console.log(`📚 [Glossary] Auto-discovered ${glossaryFiles.length} glossary file(s)`);
       }
       
       if (glossaryFiles.length === 0) {
-        console.error('No glossary files found in project');
+        console.log(`⚠️ [Glossary] No glossary files found in project`);
         return;
       }
       
@@ -2209,7 +2606,7 @@ export class BatchService {
       
       for (const glossaryFile of glossaryFiles) {
         try {
-          console.error(`Processing glossary file: ${glossaryFile}`);
+          console.log(`📚 [Glossary] Processing glossary file: ${glossaryFile}`);
           const parsed = await glossaryParser.parseGlossaryFile(glossaryFile);
           
           // Apply condition filtering if enabled (default is true)
@@ -2231,8 +2628,10 @@ export class BatchService {
         }
       }
       
+      console.log(`📚 [Glossary] Total entries collected: ${allEntries.length}`);
+      
       if (allEntries.length === 0) {
-        console.error('No glossary entries to process');
+        console.log('⚠️ [Glossary] No glossary entries to process - glossary will be empty');
         return;
       }
       
@@ -2266,8 +2665,11 @@ export class BatchService {
       }
       
       // Write glossary file
+      console.log(`📚 [Glossary] Writing glossary file to: ${glossaryOutputPath}`);
+      console.log(`📚 [Glossary] Glossary content length: ${glossaryContent.length} chars`);
+      console.log(`📚 [Glossary] First 500 chars of content: ${glossaryContent.substring(0, 500)}`);
       await writeFile(glossaryOutputPath, glossaryContent, 'utf8');
-      console.error(`Generated glossary at: ${glossaryOutputPath}`);
+      console.log(`✅ [Glossary] Generated glossary at: ${glossaryOutputPath}`);
       
       // Add to conversion results
       result.results.push({
@@ -2312,7 +2714,25 @@ export class BatchService {
     inputPath: string,
     outputPath: string
   ): Promise<boolean> {
-    if (options.copyImages) {
+    console.log(`🚨 [CRITICAL DEBUG] handleImageCopying method called!`);
+    console.log(`🎯 [handleImageCopying] Called with:`, {
+      inputDir,
+      outputDir,
+      format: options.format,
+      copyImages: options.copyImages,
+      copyImagesType: typeof options.copyImages,
+      imageDirectoriesCopied,
+      hasConversionResult: !!conversionResult,
+      hasMetadata: !!conversionResult?.metadata,
+      hasImages: !!conversionResult?.metadata?.images,
+      imageCount: conversionResult?.metadata?.images?.length || 0,
+      allOptions: JSON.stringify(options, null, 2)
+    });
+    
+    // Default copyImages to true if undefined, false if explicitly false
+    const shouldCopyAnyImages = (options.copyImages === undefined || options.copyImages === true);
+    
+    if (shouldCopyAnyImages) {
       // Copy individual image files referenced in the content
       if (conversionResult.metadata?.images) {
         await this.copyReferencedImages(
@@ -2362,7 +2782,7 @@ export class BatchService {
         return imageDirectoriesCopied; // Return current state since no copying was attempted
       }
     } else {
-      console.log(`⏭️ Skipping all image copying - copyImages option is false`);
+      console.log(`⏭️ Skipping all image copying - copyImages option is explicitly false (value: ${options.copyImages})`);
       return imageDirectoriesCopied; // Return current state since copying is disabled
     }
   }
@@ -2370,6 +2790,80 @@ export class BatchService {
   /**
    * Analyze uploaded folder structure for diagnostics
    */
+  /**
+   * Search for directories containing image files
+   */
+  private async searchForImageDirectories(
+    rootDir: string,
+    imageExtensions: Set<string>,
+    currentPath: string = rootDir,
+    foundDirs: Set<string> = new Set()
+  ): Promise<string[]> {
+    try {
+      const entries = await readdir(currentPath, { withFileTypes: true });
+      let hasImages = false;
+      
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        
+        const fullPath = join(currentPath, entry.name);
+        
+        if (entry.isDirectory()) {
+          // Recursively search subdirectories
+          await this.searchForImageDirectories(rootDir, imageExtensions, fullPath, foundDirs);
+        } else if (entry.isFile()) {
+          const ext = extname(entry.name).toLowerCase();
+          if (imageExtensions.has(ext)) {
+            hasImages = true;
+          }
+        }
+      }
+      
+      // If this directory has images, add it to the set
+      if (hasImages && currentPath !== rootDir) {
+        foundDirs.add(currentPath);
+      }
+    } catch (error) {
+      console.error(`Error searching directory ${currentPath}:`, error);
+    }
+    
+    return Array.from(foundDirs);
+  }
+  
+  /**
+   * Find all image files in the directory structure
+   */
+  private async findAllImageFiles(
+    rootDir: string,
+    imageExtensions: Set<string>,
+    currentPath: string = rootDir,
+    foundFiles: string[] = []
+  ): Promise<string[]> {
+    try {
+      const entries = await readdir(currentPath, { withFileTypes: true });
+      
+      for (const entry of entries) {
+        if (entry.name.startsWith('.')) continue;
+        
+        const fullPath = join(currentPath, entry.name);
+        
+        if (entry.isDirectory()) {
+          // Recursively search subdirectories
+          await this.findAllImageFiles(rootDir, imageExtensions, fullPath, foundFiles);
+        } else if (entry.isFile()) {
+          const ext = extname(entry.name).toLowerCase();
+          if (imageExtensions.has(ext)) {
+            foundFiles.push(fullPath);
+          }
+        }
+      }
+    } catch (error) {
+      console.error(`Error searching for files in ${currentPath}:`, error);
+    }
+    
+    return foundFiles;
+  }
+
   async analyzeUploadedStructure(inputDir: string): Promise<{
     totalFiles: number;
     supportedFiles: number;
