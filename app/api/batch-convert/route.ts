@@ -8,6 +8,39 @@ import { randomUUID } from 'crypto';
 import archiver from 'archiver';
 import { createWriteStream } from 'fs';
 
+// MadCap output and temporary folders that should be excluded from processing
+const EXCLUDED_DIRECTORIES = new Set([
+  // MadCap output directories
+  'Output',
+  'output', 
+  'TargetOutput',
+  'Temporary',
+  'temporary',
+  // MadCap specific folders
+  'AutoMerge',
+  'Backup',
+  'backup',
+  // Version control and system directories
+  '.git',
+  '.svn', 
+  'node_modules'
+]);
+
+/**
+ * Check if a file path contains excluded directory names
+ */
+function containsExcludedDirectory(relativePath: string): boolean {
+  const pathParts = relativePath.split('/').filter(part => part.length > 0);
+  
+  for (const part of pathParts) {
+    if (EXCLUDED_DIRECTORIES.has(part) || EXCLUDED_DIRECTORIES.has(part.toLowerCase())) {
+      return true;
+    }
+  }
+  
+  return false;
+}
+
 export async function POST(request: NextRequest) {
   const tempDir = join(tmpdir(), `batch-convert-${randomUUID()}`);
   let sessionId: string | undefined;
@@ -90,20 +123,6 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Initialize progress session
-    const sessionManager = ProgressSessionManager.getInstance();
-    if (!sessionId) {
-      sessionId = sessionManager.createSession(files.length);
-    } else {
-      // Update existing session with file count
-      sessionManager.updateSession(sessionId, { totalFiles: files.length });
-    }
-    
-    // At this point sessionId is guaranteed to be defined
-    if (!sessionId) {
-      throw new Error('Failed to initialize session ID');
-    }
-    
     if (!format || !['asciidoc', 'writerside-markdown', 'zendesk'].includes(format)) {
       return NextResponse.json(
         { success: false, error: 'Invalid format specified' },
@@ -119,11 +138,88 @@ export async function POST(request: NextRequest) {
     
     console.log(`📦 Processing ${files.length} uploaded files:`);
     
-    // Save uploaded files
+    // Track excluded files for user feedback
+    const excludedFiles: Array<{ name: string; path: string; reason: string }> = [];
+    const validFiles: File[] = [];
+    
+    // First pass: Filter out files from excluded directories
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       console.log(`🔍 Processing file ${i + 1}/${files.length}: ${file.name} (${file.size} bytes, type: ${file.type})`);
       
+      // Determine file path first (before reading content)
+      const webkitPath = (file as any).webkitRelativePath;
+      let relativePath = webkitPath || file.name;
+      
+      // Fallback logic for when webkitRelativePath is not available
+      if (!webkitPath && file.name) {
+        relativePath = inferMadCapProjectStructure(file.name, file.type);
+        console.log(`🔧 Inferred project structure: ${file.name} -> ${relativePath}`);
+      }
+      
+      // Check if file is from excluded directory
+      if (containsExcludedDirectory(relativePath)) {
+        const excludedDirName = relativePath.split('/').find(part => 
+          EXCLUDED_DIRECTORIES.has(part) || EXCLUDED_DIRECTORIES.has(part.toLowerCase())
+        ) || 'unknown';
+        
+        console.log(`🚫 Excluding file: ${file.name} (path: ${relativePath}) - contains excluded directory: ${excludedDirName}`);
+        excludedFiles.push({
+          name: file.name,
+          path: relativePath,
+          reason: `Contains excluded directory: ${excludedDirName} (MadCap output/temporary folder)`
+        });
+        continue; // Skip this file
+      }
+      
+      // File is valid, add to processing list
+      console.log(`✅ File approved for processing: ${relativePath}`);
+      validFiles.push(file);
+    }
+    
+    // Log filtering results
+    console.log(`\n📊 === FILE FILTERING RESULTS ===`);
+    console.log(`📥 Total uploaded files: ${files.length}`);
+    console.log(`✅ Valid files for processing: ${validFiles.length}`);
+    console.log(`🚫 Excluded files: ${excludedFiles.length}`);
+    
+    if (excludedFiles.length > 0) {
+      console.log(`\n🚫 Excluded files details:`);
+      excludedFiles.forEach((file, index) => {
+        console.log(`  ${index + 1}. ${file.name} (${file.path}) - ${file.reason}`);
+      });
+    }
+    console.log(`📊 === END FILTERING RESULTS ===\n`);
+    
+    // Validate that we have files to process after filtering
+    if (validFiles.length === 0) {
+      const errorMessage = excludedFiles.length > 0 
+        ? `All ${files.length} uploaded files were from excluded directories (Output, Temporary, etc.). Please upload source files from Content/ or Project/ directories instead.`
+        : 'No valid files found for processing.';
+      
+      console.error(`❌ No valid files remaining after filtering: ${errorMessage}`);
+      return NextResponse.json(
+        { 
+          success: false, 
+          error: errorMessage,
+          details: {
+            totalUploaded: files.length,
+            validFiles: 0,
+            excludedFiles: excludedFiles.length,
+            excludedFileDetails: excludedFiles.map(f => ({ name: f.name, reason: f.reason }))
+          }
+        },
+        { status: 400 }
+      );
+    }
+    
+    // Second pass: Save valid files to temp directory
+    console.log(`📦 Saving ${validFiles.length} valid files to temp directory:`);
+    for (let i = 0; i < validFiles.length; i++) {
+      const file = validFiles[i];
+      console.log(`💾 Saving file ${i + 1}/${validFiles.length}: ${file.name}`);
+      
+      // Read file content
       let bytes: ArrayBuffer;
       let buffer: Buffer;
       
@@ -136,19 +232,17 @@ export async function POST(request: NextRequest) {
         throw new Error(`Failed to read file "${file.name}": ${readError instanceof Error ? readError.message : 'Unknown read error'}`);
       }
       
-      // Use webkitRelativePath for folder uploads, otherwise use file.name
+      // Determine file path (same logic as filtering pass)
       const webkitPath = (file as any).webkitRelativePath;
       let relativePath = webkitPath || file.name;
       
-      // Fallback logic for when webkitRelativePath is not available
       if (!webkitPath && file.name) {
         relativePath = inferMadCapProjectStructure(file.name, file.type);
-        console.log(`🔧 Inferred project structure: ${file.name} -> ${relativePath}`);
       }
       
       const filePath = join(inputDir, relativePath);
       
-      console.log(`📄 Uploading file: ${relativePath} (${buffer.length} bytes) [webkitRelativePath: ${webkitPath || 'undefined'}]`);
+      console.log(`📄 Saving file: ${relativePath} (${buffer.length} bytes) [webkitRelativePath: ${webkitPath || 'undefined'}]`);
       
       // Create subdirectories if needed
       const fileDir = join(inputDir, relativePath.substring(0, relativePath.lastIndexOf('/')));
@@ -159,7 +253,23 @@ export async function POST(request: NextRequest) {
       await writeFile(filePath, buffer);
     }
     
-    console.log(`✅ All files saved to: ${inputDir}`);
+    console.log(`✅ All valid files saved to: ${inputDir}`);
+    
+    // Initialize progress session with valid file count (after filtering)
+    const sessionManager = ProgressSessionManager.getInstance();
+    if (!sessionId) {
+      sessionId = sessionManager.createSession(validFiles.length);
+    } else {
+      // Update existing session with valid file count
+      sessionManager.updateSession(sessionId, { totalFiles: validFiles.length });
+    }
+    
+    // At this point sessionId is guaranteed to be defined
+    if (!sessionId) {
+      throw new Error('Failed to initialize session ID');
+    }
+    
+    console.log(`📡 Progress session initialized with ${validFiles.length} valid files (${excludedFiles.length} excluded)`);
     
     // Enhanced diagnostics: Show the complete uploaded folder structure with detailed analysis
     console.log(`📂 === ENHANCED FOLDER STRUCTURE ANALYSIS ===`);
@@ -214,12 +324,17 @@ export async function POST(request: NextRequest) {
       console.log(`❌ No snippet files found in uploaded structure`);
     }
     
+    if (folderAnalysis.excludedDirectories.length > 0) {
+      console.log(`🚫 Excluded directories: ${folderAnalysis.excludedDirectories.join(', ')}`);
+      console.log(`   Reason: MadCap output/temporary folders (Output, Temporary, TargetOutput, etc.)`);
+    }
+    
     console.log(`📂 === END ENHANCED ANALYSIS ===`);
     
     // Start conversion with progress streaming
     sessionManager.broadcastProgress(sessionId, 'conversion_start', {
-      totalFiles: files.length,
-      message: `Starting conversion of ${files.length} files to ${format}`,
+      totalFiles: validFiles.length,
+      message: `Starting conversion of ${validFiles.length} files to ${format}`,
       startTime: Date.now(),
       resourceAnalysis: {
         totalFiles: folderAnalysis.totalFiles,
@@ -251,7 +366,7 @@ export async function POST(request: NextRequest) {
       onProgress: (progress: ConversionProgress) => {
         console.log(`🔄 [Batch API] Progress callback received:`, {
           currentFileIndex: progress.currentFileIndex,
-          totalFiles: progress.totalFiles || files.length,
+          totalFiles: progress.totalFiles || validFiles.length,
           percentage: progress.percentage,
           currentFile: progress.currentFile,
           message: progress.message,
@@ -262,7 +377,7 @@ export async function POST(request: NextRequest) {
         
         // Stream progress updates via SSE
         const progressData = {
-          totalFiles: files.length,
+          totalFiles: validFiles.length,
           currentFileIndex: progress.currentFileIndex,
           currentFile: progress.currentFile,
           overallPercentage: progress.percentage,
@@ -302,7 +417,55 @@ export async function POST(request: NextRequest) {
     
     console.log(`📋 [Batch Convert API] Final conversion options being passed:`, JSON.stringify(conversionOptions, null, 2));
     
-    const result = await batchService.convertFolder(inputDir, outputDir, conversionOptions);
+    // Add timeout handling for large batch operations - increased timeouts for resource processing
+    const BATCH_TIMEOUT = validFiles.length > 100 ? 30 * 60 * 1000 : 15 * 60 * 1000; // 30 min for large batches, 15 min for smaller
+    const abortController = new AbortController();
+    
+    console.log(`⏰ Setting batch timeout: ${BATCH_TIMEOUT / 1000}s for ${validFiles.length} files (includes resource processing time)`);
+    
+    // Set up timeout
+    const timeoutId = setTimeout(() => {
+      console.error(`❌ Batch conversion timeout after ${BATCH_TIMEOUT / 1000}s`);
+      abortController.abort();
+    }, BATCH_TIMEOUT);
+    
+    let result: any;
+    try {
+      // Run conversion with timeout protection
+      result = await Promise.race([
+        batchService.convertFolder(inputDir, outputDir, conversionOptions),
+        new Promise((_, reject) => {
+          abortController.signal.addEventListener('abort', () => {
+            reject(new Error(`Batch conversion timed out after ${BATCH_TIMEOUT / 1000} seconds`));
+          });
+        })
+      ]);
+      
+      clearTimeout(timeoutId);
+      console.log(`✅ Batch conversion completed within timeout`);
+      
+    } catch (error) {
+      clearTimeout(timeoutId);
+      
+      if (error instanceof Error && error.message.includes('timed out')) {
+        console.error(`❌ Batch conversion timed out for ${validFiles.length} files`);
+        
+        // Enable fallback mode if session exists
+        if (sessionId) {
+          const sessionManager = ProgressSessionManager.getInstance();
+          sessionManager.enableFallbackMode(sessionId);
+        }
+        
+        return NextResponse.json({
+          success: false,
+          error: `Batch conversion timed out. Try processing fewer files (current: ${validFiles.length}).`,
+          suggestion: 'Consider using smaller batch sizes (50-100 files) or the chunked processing option.',
+          debug: { timeout: BATCH_TIMEOUT, fileCount: validFiles.length }
+        }, { status: 408 });
+      }
+      
+      throw error; // Re-throw other errors
+    }
     
     // Create zip file of results with enhanced logging
     console.log(`📦 === ZIP CREATION ANALYSIS ===`);
@@ -397,6 +560,9 @@ export async function POST(request: NextRequest) {
       }
     });
     console.log(`✅ [Batch Convert API] Session completion called for: ${sessionId}`);
+    
+    // Add a brief delay to ensure session completion is fully processed
+    await new Promise(resolve => setTimeout(resolve, 1000));
     
     // Clean up temp directory
     const { rm } = await import('fs/promises');
