@@ -552,8 +552,8 @@ The Writerside markdown converter provides CommonMark 0.31.2 compliant output op
 **Claude Desktop:**
 ```
 Convert MadCap Flare content to Zendesk Help Center format:
-Input: /Volumes/Envoy Pro/Flare/Administration EN/Content
-Output: /Volumes/Envoy Pro/ZendeskOutput
+Input: /path/to/madcap/project/Content
+Output: /path/to/output/directory
 Format: zendesk
 
 Options:
@@ -568,8 +568,8 @@ Options:
 {
   "name": "convert_folder",
   "arguments": {
-    "inputDir": "/Volumes/Envoy Pro/Flare/Administration EN/Content",
-    "outputDir": "/Volumes/Envoy Pro/ZendeskOutputAdmin",
+    "inputDir": "/path/to/madcap/project/Content",
+    "outputDir": "/path/to/output/directory",
     "format": "zendesk",
     "preserveStructure": true,
     "copyImages": true,
@@ -601,8 +601,8 @@ This will:
 **Claude Desktop:**
 ```
 Convert the entire MadCap Flare Content folder to AsciiDoc format:
-Input: /Volumes/Envoy Pro/Flare/Spend EN/Content
-Output: /Volumes/Envoy Pro/target
+Input: /path/to/madcap/project/Content
+Output: /path/to/output/directory
 Format: asciidoc
 ```
 
@@ -618,8 +618,8 @@ This will:
 **Claude Desktop:**
 ```
 Convert MadCap dropdowns to collapsible blocks for better navigation:
-Input: /Volumes/Envoy Pro/Flare/Plan_EN/Content/03 Management/02-02 TrackSpend.htm
-Output: /tmp/trackspend-collapsible.adoc
+Input: /path/to/madcap/file.htm
+Output: /path/to/output.adoc
 Format: asciidoc
 AsciiDoc Options: useCollapsibleBlocks = true
 ```
@@ -748,9 +748,9 @@ Welcome to %General.ProductName%!
 {
   "name": "extract_toc",
   "arguments": {
-    "fltocPath": "/Volumes/Envoy Pro/Flare/Spend EN/Project/TOCs/Main.fltoc",
-    "contentBasePath": "/Volumes/Envoy Pro/Flare/Spend EN/Content",
-    "outputPath": "/Volumes/Envoy Pro/target/master.adoc",
+    "fltocPath": "/path/to/project/TOCs/Main.fltoc",
+    "contentBasePath": "/path/to/project/Content",
+    "outputPath": "/path/to/output/master.adoc",
     "format": "asciidoc"
   }
 }
@@ -763,8 +763,8 @@ Convert MadCap Flare projects to professional AsciiDoc books with proper structu
 **Claude Desktop:**
 ```
 Convert my MadCap Flare project to an AsciiDoc book:
-Project: /Volumes/Envoy Pro/Flare/Plan_EN
-Output: /Volumes/Envoy Pro/book-output
+Project: /path/to/madcap/project
+Output: /path/to/book/output
 Format: asciidoc
 
 Book Options:
@@ -781,8 +781,8 @@ Book Options:
 {
   "name": "convert_folder",
   "arguments": {
-    "inputDir": "/Volumes/Envoy Pro/Flare/Plan_EN/",
-    "outputDir": "/Volumes/Envoy Pro/book-output",
+    "inputDir": "/path/to/madcap/project/",
+    "outputDir": "/path/to/book/output",
     "format": "asciidoc",
     "useTOCStructure": true,
     "generateMasterDoc": true,
@@ -847,8 +847,8 @@ include::user/01-00-activities/01-04-filtergroup/index.adoc[]
 **Claude Desktop:**
 ```
 Convert my MadCap Flare project using TOC structure instead of file structure:
-Project: /Volumes/Envoy Pro/Flare/Administration EN
-Output: /Volumes/Envoy Pro/ZendeskOutputStructured
+Project: /path/to/madcap/project
+Output: /path/to/structured/output
 Format: zendesk
 
 Use TOC hierarchy to organize folders - I have User Manual and Administration TOCs that should become separate sections.
@@ -859,8 +859,8 @@ Use TOC hierarchy to organize folders - I have User Manual and Administration TO
 {
   "name": "convert_with_toc_structure", 
   "arguments": {
-    "projectPath": "/Volumes/Envoy Pro/Flare/Administration EN",
-    "outputDir": "/Volumes/Envoy Pro/ZendeskOutputStructured",
+    "projectPath": "/path/to/madcap/project",
+    "outputDir": "/path/to/structured/output",
     "format": "asciidoc",
     "generateMasterDoc": true,
     "copyImages": true,
@@ -905,7 +905,7 @@ Use TOC hierarchy to organize folders - I have User Manual and Administration TO
 {
   "name": "discover_tocs",
   "arguments": {
-    "projectPath": "/Volumes/Envoy Pro/Flare/Administration EN"
+    "projectPath": "/path/to/madcap/project"
   }
 }
 ```

@@ -3,9 +3,10 @@
   "version": "1.1.0",
   "type": "module",
   "scripts": {
-    "build": "next build",
+    "build": "NODE_OPTIONS='--max-old-space-size=8192' next build",
     "start": "next start",
-    "dev": "next dev",
+    "dev": "NODE_OPTIONS='--max-old-space-size=8192' next dev",
+    "dev:memory": "NODE_OPTIONS='--max-old-space-size=12288' next dev",
     "lint": "next lint",
     "clean": "rm -rf .next",
     "clean:cache": "rm -rf .next node_modules/.cache",
