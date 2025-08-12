@@ -37,27 +37,13 @@ export async function POST(request: NextRequest) {
     // Convert the file - preserve original file name for snippet resolution
     const documentService = new DocumentService();
     
-    // Create a synthetic path that preserves the original structure for snippet resolution
-    // For the user's specific project, auto-detect the correct path structure
-    let originalPath = options.originalPath;
-    
-    if (!originalPath) {
-      // Auto-detect path based on filename patterns from the user's project
-      if (file.name.includes('CreatActivity') || file.name.startsWith('01-')) {
-        originalPath = `/Volumes/Envoy Pro/Flare/CampaignPl EN/Content/02 Planung/${file.name}`;
-      } else {
-        originalPath = `/Volumes/Envoy Pro/Flare/CampaignPl EN/Content/${file.name}`;
-      }
-    }
-    
-    // Debug logging can be enabled if needed for troubleshooting
-    // console.log('[API DEBUG] Parsed options:', options);
-    // console.log('[API DEBUG] Original path:', originalPath);
-    // console.log('[API DEBUG] File name:', file.name);
-    
+    // Resolve inputPath for snippet resolution; prefer caller-provided originalPath.
+    const originalPath = options.originalPath as string | undefined;
+
     const result = await documentService.convertFile(tempFilePath, {
       format: format as any,
-      inputPath: originalPath, // Pass original path for snippet resolution
+      // Prefer provided originalPath; fallback to the temp file path
+      inputPath: originalPath || tempFilePath,
       ...options
     });
     

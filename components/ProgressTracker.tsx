@@ -64,7 +64,8 @@ export function ProgressTracker({
     results,
     errors,
     warnings,
-    completedFiles
+    completedFiles,
+    completedFileNames
   } = useConversionStore()
   
   // Progress stream connection
@@ -312,6 +313,38 @@ export function ProgressTracker({
       
       {!isMinimized && (
         <CardContent className="space-y-4">
+          {/* Connection Status Banner */}
+          {showConnectionStatus && connectionStatus !== 'connected' && (
+            <div className={cn(
+              "flex items-center gap-2 p-3 rounded-md border",
+              connectionStatus === 'error' && "bg-red-50 border-red-200 text-red-800 dark:bg-red-950/20 dark:border-red-800 dark:text-red-300",
+              (connectionStatus === 'connecting' || connectionStatus === 'reconnecting') && "bg-yellow-50 border-yellow-200 text-yellow-800 dark:bg-yellow-950/20 dark:border-yellow-800 dark:text-yellow-300"
+            )}>
+              {getConnectionStatusIcon(connectionStatus)}
+              <div className="flex-1">
+                <div className="text-sm font-medium">
+                  {connectionStatus === 'error' ? 'Connection Lost' : 'Connecting...'}
+                </div>
+                <div className="text-xs opacity-80">
+                  {connectionStatus === 'error' 
+                    ? 'Neither SSE nor polling can connect. Progress updates may be delayed.' 
+                    : 'Establishing connection for real-time updates...'}
+                </div>
+              </div>
+              {connectionStatus === 'error' && (
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={reconnect}
+                  className="h-8"
+                >
+                  <RefreshCw className="h-3 w-3 mr-1" />
+                  Retry
+                </Button>
+              )}
+            </div>
+          )}
+          
           {/* Overall Progress */}
           <div className="space-y-2">
             <div className="flex items-center justify-between text-sm">
@@ -386,7 +419,7 @@ export function ProgressTracker({
               <ScrollArea className="h-48 border rounded-md p-2">
                 <div className="space-y-1">
                   {files.map((file, index) => {
-                    const isCompleted = results.some(r => r.metadata?.title === file.name)
+                    const isCompleted = completedFileNames.has(file.name)
                     const hasError = errors.some(e => e.includes(file.name))
                     const isCurrent = currentFile === file.name
                     

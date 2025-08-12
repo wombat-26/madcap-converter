@@ -114,7 +114,7 @@ interface ConversionOptions {
     validateImagePaths?: boolean
     glossaryOptions?: {
       includeGlossary?: boolean
-      glossaryFormat?: 'separate' | 'book-appendix' | 'inline'
+      glossaryFormat?: 'separate' | 'book-appendix'
       sortGlossary?: boolean
       generateAnchors?: boolean
       formatDefinitions?: boolean
@@ -153,7 +153,7 @@ export default function MadCapConverterWebUI() {
   const [enableValidation, setEnableValidation] = useState(true)
   const [validationStrictness, setValidationStrictness] = useState<'strict' | 'normal' | 'lenient'>('normal')
   const [includeGlossary, setIncludeGlossary] = useState(true)
-  const [glossaryFormat, setGlossaryFormat] = useState<'separate' | 'book-appendix' | 'inline'>('separate')
+  const [glossaryFormat, setGlossaryFormat] = useState<'separate' | 'book-appendix'>('separate')
   
   // Batch conversion options
   const [preserveStructure, setPreserveStructure] = useState(true)
@@ -1200,7 +1200,6 @@ export default function MadCapConverterWebUI() {
                             <SelectContent>
                               <SelectItem value="separate">Separate File</SelectItem>
                               <SelectItem value="book-appendix">Book Appendix</SelectItem>
-                              <SelectItem value="inline">Inline</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>
@@ -1348,6 +1347,7 @@ export default function MadCapConverterWebUI() {
                     className="hidden"
                     accept=".html,.htm,.docx,.doc,.flsnp,.xml"
                     onChange={(e) => handleFileSelect(e, false)}
+                    disabled={conversionState.isConverting}
                   />
                 </div>
                 {singleFile && (
@@ -1357,6 +1357,7 @@ export default function MadCapConverterWebUI() {
                       variant="ghost"
                       size="sm"
                       onClick={() => setSingleFile(null)}
+                      disabled={conversionState.isConverting}
                     >
                       <X size={16} />
                     </Button>
@@ -1495,6 +1496,7 @@ export default function MadCapConverterWebUI() {
                       {...({ webkitdirectory: "", directory: "" } as any)}
                       multiple
                       onChange={handleFolderSelect}
+                      disabled={conversionState.isConverting}
                     />
                   ) : (
                     <Input
@@ -1504,6 +1506,7 @@ export default function MadCapConverterWebUI() {
                       accept=".html,.htm,.docx,.doc,.flsnp,.xml"
                       multiple
                       onChange={(e) => handleFileSelect(e, true)}
+                      disabled={conversionState.isConverting}
                     />
                   )}
                 </div>
@@ -1515,6 +1518,7 @@ export default function MadCapConverterWebUI() {
                         variant="ghost"
                         size="sm"
                         onClick={() => setBatchFiles([])}
+                        disabled={conversionState.isConverting}
                       >
                         Clear all
                       </Button>
@@ -1528,6 +1532,7 @@ export default function MadCapConverterWebUI() {
                             variant="ghost"
                             size="sm"
                             onClick={() => setBatchFiles(files => files.filter((_, i) => i !== index))}
+                            disabled={conversionState.isConverting}
                           >
                             <X size={14} />
                           </Button>

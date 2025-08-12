@@ -91,7 +91,7 @@ export interface ConversionOptions {
     includeGlossary?: boolean
     glossaryPath?: string
     filterConditions?: string[] | boolean
-    glossaryFormat?: 'inline' | 'separate' | 'book-appendix'
+    glossaryFormat?: 'separate' | 'book-appendix'
     generateAnchors?: boolean
   }
 }
@@ -138,6 +138,7 @@ interface ConversionState {
   // Progress tracking
   sessionId: string | null
   completedFiles: number
+  completedFileNames: Set<string>
   
   // Error handling
   errors: string[]
@@ -182,6 +183,7 @@ interface ConversionActions {
     completedFiles?: number
   }) => void
   setCompletedFiles: (count: number) => void
+  addCompletedFile: (fileName: string) => void
   
   // Results actions
   addResult: (result: ConversionResult) => void
@@ -245,14 +247,14 @@ const initialState: ConversionState = {
       flvarFiles: [],
     },
     glossaryOptions: {
-      generateGlossary: false,
+      generateGlossary: true,
       glossaryTitle: 'Glossary',
       glossaryFile: '',
       extractToSeparateFile: false,
       includeGlossary: true,
       glossaryPath: '',
       filterConditions: false,
-      glossaryFormat: 'inline',
+      glossaryFormat: 'separate',
       generateAnchors: true,
     },
   },
@@ -271,6 +273,7 @@ const initialState: ConversionState = {
   currentFile: null,
   sessionId: null,
   completedFiles: 0,
+  completedFileNames: new Set<string>(),
   errors: [],
   warnings: [],
 }
@@ -338,7 +341,7 @@ export const useConversionStore = create<ConversionStore>()(
             files: state.files.filter((f) => f.name !== fileName),
           })),
         
-        clearFiles: () => set({ files: [], uploadProgress: 0, completedFiles: 0 }),
+        clearFiles: () => set({ files: [], uploadProgress: 0, completedFiles: 0, completedFileNames: new Set<string>() }),
         
         setUploadProgress: (progress) => set({ uploadProgress: progress }),
         
@@ -357,6 +360,7 @@ export const useConversionStore = create<ConversionStore>()(
         
         analyzeConditions: async () => {
           const { files } = get()
+          console.log('[analyzeConditions] Starting with', files.length, 'files')
           if (files.length === 0) return
           
           set({ isAnalyzingConditions: true })
@@ -381,6 +385,7 @@ export const useConversionStore = create<ConversionStore>()(
             })
             
             const fileContents = await Promise.all(filePromises)
+            console.log('[analyzeConditions] Read', fileContents.length, 'file contents')
             
             const response = await fetch('/api/analyze-conditions', {
               method: 'POST',
@@ -391,20 +396,27 @@ export const useConversionStore = create<ConversionStore>()(
               })
             })
             
+            console.log('[analyzeConditions] API response status:', response.status)
+            
             if (response.ok) {
               const result = await response.json()
+              console.log('[analyzeConditions] API result:', result)
               if (result.success) {
+                console.log('[analyzeConditions] Setting modal to show, analysis:', result.analysis)
                 set({ 
                   conditionAnalysisResult: result.analysis,
                   showConditionModal: true 
                 })
               } else {
+                console.error('[analyzeConditions] API returned error:', result.error)
                 get().addError('Failed to analyze conditions: ' + result.error)
               }
             } else {
+              console.error('[analyzeConditions] API response not ok:', response.status)
               get().addError('Failed to analyze conditions')
             }
           } catch (error) {
+            console.error('[analyzeConditions] Exception:', error)
             get().addError('Error analyzing conditions: ' + (error instanceof Error ? error.message : 'Unknown error'))
           } finally {
             set({ isAnalyzingConditions: false })
@@ -456,6 +468,13 @@ export const useConversionStore = create<ConversionStore>()(
         
         setCompletedFiles: (count) => set({ completedFiles: count }),
         
+        addCompletedFile: (fileName) =>
+          set((state) => {
+            const newCompletedFileNames = new Set(state.completedFileNames);
+            newCompletedFileNames.add(fileName);
+            return { completedFileNames: newCompletedFileNames };
+          }),
+        
         // Results actions
         addResult: (result) =>
           set((state) => ({ results: [...state.results, result] })),
@@ -474,7 +493,7 @@ export const useConversionStore = create<ConversionStore>()(
         clearWarnings: () => set({ warnings: [] }),
         
         // Reset
-        reset: () => set(initialState),
+        reset: () => set({ ...initialState, completedFileNames: new Set<string>() }),
       }),
       {
         name: 'madcap-converter-storage',

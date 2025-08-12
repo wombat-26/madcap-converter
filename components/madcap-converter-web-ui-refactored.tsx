@@ -317,6 +317,30 @@ export default function MadCapConverterWebUI() {
         throw new Error(errorData.error || 'Batch conversion failed')
       }
 
+      // Check for preflight warnings in headers
+      const resourceStatusHeader = response.headers.get('X-Resource-Status')
+      if (resourceStatusHeader) {
+        try {
+          const resourceStatus = JSON.parse(resourceStatusHeader)
+          if (resourceStatus.preflightWarnings && resourceStatus.preflightWarnings.length > 0) {
+            console.log('⚠️ Preflight warnings detected:', resourceStatus.preflightWarnings)
+            
+            // Show warnings as info notification
+            info(
+              `Conversion completed with ${resourceStatus.preflightWarnings.length} notice(s)`,
+              resourceStatus.preflightWarnings.join(' ')
+            )
+            
+            // Log individual warnings
+            resourceStatus.preflightWarnings.forEach((warning: string, index: number) => {
+              console.log(`⚠️ Warning ${index + 1}: ${warning}`)
+            })
+          }
+        } catch (error) {
+          console.warn('Failed to parse resource status header:', error)
+        }
+      }
+
       const blob = await response.blob()
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
@@ -358,28 +382,40 @@ export default function MadCapConverterWebUI() {
 
   // Check if files contain MadCap content and trigger condition analysis
   const handleBatchFilesChange = async (newFiles: File[]) => {
+    console.log('handleBatchFilesChange called with', newFiles.length, 'files')
     setFiles(newFiles)
     
     if (newFiles.length === 0) {
       return
     }
     
+    // Debug: Log file details
+    console.log('Files:', newFiles.map(f => ({ name: f.name, type: f.type, size: f.size })))
+    
     // Check if any files are MadCap files (HTML/HTM with MadCap content)
-    const madCapFiles = newFiles.filter(file => 
-      (file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.flsnp')) &&
-      file.type.includes('text/html') || file.name.endsWith('.flsnp')
-    )
+    const madCapFiles = newFiles.filter(file => {
+      const hasValidExtension = file.name.endsWith('.html') || file.name.endsWith('.htm') || file.name.endsWith('.flsnp')
+      const hasValidType = !file.type || file.type === '' || file.type.includes('text/html') || file.type.includes('text/plain')
+      console.log(`File ${file.name}: extension=${hasValidExtension}, type="${file.type}", validType=${hasValidType}`)
+      return hasValidExtension && hasValidType
+    })
+    
+    console.log('MadCap files found:', madCapFiles.length)
     
     if (madCapFiles.length > 0) {
       info('MadCap files detected', `Analyzing ${madCapFiles.length} files for conditions...`)
       
       // Trigger condition analysis
       try {
+        console.log('Calling analyzeConditions...')
         await analyzeConditions()
+        console.log('analyzeConditions completed')
       } catch (error) {
         console.error('Failed to analyze conditions:', error)
         showError('Analysis failed', 'Could not analyze MadCap conditions')
       }
+    } else {
+      console.log('No MadCap files detected in the upload')
     }
   }
 

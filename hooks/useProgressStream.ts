@@ -5,12 +5,14 @@ import { useConversionStore } from '@/stores/useConversionStore'
 import { useNotificationStore } from '@/stores/useNotificationStore'
 import { ProgressEvent, ProgressEventType } from '@/services/progress-types'
 
-export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'reconnecting'
+export type ConnectionStatus = 'disconnected' | 'connecting' | 'connected' | 'error' | 'reconnecting' | 'fallback'
 
 interface UseProgressStreamOptions {
   autoReconnect?: boolean
   maxReconnectAttempts?: number
   reconnectDelay?: number
+  enableFallbackPolling?: boolean
+  pollingInterval?: number
   onConnect?: () => void
   onDisconnect?: () => void
   onError?: (error: Error) => void
@@ -24,6 +26,8 @@ export function useProgressStream(
     autoReconnect = true,
     maxReconnectAttempts = 5,
     reconnectDelay = 3000,
+    enableFallbackPolling = true,
+    pollingInterval = 5000, // Poll every 5 seconds
     onConnect,
     onDisconnect,
     onError
@@ -31,9 +35,11 @@ export function useProgressStream(
 
   const [connectionStatus, setConnectionStatus] = useState<ConnectionStatus>('disconnected')
   const [reconnectAttempt, setReconnectAttempt] = useState(0)
+  const [fallbackMode, setFallbackMode] = useState(false)
   
   const eventSourceRef = useRef<EventSource | null>(null)
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null)
+  const pollingTimeoutRef = useRef<NodeJS.Timeout | null>(null)
   const mountedRef = useRef(true)
 
   // Store hooks
@@ -41,10 +47,12 @@ export function useProgressStream(
     setCurrentFile, 
     setUploadProgress,
     setCompletedFiles,
+    addCompletedFile,
     addResult,
     addError,
     addWarning,
     isProcessing,
+    completedFiles,
     setProcessingState
   } = useConversionStore()
   
@@ -52,23 +60,18 @@ export function useProgressStream(
 
   // Update processing state based on progress events
   const initializeProcessingState = useCallback((sessionId: string) => {
-    const state = useConversionStore.getState()
-    state.setProcessingState({
+    setProcessingState({
       isProcessing: true,
       sessionId,
       currentFile: null,
       uploadProgress: 0,
       completedFiles: 0
     })
-  }, [])
+  }, [setProcessingState])
 
   // Handle progress events
   const handleProgressEvent = useCallback((event: ProgressEvent) => {
     const { type, data } = event
-    
-    // Get store functions directly to avoid dependency issues
-    const conversionStore = useConversionStore.getState()
-    const notificationStore = useNotificationStore.getState()
     
     switch (type) {
       case 'connection_established':
@@ -80,69 +83,70 @@ export function useProgressStream(
           const progress = data.totalFiles > 0 
             ? (data.completedFiles / data.totalFiles) * 100 
             : 0
-          conversionStore.setUploadProgress(progress)
-          conversionStore.setCompletedFiles(data.completedFiles)
+          setUploadProgress(progress)
+          setCompletedFiles(data.completedFiles)
         }
         break
 
       case 'conversion_start':
         initializeProcessingState(event.sessionId)
         if (data.message) {
-          notificationStore.info('Conversion started', data.message)
+          info('Conversion started', data.message)
         }
         break
 
       case 'file_start':
         if (data.currentFile) {
-          conversionStore.setCurrentFile(data.currentFile)
-          notificationStore.info('Processing file', `Starting: ${data.currentFile}`)
+          setCurrentFile(data.currentFile)
+          info('Processing file', `Starting: ${data.currentFile}`)
         }
         break
 
       case 'file_progress':
         if (data.overallPercentage !== undefined) {
-          conversionStore.setUploadProgress(data.overallPercentage)
+          setUploadProgress(data.overallPercentage)
         }
         if (data.completedFiles !== undefined) {
-          conversionStore.setCompletedFiles(data.completedFiles)
+          setCompletedFiles(data.completedFiles)
         }
         break
 
       case 'file_complete':
         if (data.currentFile) {
-          notificationStore.success('File completed', `Processed: ${data.currentFile}`)
+          addCompletedFile(data.currentFile)
+          success('File completed', `Processed: ${data.currentFile}`)
         }
         if (data.overallPercentage !== undefined) {
-          conversionStore.setUploadProgress(data.overallPercentage)
+          setUploadProgress(data.overallPercentage)
         }
         if (data.completedFiles !== undefined) {
-          conversionStore.setCompletedFiles(data.completedFiles)
+          setCompletedFiles(data.completedFiles)
         }
         break
 
       case 'file_error':
         if (data.error) {
-          conversionStore.addError(data.error)
-          notificationStore.error('File processing error', data.error)
+          addError(data.error)
+          showError('File processing error', data.error)
         }
         break
 
       case 'conversion_complete':
         console.log(`🔔 [Progress Stream] Received conversion_complete event:`, data);
         setConnectionStatus('disconnected')
-        conversionStore.setCurrentFile(null)
-        conversionStore.setUploadProgress(100)
+        setCurrentFile(null)
+        setUploadProgress(100)
         
         // Update completed files count from the event data
         if (data.completedFiles !== undefined) {
-          conversionStore.setCompletedFiles(data.completedFiles)
+          setCompletedFiles(data.completedFiles)
         }
         
         if (data.results) {
-          data.results.forEach(result => conversionStore.addResult(result))
+          data.results.forEach(result => addResult(result))
         }
         
-        notificationStore.success(
+        success(
           'Conversion completed', 
           `Successfully converted ${data.totalFiles || 0} files`
         )
@@ -150,7 +154,7 @@ export function useProgressStream(
         console.log(`✅ [Progress Stream] Processing state set to completed with completedFiles: ${data.completedFiles}`);
         
         // Update processing state to completed
-        conversionStore.setProcessingState({
+        setProcessingState({
           isProcessing: false,
           sessionId: null,
           currentFile: null,
@@ -162,21 +166,26 @@ export function useProgressStream(
         // Give more time for UI state to update properly
         setTimeout(() => {
           console.log(`🔌 [Progress Stream] Disconnecting after completion`);
-          disconnect()
+          // Use direct cleanup instead of disconnect callback to avoid circular dependency
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
+          setConnectionStatus('disconnected');
         }, 2000)
         break
 
       case 'conversion_error':
         setConnectionStatus('error')
-        conversionStore.setCurrentFile(null)
+        setCurrentFile(null)
         
         if (data.error) {
-          conversionStore.addError(data.error)
-          notificationStore.error('Conversion failed', data.error)
+          addError(data.error)
+          showError('Conversion failed', data.error)
         }
         
         // Update processing state to error
-        conversionStore.setProcessingState({
+        setProcessingState({
           isProcessing: false,
           sessionId: null,
           currentFile: null,
@@ -187,14 +196,32 @@ export function useProgressStream(
 
       case 'session_expired':
         setConnectionStatus('disconnected')
-        notificationStore.warning('Session expired', 'The conversion session has expired')
-        disconnect()
+        warning('Session expired', 'The conversion session has expired')
+        // Use direct cleanup instead of disconnect callback to avoid circular dependency
+        if (eventSourceRef.current) {
+          eventSourceRef.current.close();
+          eventSourceRef.current = null;
+        }
         break
 
       default:
         console.log('Unknown progress event type:', type)
     }
-  }, [onConnect, initializeProcessingState]) // Minimal dependencies
+  }, [
+    onConnect, 
+    initializeProcessingState, 
+    setCurrentFile, 
+    setUploadProgress, 
+    setCompletedFiles,
+    addCompletedFile, 
+    addResult, 
+    addError, 
+    setProcessingState, 
+    success, 
+    showError, 
+    warning, 
+    info
+  ])
 
   // Connect to SSE stream
   const connect = useCallback(() => {
@@ -239,10 +266,14 @@ export function useProgressStream(
         console.error('Progress stream error:', event)
         
         // Check if processing is already completed - don't show errors after success
-        const currentState = useConversionStore.getState()
-        if (!currentState.isProcessing && currentState.completedFiles > 0) {
+        if (!isProcessing && completedFiles > 0) {
           console.log('Ignoring connection error - conversion already completed successfully')
-          disconnect()
+          // Use direct cleanup to avoid circular dependency
+          if (eventSourceRef.current) {
+            eventSourceRef.current.close();
+            eventSourceRef.current = null;
+          }
+          setConnectionStatus('disconnected');
           return
         }
         
@@ -276,24 +307,52 @@ export function useProgressStream(
           reconnectTimeoutRef.current = setTimeout(() => {
             if (mountedRef.current) {
               console.log(`🔄 Reconnecting to progress stream (attempt ${reconnectAttempt + 1}) after ${backoffDelay}ms`)
-              disconnect()
+              // Clean up current connection before reconnecting
+              if (eventSourceRef.current) {
+                eventSourceRef.current.close()
+                eventSourceRef.current = null
+              }
               connect()
             }
           }, backoffDelay)
         } else if (isLikelyPermanentError) {
-          console.error(`❌ Session ${sessionId} likely not found after ${reconnectAttempt} attempts - stopping`)
-          // Clear the invalid session from the store
-          useConversionStore.getState().setProcessingState({
-            isProcessing: false,
-            sessionId: null,
-            currentFile: null,
-            uploadProgress: 0,
-            completedFiles: 0
-          })
-          disconnect()
+          // Trigger fallback polling if enabled
+          if (enableFallbackPolling && !fallbackMode) {
+            console.log(`🔄 SSE failed permanently, switching to fallback polling mode`)
+            startFallbackPolling()
+          } else {
+            console.error(`❌ Session ${sessionId} likely not found after ${reconnectAttempt} attempts - stopping`)
+            // Clear the invalid session from the store
+            setProcessingState({
+              isProcessing: false,
+              sessionId: null,
+              currentFile: null,
+              uploadProgress: 0,
+              completedFiles: 0
+            })
+            // Clean up connection directly
+            if (eventSourceRef.current) {
+              eventSourceRef.current.close()
+              eventSourceRef.current = null
+            }
+            setConnectionStatus('disconnected')
+          }
         } else {
-          console.error(`❌ Max reconnection attempts (${maxReconnectAttempts}) reached - stopping`)
-          disconnect()
+          console.error(`❌ Max reconnection attempts (${maxReconnectAttempts}) reached`)
+          
+          // Try fallback mode as last resort
+          if (enableFallbackPolling && !fallbackMode) {
+            console.log(`🔄 Max reconnection attempts reached, trying fallback polling mode`)
+            startFallbackPolling()
+          } else {
+            console.error(`❌ All connection methods failed - stopping`)
+            // Clean up connection directly
+            if (eventSourceRef.current) {
+              eventSourceRef.current.close()
+              eventSourceRef.current = null
+            }
+            setConnectionStatus('disconnected')
+          }
         }
       }
       
@@ -309,8 +368,87 @@ export function useProgressStream(
     maxReconnectAttempts,
     reconnectAttempt,
     reconnectDelay,
-    onError
+    onError,
+    enableFallbackPolling,
+    fallbackMode
   ])
+
+  // Fallback polling mechanism when SSE fails
+  const startFallbackPolling = useCallback(() => {
+    if (!sessionId || !enableFallbackPolling || !mountedRef.current) return
+
+    console.log(`🔄 [Fallback] Starting polling mode for session ${sessionId}`)
+    setFallbackMode(true)
+    setConnectionStatus('fallback')
+
+    const poll = async () => {
+      if (!mountedRef.current || !sessionId) return
+
+      try {
+        console.log(`📡 [Fallback] Polling session ${sessionId} status...`)
+        const response = await fetch(`/api/progress/status/${sessionId}`)
+        
+        if (response.ok) {
+          const sessionData = await response.json()
+          
+          // Update progress based on session data
+          if (sessionData.session) {
+            const session = sessionData.session
+            
+            // Update conversion store with session data
+            setUploadProgress(session.totalFiles > 0 ? (session.completedFiles / session.totalFiles) * 100 : 0)
+            setCompletedFiles(session.completedFiles)
+            
+            if (session.currentFile) {
+              setCurrentFile(session.currentFile)
+            }
+            
+            // Handle completion
+            if (session.status === 'completed') {
+              console.log(`✅ [Fallback] Session ${sessionId} completed`)
+              
+              setProcessingState({
+                isProcessing: false,
+                sessionId: null,
+                currentFile: null,
+                uploadProgress: 100,
+                completedFiles: session.completedFiles
+              })
+              
+              stopFallbackPolling()
+              return
+            }
+          }
+          
+        } else if (response.status === 404) {
+          console.log(`🔍 [Fallback] Session ${sessionId} not found, stopping polling`)
+          stopFallbackPolling()
+          return
+        }
+        
+      } catch (error) {
+        console.error(`❌ [Fallback] Polling error:`, error)
+      }
+      
+      // Schedule next poll
+      if (mountedRef.current && fallbackMode) {
+        pollingTimeoutRef.current = setTimeout(poll, pollingInterval)
+      }
+    }
+
+    // Start polling immediately
+    poll()
+  }, [sessionId, enableFallbackPolling, pollingInterval, setUploadProgress, setCompletedFiles, setCurrentFile, setProcessingState])
+
+  const stopFallbackPolling = useCallback(() => {
+    console.log(`🛑 [Fallback] Stopping polling mode`)
+    setFallbackMode(false)
+    
+    if (pollingTimeoutRef.current) {
+      clearTimeout(pollingTimeoutRef.current)
+      pollingTimeoutRef.current = null
+    }
+  }, [])
 
   // Disconnect from SSE stream
   const disconnect = useCallback(() => {
@@ -323,6 +461,9 @@ export function useProgressStream(
       reconnectTimeoutRef.current = null
     }
     
+    // Stop fallback polling
+    stopFallbackPolling()
+    
     // Close EventSource connection
     if (eventSourceRef.current) {
       console.log(`📡 [SSE] Closing EventSource connection (readyState: ${eventSourceRef.current.readyState})`)
@@ -333,7 +474,7 @@ export function useProgressStream(
     setConnectionStatus('disconnected')
     onDisconnect?.()
     console.log(`✅ [SSE] Successfully disconnected and cleaned up resources`)
-  }, [onDisconnect])
+  }, [onDisconnect, stopFallbackPolling])
 
   // Auto-connect when sessionId changes
   useEffect(() => {

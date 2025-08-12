@@ -44,6 +44,7 @@ function containsExcludedDirectory(relativePath: string): boolean {
 export async function POST(request: NextRequest) {
   const tempDir = join(tmpdir(), `batch-convert-${randomUUID()}`);
   let sessionId: string | undefined;
+  let preflightWarnings: string[] = [];
   
   try {
     console.log('📥 Batch conversion request received');
@@ -159,7 +160,7 @@ export async function POST(request: NextRequest) {
       
       // Check if file is from excluded directory
       if (containsExcludedDirectory(relativePath)) {
-        const excludedDirName = relativePath.split('/').find(part => 
+        const excludedDirName = relativePath.split('/').find((part: string) => 
           EXCLUDED_DIRECTORIES.has(part) || EXCLUDED_DIRECTORIES.has(part.toLowerCase())
         ) || 'unknown';
         
@@ -329,6 +330,52 @@ export async function POST(request: NextRequest) {
       console.log(`   Reason: MadCap output/temporary folders (Output, Temporary, TargetOutput, etc.)`);
     }
     
+    // PREFLIGHT WARNINGS for incomplete uploads
+    console.log(`\n🚨 === PREFLIGHT WARNINGS ===`);
+    
+    // Check for missing image directories
+    const hasContentImages = folderAnalysis.imageFiles > 0 || 
+                            folderAnalysis.missingCommonDirs.includes('Content/Images') === false;
+    const hasResourcesImages = !folderAnalysis.missingCommonDirs.includes('Resources/Images');
+    
+    if (!hasContentImages && !hasResourcesImages) {
+      const warning = 'No image directories detected (Content/Images, Resources/Images). Images in converted files may not display correctly.';
+      preflightWarnings.push(warning);
+      console.log(`⚠️ [PREFLIGHT] ${warning}`);
+    }
+    
+    // Check for missing Content directory
+    if (folderAnalysis.missingCommonDirs.includes('Content')) {
+      const warning = 'Content directory not found. This may indicate an incomplete MadCap project upload.';
+      preflightWarnings.push(warning);
+      console.log(`⚠️ [PREFLIGHT] ${warning}`);
+    }
+    
+    // Check if mostly output/temp files were uploaded
+    if (folderAnalysis.excludedDirectories.length > 0 && folderAnalysis.contentFiles < 5) {
+      const warning = `Upload appears to contain mostly output/temporary files. Consider uploading the source project instead.`;
+      preflightWarnings.push(warning);
+      console.log(`⚠️ [PREFLIGHT] ${warning}`);
+    }
+    
+    // Check for missing Resources directory
+    if (folderAnalysis.missingCommonDirs.includes('Content/Resources') && 
+        folderAnalysis.missingCommonDirs.includes('Resources')) {
+      const warning = 'No Resources directories found. Snippets, variables, and multimedia may not be processed.';
+      preflightWarnings.push(warning);
+      console.log(`⚠️ [PREFLIGHT] ${warning}`);
+    }
+    
+    if (preflightWarnings.length === 0) {
+      console.log(`✅ [PREFLIGHT] No warnings detected. Upload structure looks good.`);
+    } else {
+      console.log(`\n📋 [PREFLIGHT SUMMARY] ${preflightWarnings.length} potential issues detected:`);
+      preflightWarnings.forEach((warning, index) => {
+        console.log(`   ${index + 1}. ${warning}`);
+      });
+    }
+    console.log(`🚨 === END PREFLIGHT WARNINGS ===\n`);
+    
     console.log(`📂 === END ENHANCED ANALYSIS ===`);
     
     // Start conversion with progress streaming
@@ -350,6 +397,11 @@ export async function POST(request: NextRequest) {
     
     // Perform batch conversion with progress tracking
     const batchService = new BatchService();
+    
+    console.log(`🔍 [BREADCRUMB] About to call batchService.convertFolder()`);
+    console.log(`🔍 [BREADCRUMB] inputDir: ${inputDir}`);
+    console.log(`🔍 [BREADCRUMB] outputDir: ${outputDir}`);
+    console.log(`🔍 [BREADCRUMB] format: ${format}`);
     
     // Ensure all options are properly passed
     const conversionOptions = {
@@ -604,7 +656,8 @@ export async function POST(request: NextRequest) {
           inference: {
             usedFallbackStructure: files.some(f => !(f as any).webkitRelativePath),
             missingDirectories: folderAnalysis.missingCommonDirs
-          }
+          },
+          preflightWarnings: preflightWarnings || []
         }),
       },
     });

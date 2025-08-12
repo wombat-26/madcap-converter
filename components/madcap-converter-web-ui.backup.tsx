@@ -114,7 +114,7 @@ interface ConversionOptions {
     validateImagePaths?: boolean
     glossaryOptions?: {
       includeGlossary?: boolean
-      glossaryFormat?: 'separate' | 'book-appendix' | 'inline'
+      glossaryFormat?: 'separate' | 'book-appendix'
       sortGlossary?: boolean
       generateAnchors?: boolean
       formatDefinitions?: boolean
@@ -153,7 +153,7 @@ export default function MadCapConverterWebUI() {
   const [enableValidation, setEnableValidation] = useState(true)
   const [validationStrictness, setValidationStrictness] = useState<'strict' | 'normal' | 'lenient'>('normal')
   const [includeGlossary, setIncludeGlossary] = useState(true)
-  const [glossaryFormat, setGlossaryFormat] = useState<'separate' | 'book-appendix' | 'inline'>('separate')
+  const [glossaryFormat, setGlossaryFormat] = useState<'separate' | 'book-appendix'>('separate')
   
   // Batch conversion options
   const [preserveStructure, setPreserveStructure] = useState(true)
@@ -1200,7 +1200,6 @@ export default function MadCapConverterWebUI() {
                             <SelectContent>
                               <SelectItem value="separate">Separate File</SelectItem>
                               <SelectItem value="book-appendix">Book Appendix</SelectItem>
-                              <SelectItem value="inline">Inline</SelectItem>
                             </SelectContent>
                           </Select>
                         </div>

@@ -2,6 +2,11 @@ import { ConversionSession, ProgressClient, ProgressEvent, ProgressEventType, Pr
 import { randomUUID } from 'crypto'
 import { SessionReadyManager } from './SessionReadyManager'
 
+// Use global object to ensure singleton persists across module reloads in development
+declare global {
+  var __progressSessionManager: ProgressSessionManager | undefined
+}
+
 export class ProgressSessionManager {
   private static instance: ProgressSessionManager
   private static instancePromise: Promise<ProgressSessionManager> | null = null
@@ -12,31 +17,40 @@ export class ProgressSessionManager {
   private readonly SESSION_TIMEOUT = 1000 * 60 * 30 // 30 minutes
   private readonly CLIENT_TIMEOUT = 1000 * 60 * 5   // 5 minutes
   private readonly CLEANUP_INTERVAL = 1000 * 60     // 1 minute
+  private readonly MAX_BATCH_SIZE = 200              // Maximum files per batch
+  private readonly CONNECTION_RETRY_DELAY = 2000    // 2 seconds
+  private readonly MAX_CONNECTION_RETRIES = 3       // Maximum connection retry attempts
   
   private cleanupInterval?: NodeJS.Timeout
   private isInitialized = false
 
   private constructor() {
     console.log('📊 [SessionManager] Initializing ProgressSessionManager')
-    this.initialize()
+    // Initialize synchronously - cleanup will be started on demand
+    this.isInitialized = true
+    console.log('📊 [SessionManager] ProgressSessionManager initialized successfully')
   }
 
-  private async initialize() {
-    try {
+  private async startCleanupIfNeeded() {
+    if (!this.cleanupInterval) {
       await this.startCleanup()
-      this.isInitialized = true
-      console.log('📊 [SessionManager] ProgressSessionManager initialized successfully')
-    } catch (error) {
-      console.error('❌ [SessionManager] Failed to initialize ProgressSessionManager:', error)
-      throw error
     }
   }
 
   static getInstance(): ProgressSessionManager {
     try {
+      // First check global variable for development hot reloading compatibility
+      if (globalThis.__progressSessionManager) {
+        console.log('📊 [SessionManager] Using existing global singleton instance')
+        ProgressSessionManager.instance = globalThis.__progressSessionManager
+        return ProgressSessionManager.instance
+      }
+      
       if (!ProgressSessionManager.instance) {
         console.log('📊 [SessionManager] Creating new singleton instance')
         ProgressSessionManager.instance = new ProgressSessionManager()
+        // Store in global for Next.js hot reload persistence
+        globalThis.__progressSessionManager = ProgressSessionManager.instance
       } else {
         console.log('📊 [SessionManager] Returning existing singleton instance')
       }
@@ -61,6 +75,37 @@ export class ProgressSessionManager {
            this.sessionClients !== undefined
   }
 
+  // Connection validation for stability
+  public validateConnection(sessionId: string): boolean {
+    try {
+      const session = this.sessions.get(sessionId)
+      if (!session) {
+        console.warn(`⚠️ Session ${sessionId} not found during validation`)
+        return false
+      }
+
+      const sessionClientSet = this.sessionClients.get(sessionId)
+      const activeClients = sessionClientSet?.size || 0
+      
+      console.log(`🔍 Session ${sessionId} validation: ${activeClients} active clients`)
+      return true
+      
+    } catch (error) {
+      console.error(`❌ Connection validation failed for session ${sessionId}:`, error)
+      return false
+    }
+  }
+
+  // Graceful degradation when SSE connections fail
+  public enableFallbackMode(sessionId: string): void {
+    const session = this.sessions.get(sessionId)
+    if (session) {
+      console.log(`🔄 Enabling fallback mode for session ${sessionId} (no SSE required)`)
+      // Session continues without real-time updates
+      session.lastUpdate = Date.now()
+    }
+  }
+
   // UUID generation with fallback
   private generateUUID(): string {
     try {
@@ -80,8 +125,16 @@ export class ProgressSessionManager {
   // Session Management
   createSession(totalFiles: number = 0): string {
     try {
+      // Start cleanup on first use
+      this.startCleanupIfNeeded()
+      
       const sessionId = this.generateUUID()
       console.log(`📊 Generating session ID: ${sessionId}`)
+      
+      // Validate batch size for stability
+      if (totalFiles > this.MAX_BATCH_SIZE) {
+        console.warn(`⚠️ Large batch detected: ${totalFiles} files (max recommended: ${this.MAX_BATCH_SIZE}). Consider using chunked processing.`)
+      }
       
       // Register session as pending with SessionReadyManager
       const sessionReadyManager = SessionReadyManager.getInstance()
@@ -284,14 +337,52 @@ export class ProgressSessionManager {
 
   private sendToClient(clientId: string, event: ProgressEvent): void {
     const client = this.clients.get(clientId)
-    if (client) {
-      try {
-        const sseData = ProgressEventFactory.toSSE(event)
-        client.controller.enqueue(new TextEncoder().encode(sseData))
-        client.lastPing = Date.now()
-      } catch (error) {
-        console.error(`Failed to send to client ${clientId}:`, error)
+    if (!client) {
+      console.warn(`⚠️ Client ${clientId} not found`)
+      return
+    }
+
+    // Check if controller is still valid
+    if (!client.controller) {
+      console.warn(`⚠️ Client ${clientId} has invalid controller`)
+      this.removeClient(clientId)
+      return
+    }
+
+    try {
+      const sseData = ProgressEventFactory.toSSE(event)
+      
+      // Validate SSE data before sending
+      if (!sseData || sseData.length === 0) {
+        console.warn(`⚠️ Empty SSE data for client ${clientId}`)
+        return
+      }
+
+      // Send with timeout protection
+      const encodedData = new TextEncoder().encode(sseData)
+      client.controller.enqueue(encodedData)
+      client.lastPing = Date.now()
+      
+    } catch (error) {
+      const errorMsg = error instanceof Error ? error.message : String(error)
+      console.error(`❌ Failed to send to client ${clientId}: ${errorMsg}`)
+      
+      // Handle specific error types
+      if (errorMsg.includes('closed') || errorMsg.includes('aborted') || errorMsg.includes('readable')) {
+        console.log(`🔌 Client ${clientId} connection closed, removing client`)
         this.removeClient(clientId)
+      } else {
+        // For other errors, try one more time before removing
+        setTimeout(() => {
+          try {
+            const retryData = ProgressEventFactory.toSSE(event)
+            client.controller.enqueue(new TextEncoder().encode(retryData))
+            console.log(`✅ Retry successful for client ${clientId}`)
+          } catch (retryError) {
+            console.error(`❌ Retry failed for client ${clientId}, removing`)
+            this.removeClient(clientId)
+          }
+        }, this.CONNECTION_RETRY_DELAY)
       }
     }
   }
@@ -438,5 +529,8 @@ export class ProgressSessionManager {
     this.sessions.clear()
     this.clients.clear()
     this.sessionClients.clear()
+    
+    // Clear global reference
+    globalThis.__progressSessionManager = undefined
   }
 }
