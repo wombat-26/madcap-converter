@@ -119,6 +119,16 @@ export async function POST(request: NextRequest) {
     console.error('Condition analysis failed:', error);
     
     if (error instanceof z.ZodError) {
+      const firstError = error.errors[0];
+      // Check if this is a specific validation error we want to show directly
+      if (firstError?.code === 'too_small' && firstError?.path?.includes('files')) {
+        return NextResponse.json({
+          success: false,
+          error: firstError.message,
+          details: error.errors
+        }, { status: 400 });
+      }
+      // For other validation errors, show generic message
       return NextResponse.json({
         success: false,
         error: 'Invalid request data',

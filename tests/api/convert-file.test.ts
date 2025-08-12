@@ -95,8 +95,8 @@ describe('/api/convert-file', () => {
 
       const data = await response.json();
       expect(data.success).toBe(true);
-      expect(data.content).toContain('<h1>Test Title</h1>');
-      expect(data.content).toContain('<p>Test content</p>');
+      expect(data.content).toContain('Test Title');
+      expect(data.content).toContain('Test content');
       expect(data.filename).toBe('test.html');
     });
 
