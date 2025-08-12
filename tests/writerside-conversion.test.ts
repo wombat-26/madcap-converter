@@ -10,7 +10,7 @@ import { BatchService } from '../src/core/services/batch-service.js';
  * Tests all conversion options, edge cases, and End-to-End scenarios
  */
 
-const FLARE_SOURCE_PATH = '/Volumes/Envoy Pro/Flare/Plan_EN';
+const FLARE_SOURCE_PATH = './tests/fixtures/sample-flare-project';
 const TEST_OUTPUT_PATH = '/tmp/writerside-conversion-tests';
 
 describe('Writerside Conversion - Comprehensive Tests', () => {

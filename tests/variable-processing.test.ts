@@ -11,7 +11,7 @@ import { BatchService } from '../src/core/services/batch-service.js';
  * Tests parsing, conversion, and integration with the conversion pipeline
  */
 
-const FLARE_SOURCE_PATH = '/Volumes/Envoy Pro/Flare/Plan_EN';
+const FLARE_SOURCE_PATH = './tests/fixtures/sample-flare-project';
 const TEST_OUTPUT_PATH = '/tmp/variable-processing-tests';
 
 describe('Variable Processing Tests', () => {

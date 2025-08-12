@@ -20,7 +20,7 @@ export function GlossaryOptions() {
     includeGlossary: true,
     glossaryPath: '',
     filterConditions: false,
-    glossaryFormat: 'inline' as const,
+    glossaryFormat: 'separate' as const,
     generateAnchors: true,
   }
 
@@ -81,14 +81,13 @@ export function GlossaryOptions() {
                   </div>
                 </Label>
                 <Select
-                  value={glossaryOptions.glossaryFormat || 'inline'}
+                  value={glossaryOptions.glossaryFormat || 'separate'}
                   onValueChange={(value: any) => updateGlossaryOptions({ glossaryFormat: value })}
                 >
                   <SelectTrigger id="glossary-format">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="inline">Inline - Include in main document</SelectItem>
                     <SelectItem value="separate">Separate - Create glossary file</SelectItem>
                     <SelectItem value="book-appendix">Book Appendix - For AsciiDoc books</SelectItem>
                   </SelectContent>

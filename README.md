@@ -4,7 +4,7 @@
 
 Transform your technical documentation with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like dynamic variable resolution, snippet processing, cross-reference handling, condition filtering, and comprehensive batch operations with specialized Zendesk Help Center support.
 
-## ✅ COMPLETE RESTORATION COMPLETED (January 2025)
+## ✅ COMPLETE RESTORATION COMPLETED (August 2025)
 
 **ALL ADVANCED FUNCTIONALITY FULLY RESTORED**: Following a major regression in commit b3e2996 where ~75% of functionality was lost during web app conversion, a comprehensive restoration project has been completed:
 
@@ -1600,7 +1600,7 @@ npm install
 - **List Continuation**: Proper support for `madcap:continue="true"` across all formats
 - **Variable Resolution**: More robust fallback handling for missing variable files
 
-### July 2025 Updates
+### August 2025 Updates
 - **Complete Web Application Transformation**: Converted from MCP-only server to full Next.js web application with modern UI
 - **Comprehensive Testing Suite**: Added Jest-based unit tests, React Testing Library component tests, and Playwright E2E tests
 - **Advanced File Handling**: Implemented File System Access API with ZIP fallback for browser-based file operations

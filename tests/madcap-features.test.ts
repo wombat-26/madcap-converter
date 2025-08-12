@@ -10,7 +10,7 @@ import { MadCapPreprocessor } from '../src/core/services/madcap-preprocessor.js'
  * Focus on variables, conditions, snippets, and MadCap-specific elements
  */
 
-const FLARE_SOURCE_PATH = '/Volumes/Envoy Pro/Flare/Plan_EN';
+const FLARE_SOURCE_PATH = './tests/fixtures/sample-flare-project';
 
 describe('MadCap-Specific Features Tests', () => {
   let converter: WritersideMarkdownConverter;
