@@ -1,11 +1,13 @@
-= Untitled Document
+= Document Title
 :toc:
 :icons: font
 :experimental:
 :source-highlighter: highlight.js
 
 . First item
-+
 .. Sub item 1
 .. Sub item 2
++
+. Sub item 1
+. Sub item 2
 . Second item

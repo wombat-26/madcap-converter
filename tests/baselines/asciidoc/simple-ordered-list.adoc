@@ -1,4 +1,4 @@
-= Untitled Document
+= Document Title
 :toc:
 :icons: font
 :experimental:
