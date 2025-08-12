@@ -50,12 +50,35 @@ export class HTMLPreprocessor {
   private enhanceHTMLStructure(document: Document): void {
     // Basic HTML cleanup to prevent stack overflow
     try {
+      // Remove problematic elements that should never be converted to content
+      this.removeNonContentElements(document);
+      
       // Only fix URL encoding in attributes - this is safe and needed
       this.fixURLEncodedAttributes(document);
       
       // Skip other complex operations that might cause recursion
     } catch (error) {
       console.warn('HTML structure enhancement failed, continuing with basic processing:', error);
+    }
+  }
+  
+  /**
+   * Remove elements that contain scripts, styles, or other non-content data
+   * This prevents them from being processed as content during conversion
+   */
+  private removeNonContentElements(document: Document): void {
+    const elementsToRemove = [
+      'script', 'style', 'noscript', 
+      'meta', 'link', 'base',
+      'canvas', 'embed', 'object', 'param'
+    ];
+    
+    for (const tagName of elementsToRemove) {
+      const elements = document.querySelectorAll(tagName);
+      console.log(`📄 [HTML Preprocessor] Removing ${elements.length} ${tagName} elements`);
+      elements.forEach(element => {
+        element.remove();
+      });
     }
   }
 

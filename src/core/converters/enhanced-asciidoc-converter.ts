@@ -33,6 +33,9 @@ interface ConversionContext {
   variables: Map<string, string>;
   snippets: Map<string, string>;
   crossRefs: Map<string, string>;
+  depth: number;
+  maxDepth: number;
+  processedElements: WeakSet<Element>;
 }
 
 export class EnhancedAsciiDocConverter implements DocumentConverter {
@@ -45,6 +48,7 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   private citationHandler: CitationHandler;
   private performanceOptimizer: PerformanceOptimizer;
   private edgeCaseRules: AsciiDocEdgeCaseRules[] = [];
+  private extractedImages: Set<string> = new Set();
   
   constructor() {
     this.madCapPreprocessor = new MadCapPreprocessor();
@@ -83,9 +87,32 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         priority: 100
       },
       {
+        name: 'MadCap glossary terms',
+        pattern: (el) => el.tagName === 'MADCAP:GLOSSARYTERM',
+        handler: (el: Element) => {
+          const term = el.textContent?.trim() || '';
+          if (!term) {
+            return '';
+          }
+          
+          // Create anchor reference for the glossary term
+          // This matches the anchor format used in glossary-converter.ts
+          const anchor = `glossary-${term.toLowerCase()
+            .replace(/[^a-z0-9]+/g, '-')
+            .replace(/^-+|-+$/g, '')}`;
+          
+          console.log(`🔍 [EnhancedAsciiDoc] Converting glossary term: "${term}" -> xref:${anchor}[${term}]`);
+          
+          // Return AsciiDoc cross-reference to glossary
+          return `xref:${anchor}[${term}]`;
+        },
+        priority: 100
+      },
+      {
         name: 'MadCap dropdowns',
         pattern: (el) => el.tagName === 'MADCAP:DROPDOWN' || el.classList.contains('madcap-dropdown') || el.classList.contains('collapsible-block'),
-        handler: (el: Element) => {
+        handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
           // Handle both original MadCap dropdowns and preprocessed ones
           let title = 'Details';
           let content = '';
@@ -94,11 +121,19 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
             const hotspot = el.querySelector('madcap\\:dropdownhotspot');
             const body = el.querySelector('madcap\\:dropdownbody');
             title = hotspot?.textContent?.trim() || 'Details';
-            content = body ? this.processElement(body, this.createContext()) : '';
+            content = body ? this.processElement(body, context) : '';
           } else {
             // Preprocessed dropdown
             title = el.getAttribute('data-title') || 'Details';
-            content = this.processElement(el, this.createContext());
+            // Process children, not the element itself to avoid recursion
+            content = '';
+            for (const child of Array.from(el.childNodes)) {
+              if (child.nodeType === 3) {
+                content += child.textContent;
+              } else if (child.nodeType === 1) {
+                content += this.processElement(child as Element, context);
+              }
+            }
           }
           
           return `\n.${title}\n[%collapsible]\n====\n${content.trim()}\n====\n`;
@@ -111,9 +146,10 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         name: 'Ordered lists with custom styles',
         pattern: (el) => el.tagName === 'OL',
         handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
           const style = el.getAttribute('style') || '';
           const listStyle = this.extractListStyle(style);
-          return this.processListElement(el, 'ordered', ctx || this.createContext(), listStyle);
+          return this.processListElement(el, 'ordered', context, listStyle);
         },
         priority: 90
       },
@@ -121,7 +157,8 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         name: 'Unordered lists',
         pattern: (el) => el.tagName === 'UL',
         handler: (el: Element, ctx?: ConversionContext) => {
-          return this.processListElement(el, 'unordered', ctx || this.createContext());
+          const context = ctx || this.createContext();
+          return this.processListElement(el, 'unordered', context);
         },
         priority: 90
       },
@@ -138,8 +175,16 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       {
         name: 'Note blocks',
         pattern: (el) => el.classList.contains('note') || el.classList.contains('mc-note'),
-        handler: (el: Element) => {
-          const content = this.processElement(el, this.createContext());
+        handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
+          let content = '';
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+              content += child.textContent;
+            } else if (child.nodeType === 1) {
+              content += this.processElement(child as Element, context);
+            }
+          }
           return `\nNOTE: ${content.trim()}\n`;
         },
         priority: 80
@@ -147,8 +192,16 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       {
         name: 'Warning blocks',
         pattern: (el) => el.classList.contains('warning') || el.classList.contains('mc-warning'),
-        handler: (el: Element) => {
-          const content = this.processElement(el, this.createContext());
+        handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
+          let content = '';
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+              content += child.textContent;
+            } else if (child.nodeType === 1) {
+              content += this.processElement(child as Element, context);
+            }
+          }
           return `\nWARNING: ${content.trim()}\n`;
         },
         priority: 80
@@ -156,8 +209,16 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       {
         name: 'Tip blocks',
         pattern: (el) => el.classList.contains('tip') || el.classList.contains('mc-tip'),
-        handler: (el: Element) => {
-          const content = this.processElement(el, this.createContext());
+        handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
+          let content = '';
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+              content += child.textContent;
+            } else if (child.nodeType === 1) {
+              content += this.processElement(child as Element, context);
+            }
+          }
           return `\nTIP: ${content.trim()}\n`;
         },
         priority: 80
@@ -165,8 +226,16 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       {
         name: 'Caution blocks',
         pattern: (el) => el.classList.contains('caution') || el.classList.contains('mc-caution'),
-        handler: (el: Element) => {
-          const content = this.processElement(el, this.createContext());
+        handler: (el: Element, ctx?: ConversionContext) => {
+          const context = ctx || this.createContext();
+          let content = '';
+          for (const child of Array.from(el.childNodes)) {
+            if (child.nodeType === 3) {
+              content += child.textContent;
+            } else if (child.nodeType === 1) {
+              content += this.processElement(child as Element, context);
+            }
+          }
           return `\nCAUTION: ${content.trim()}\n`;
         },
         priority: 80
@@ -248,6 +317,9 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   async convert(input: string, options: ConversionOptions): Promise<ConversionResult> {
     const warnings: string[] = [];
     
+    // Reset image extraction for this conversion
+    this.extractedImages.clear();
+    
     try {
       console.log('EnhancedAsciiDocConverter: Starting conversion');
       
@@ -266,14 +338,28 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         
         warnings.push(...optimizationResult.warnings);
         
+        // Generate variables file if variables were extracted (performance path)
+        let variablesFile: string | undefined;
+        if (options.variableOptions?.extractVariables) {
+          const extractedVariables = this.madCapPreprocessor.getExtractedVariables();
+          console.log(`🔧 [EnhancedAsciiDocConverter Performance] Extracted ${extractedVariables.length} variables from MadCapPreprocessor`);
+          
+          if (extractedVariables.length > 0) {
+            variablesFile = this.generateVariablesFile(extractedVariables, options.variableOptions);
+            console.log(`📝 [EnhancedAsciiDocConverter Performance] Generated variables file: ${variablesFile?.length || 0} characters`);
+          }
+        }
+        
         return {
           content: optimizationResult.optimizedContent,
+          variablesFile,
           metadata: {
             title: this.extractTitleFromContent(optimizationResult.optimizedContent),
             wordCount: this.estimateWordCount(optimizationResult.optimizedContent),
             warnings: warnings.length > 0 ? warnings : undefined,
             format: 'asciidoc',
             variables: this.variableExtractor.getVariables(),
+            images: Array.from(this.extractedImages),
             processingTime: optimizationResult.metrics.processingTime,
             memoryUsage: optimizationResult.metrics.memoryUsage
           }
@@ -283,14 +369,28 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       // Standard processing for smaller documents
       const result = await this.convertChunk(input, options);
       
+      // Generate variables file if variables were extracted
+      let variablesFile: string | undefined;
+      if (options.variableOptions?.extractVariables) {
+        const extractedVariables = this.madCapPreprocessor.getExtractedVariables();
+        console.log(`🔧 [EnhancedAsciiDocConverter] Extracted ${extractedVariables.length} variables from MadCapPreprocessor`);
+        
+        if (extractedVariables.length > 0) {
+          variablesFile = this.generateVariablesFile(extractedVariables, options.variableOptions);
+          console.log(`📝 [EnhancedAsciiDocConverter] Generated variables file: ${variablesFile?.length || 0} characters`);
+        }
+      }
+      
       return {
         content: result,
+        variablesFile,
         metadata: {
           title: this.extractTitleFromContent(result),
           wordCount: this.estimateWordCount(result),
           warnings: warnings.length > 0 ? warnings : undefined,
           format: 'asciidoc',
-          variables: this.variableExtractor.getVariables()
+          variables: this.variableExtractor.getVariables(),
+          images: Array.from(this.extractedImages)
         }
       };
       
@@ -300,6 +400,23 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   }
   
   private async convertChunk(input: string, options: ConversionOptions): Promise<string> {
+    // Configure MadCap preprocessor for variable extraction if needed
+    if (options.variableOptions?.extractVariables) {
+      console.log('🔧 [EnhancedAsciiDocConverter] Configuring MadCapPreprocessor for variable extraction');
+      this.madCapPreprocessor.setExtractVariables(true);
+      
+      // If we have pre-extracted variables from batch processing, provide them to the preprocessor
+      if (options.extractedVariables && options.extractedVariables.length > 0) {
+        console.log(`📝 [EnhancedAsciiDocConverter] Using ${options.extractedVariables.length} pre-extracted variables from batch processing`);
+        this.madCapPreprocessor.loadExtractedVariables(options.extractedVariables);
+        options.extractedVariables.forEach((variable) => {
+          console.log(`    • ${variable.name} = "${variable.value}"`);
+        });
+      }
+    } else {
+      this.madCapPreprocessor.setExtractVariables(false);
+    }
+    
     // MadCap preprocessing
     const preprocessed = await this.madCapPreprocessor.preprocessMadCapContent(input, options.inputPath, undefined, options.projectRootPath, options);
     
@@ -344,9 +461,21 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     const body = document.body;
     if (!body) return '';
     
+    // Check for multiple HTML or body elements which could cause duplication
+    const allBodies = document.querySelectorAll('body');
+    const allHtmlElements = document.querySelectorAll('html');
+    if (allBodies.length > 1) {
+      console.warn(`⚠️ [Enhanced AsciiDoc] Found ${allBodies.length} body elements - this may cause content duplication`);
+    }
+    if (allHtmlElements.length > 1) {
+      console.warn(`⚠️ [Enhanced AsciiDoc] Found ${allHtmlElements.length} html elements - this may cause content duplication`);
+    }
+    
     // Extract title from first h1
     const firstH1 = body.querySelector('h1');
     const title = firstH1?.textContent?.trim() || 'Document Title';
+    
+    console.log(`📄 [Enhanced AsciiDoc] Converting document with title: "${title}"`);
     
     // Build document header
     let result = `= ${title}\n`;
@@ -373,6 +502,20 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   }
   
   private processElement(element: Element, context: ConversionContext): string {
+    // Check if this element was already processed (e.g., as a nested list)
+    if (context.processedElements.has(element)) {
+      return '';
+    }
+    
+    // Check recursion depth to prevent stack overflow
+    if (context.depth >= context.maxDepth) {
+      console.warn(`⚠️ [Enhanced AsciiDoc] Max recursion depth reached (${context.maxDepth})`);
+      return this.createDepthLimitFallback(element);
+    }
+    
+    // Increment depth for this recursion level
+    const newContext = { ...context, depth: context.depth + 1 };
+    
     // Check edge case rules first
     for (const rule of this.edgeCaseRules) {
       const matches = typeof rule.pattern === 'function' 
@@ -381,12 +524,18 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         
       if (matches) {
         console.log(`EnhancedAsciiDocConverter: Applying rule "${rule.name}" for element ${element.tagName}`);
-        return rule.handler(element, context);
+        return rule.handler(element, newContext);
       }
     }
     
     // Standard element processing
     const tagName = element.tagName.toLowerCase();
+    
+    // Filter out elements that should never be converted to content
+    if (this.shouldSkipElement(tagName)) {
+      console.log(`📄 [Enhanced AsciiDoc] Skipping element: ${tagName}`);
+      return '';
+    }
     
     switch (tagName) {
       case 'h1':
@@ -403,14 +552,14 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         return `\n======= ${element.textContent?.trim()}\n\n`;
         
       case 'p':
-        const text = this.processInlineContent(element, context);
+        const text = this.processInlineContent(element, newContext);
         return text ? `${text}\n\n` : '';
         
       case 'div':
       case 'section':
         let divContent = '';
         for (const child of Array.from(element.children)) {
-          divContent += this.processElement(child, context);
+          divContent += this.processElement(child, newContext);
         }
         return divContent;
         
@@ -429,13 +578,30 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         
       case 'em':
       case 'i':
-        return `_${element.textContent}_`;
+        // Treat UI tokens (commonly italicized in source) as bold for AsciiDoc style
+        return `*${element.textContent}*`;
         
       case 'br':
         return ' +\n';
         
       case 'hr':
         return '\n---\n\n';
+        
+      case 'span':
+        // Handle preprocessed glossary terms
+        if (element.classList.contains('madcap-glossary-term')) {
+          const term = element.getAttribute('data-term') || element.textContent?.trim() || '';
+          if (term) {
+            const anchor = `glossary-${term.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')}`;
+            console.log(`🔍 [EnhancedAsciiDoc] Converting preprocessed glossary term: "${term}" -> xref:${anchor}[${term}]`);
+            return `xref:${anchor}[${term}]`;
+          }
+        }
+        
+        // Regular span - process inline content
+        return this.processInlineContent(element, newContext);
         
       default:
         // Process children for unknown elements
@@ -444,7 +610,7 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
           if (child.nodeType === 3) { // Text node
             content += child.textContent;
           } else if (child.nodeType === 1) { // Element node
-            content += this.processElement(child as Element, context);
+            content += this.processElement(child as Element, newContext);
           }
         }
         return content;
@@ -471,9 +637,12 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       if (type === 'ordered') {
         marker = '.'.repeat(level + 1);
         
-        // Apply style if specified
-        if (style === 'lower-alpha' && level === 0) {
-          result += '[loweralpha]\n';
+        // Apply style if specified (only at list start level)
+        if (level === 0) {
+          if (style === 'lower-alpha') result += '[loweralpha]\n';
+          else if (style === 'upper-alpha') result += '[upperalpha]\n';
+          else if (style === 'lower-roman') result += '[lowerroman]\n';
+          else if (style === 'upper-roman') result += '[upperroman]\n';
         }
       } else {
         marker = '*'.repeat(level + 1);
@@ -487,12 +656,15 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
         } else if (child.nodeType === 1) { // Element node
           const childEl = child as Element;
           if (childEl.tagName === 'UL' || childEl.tagName === 'OL') {
+            // Mark nested list as processed to prevent double processing
+            context.processedElements.add(childEl);
+            
             // Nested list - process with increased level
             const nestedContext = {
               ...newContext,
               listStack: [...context.listStack, { level, type, itemCount: 0 }]
             };
-            itemContent += '\n' + this.processElement(childEl, nestedContext);
+            itemContent += '\n' + this.processListElement(childEl, childEl.tagName === 'OL' ? 'ordered' : 'unordered', nestedContext);
           } else {
             itemContent += this.processElement(childEl, newContext);
           }
@@ -502,7 +674,7 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       result += `${marker} ${itemContent.trim()}\n`;
       
       // Add continuation marker if needed
-      if (item.querySelector('ul, ol, pre, div.note')) {
+      if (item.querySelector('ul, ol, pre, div.note, div.mc-note')) {
         result += '+\n';
       }
     }
@@ -514,6 +686,12 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     const src = img.getAttribute('src') || '';
     const alt = img.getAttribute('alt') || '';
     const title = img.getAttribute('title');
+    
+    // Extract and store the original image path for batch copying
+    if (src && !src.startsWith('data:') && !src.startsWith('http')) {
+      this.extractedImages.add(src);
+      console.log(`📸 [Enhanced AsciiDoc] Extracted image for copying: ${src}`);
+    }
     
     // Normalize image path for AsciiDoc output
     let normalizedSrc = this.normalizeImagePath(src);
@@ -541,7 +719,33 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     let normalized = src;
     console.log(`DEBUG: Normalizing image path: "${src}"`);
     
-    // Handle MadCap-specific path patterns first
+    // FIRST: Handle Windows absolute paths like file:///C:/Flare/... 
+    if (normalized.startsWith('file:///')) {
+      console.log(`DEBUG: Detected Windows absolute path with file:// protocol`);
+      // Remove file:// protocol
+      normalized = normalized.replace('file:///', '');
+      // Convert Windows path to Unix-style for further processing
+      normalized = normalized.replace(/\\/g, '/');
+      console.log(`DEBUG: After removing file:// protocol: "${normalized}"`);
+    }
+    
+    // Handle other Windows absolute paths like C:\Flare\...
+    if (normalized.match(/^[A-Z]:\//)) {
+      console.log(`DEBUG: Detected Windows absolute path without protocol`);
+      // Find a reasonable extraction point from Windows paths
+      const pathSegments = normalized.split('/');
+      // Look for common MadCap patterns in Windows paths
+      for (let i = 0; i < pathSegments.length; i++) {
+        if (pathSegments[i].includes('Images') && i < pathSegments.length - 1) {
+          // Extract from Images/ onward
+          normalized = pathSegments.slice(i).join('/');
+          console.log(`DEBUG: Extracted Windows path from Images/ onward: "${normalized}"`);
+          break;
+        }
+      }
+    }
+    
+    // Handle MadCap-specific path patterns
     if (normalized.includes('Content/Images/')) {
       // Extract from Content/Images/ onward and map to Images/
       const contentImagesIndex = normalized.indexOf('Content/Images/');
@@ -597,32 +801,113 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
   
   private processInlineContent(element: Element, context: ConversionContext): string {
     let result = '';
+    const childNodes = Array.from(element.childNodes);
     
-    for (let i = 0; i < element.childNodes.length; i++) {
-      const child = element.childNodes[i];
+    for (let i = 0; i < childNodes.length; i++) {
+      const child = childNodes[i];
       
       if (child.nodeType === 3) { // Text node
-        let textContent = child.textContent || '';
-        
-        // Check if this text node ends with "see " and next node is a link
-        if (textContent.endsWith('see ') && i + 1 < element.childNodes.length) {
-          const nextChild = element.childNodes[i + 1];
-          if (nextChild.nodeType === 1 && (nextChild as Element).tagName.toLowerCase() === 'a') {
-            // Remove "see " from the text and let the link be processed normally
-            textContent = textContent.slice(0, -4); // Remove "see "
-            result += textContent + 'see ';
-          } else {
-            result += textContent;
-          }
-        } else {
-          result += textContent;
-        }
+        const text = child.textContent || '';
+        result += text; // Preserve original whitespace in text nodes
       } else if (child.nodeType === 1) { // Element node
-        result += this.processElement(child as Element, context);
+        const elementResult = this.processElement(child as Element, context);
+        
+        if (elementResult) {
+          // Enhanced spacing logic for proper word boundaries
+          const needsSpaceBefore = this.shouldAddSpaceBefore(result, elementResult);
+          
+          if (needsSpaceBefore) {
+            result += ' ';
+          }
+          
+          result += elementResult;
+          
+          // Look ahead to next sibling to determine if we need space after
+          const nextSibling = childNodes[i + 1];
+          if (nextSibling && this.shouldAddSpaceAfter(elementResult, nextSibling)) {
+            result += ' ';
+          }
+        }
       }
     }
     
-    return result.trim();
+    // Only trim excessive whitespace, preserve single spaces
+    return result.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+  }
+  
+  /**
+   * Determines if a space should be added before an inline element
+   */
+  private shouldAddSpaceBefore(currentResult: string, elementResult: string): boolean {
+    // If result is empty or already ends with whitespace, no space needed
+    if (!currentResult || /\s$/.test(currentResult)) {
+      return false;
+    }
+    
+    // If element already starts with whitespace, no space needed
+    if (/^\s/.test(elementResult)) {
+      return false;
+    }
+    
+    const lastChar = currentResult.slice(-1);
+    const firstChar = elementResult.charAt(0);
+    
+    // Always add space before AsciiDoc macros (image:, xref:, link:, kbd:) when not preceded by whitespace
+    if (elementResult.match(/^(image:|xref:|link:|kbd:\[)/)) {
+      return true;
+    }
+    
+    // Always add space before bold/italic formatting when preceded by word characters
+    if (elementResult.match(/^[\*_]/) && lastChar.match(/\w/)) {
+      return true;
+    }
+    
+    // Add space between word characters (handles most text-to-text cases)
+    if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+      return true;
+    }
+    
+    // Add space between punctuation and word characters for readability
+    if (lastChar.match(/[.,:;!?]/) && firstChar.match(/\w/)) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  /**
+   * Determines if a space should be added after an inline element
+   */
+  private shouldAddSpaceAfter(elementResult: string, nextSibling: Node): boolean {
+    // If next sibling is a text node that starts with whitespace, no additional space needed
+    if (nextSibling.nodeType === 3) { // Text node
+      const nextText = nextSibling.textContent || '';
+      if (/^\s/.test(nextText)) {
+        return false; // Next text already starts with whitespace
+      }
+      
+      // If the element result ends with AsciiDoc formatting and next text doesn't start with space
+      // we need to add space to prevent text from being attached
+      const lastChar = elementResult.slice(-1);
+      const firstChar = nextText.charAt(0);
+      
+      // Add space after bold/italic formatting when followed by word characters
+      if (elementResult.match(/[\*_]$/) && firstChar.match(/\w/)) {
+        return true;
+      }
+      
+      // Add space after AsciiDoc macros when followed by word characters
+      if (elementResult.includes(']') && elementResult.match(/\]$/) && firstChar.match(/\w/)) {
+        return true;
+      }
+      
+      // Add space between word characters
+      if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+        return true;
+      }
+    }
+    
+    return false;
   }
   
   private createContext(): ConversionContext {
@@ -635,8 +920,82 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
       currentIndent: 0,
       variables: new Map(),
       snippets: new Map(),
-      crossRefs: new Map()
+      crossRefs: new Map(),
+      depth: 0,
+      maxDepth: 50, // Limit recursion depth to prevent stack overflow
+      processedElements: new WeakSet()
     };
+  }
+  
+  /**
+   * Determine if an element should be completely skipped during conversion
+   * These elements contain non-content data that should never appear in AsciiDoc
+   */
+  private shouldSkipElement(tagName: string): boolean {
+    const skipElements = [
+      // Script and style elements
+      'script', 'style', 'noscript',
+      
+      // Meta and head elements (should not be in body, but just in case)
+      'meta', 'link', 'base', 'title',
+      
+      // HTML5 semantic elements that are containers only
+      'head', 'html',
+      
+      // Interactive elements that don't translate to AsciiDoc
+      'canvas', 'embed', 'object', 'param',
+      
+      // Form elements (could be added back if needed)
+      'script', // Duplicate for emphasis - this is critical
+      
+      // Comment nodes
+      '#comment'
+    ];
+    
+    return skipElements.includes(tagName.toLowerCase());
+  }
+  
+  private createDepthLimitFallback(element: Element): string {
+    // Fallback processing when recursion depth limit is reached
+    const tagName = element.tagName.toLowerCase();
+    const textContent = element.textContent?.trim() || '';
+    
+    // Skip elements that should never produce content, even in fallback mode
+    if (this.shouldSkipElement(tagName)) {
+      console.log(`📄 [Enhanced AsciiDoc] Skipping element in fallback: ${tagName}`);
+      return '';
+    }
+    
+    // Handle common cases with simple text extraction
+    switch (tagName) {
+      case 'h1': return `\n== ${textContent}\n\n`;
+      case 'h2': return `\n=== ${textContent}\n\n`;
+      case 'h3': return `\n==== ${textContent}\n\n`;
+      case 'h4': return `\n===== ${textContent}\n\n`;
+      case 'h5': return `\n====== ${textContent}\n\n`;
+      case 'h6': return `\n======= ${textContent}\n\n`;
+      case 'p': return textContent ? `${textContent}\n\n` : '';
+      case 'strong': 
+      case 'b': return `*${textContent}*`;
+      case 'em':
+      case 'i': return `*${textContent}*`;
+      case 'code': return `\`${textContent}\``;
+      case 'a': 
+        const href = element.getAttribute('href') || '';
+        return href ? `${href}[${textContent}]` : textContent;
+      case 'img':
+        const src = element.getAttribute('src') || '';
+        const alt = element.getAttribute('alt') || 'image';
+        // Extract image even in fallback mode
+        if (src && !src.startsWith('data:') && !src.startsWith('http')) {
+          this.extractedImages.add(src);
+          console.log(`📸 [Enhanced AsciiDoc] Extracted image (fallback): ${src}`);
+        }
+        return src ? `image::${src}[${alt}]` : '';
+      default:
+        // For other elements, just return the text content with a warning comment
+        return textContent ? `// WARNING: Deep nesting truncated - ${tagName}\n${textContent}\n\n` : '';
+    }
   }
   
   private extractListStyle(style: string): string | undefined {
@@ -695,6 +1054,77 @@ export class EnhancedAsciiDocConverter implements DocumentConverter {
     content = content.replace(/----\n(?!\n)/g, '----\n\n');
     
     return content.trim() + '\n';
+  }
+  
+  /**
+   * Generate AsciiDoc variables file from extracted MadCap variables
+   */
+  private generateVariablesFile(
+    extractedVariables: { name: string; value: string }[], 
+    variableOptions?: any
+  ): string {
+    if (!extractedVariables || extractedVariables.length === 0) {
+      return '';
+    }
+    
+    console.log(`📝 [EnhancedAsciiDocConverter] Generating variables file with ${extractedVariables.length} variables`);
+    
+    // Generate AsciiDoc variables file header
+    let content = '// Variables extracted from MadCap Flare project\n';
+    content += '// This file contains variable definitions for use in AsciiDoc documents\n\n';
+    
+    // Sort variables by name for consistency
+    const sortedVariables = extractedVariables.sort((a, b) => a.name.localeCompare(b.name));
+    
+    for (const variable of sortedVariables) {
+      // Convert MadCap variable name to AsciiDoc attribute name (kebab-case)
+      const asciidocName = this.convertToAsciiDocAttributeName(variable.name);
+      const cleanValue = this.cleanVariableValue(variable.value);
+      
+      // Add the variable definition as an AsciiDoc attribute
+      content += `:${asciidocName}: ${cleanValue}\n`;
+      
+      console.log(`📝 [Variables] ${variable.name} -> :${asciidocName}: ${cleanValue}`);
+    }
+    
+    content += '\n// End of variables\n';
+    
+    console.log(`✅ [EnhancedAsciiDocConverter] Generated variables file with ${sortedVariables.length} variables (${content.length} characters)`);
+    return content;
+  }
+  
+  /**
+   * Convert MadCap variable name to AsciiDoc attribute name format (kebab-case)
+   */
+  private convertToAsciiDocAttributeName(variableName: string): string {
+    return variableName
+      .replace(/([A-Z])/g, '-$1')
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, '-')
+      .replace(/--+/g, '-')
+      .replace(/^-/, '')
+      .replace(/-$/, '');
+  }
+  
+  /**
+   * Clean variable value for AsciiDoc format
+   */
+  private cleanVariableValue(value: string): string {
+    if (!value) {
+      return '';
+    }
+    
+    // Remove HTML tags and entities, normalize whitespace
+    return value
+      .replace(/<[^>]*>/g, '') // Remove HTML tags
+      .replace(/&nbsp;/g, ' ') // Convert non-breaking spaces
+      .replace(/&amp;/g, '&') // Convert HTML entities
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/\s+/g, ' ') // Normalize whitespace
+      .trim();
   }
   
   // Method needed by MadCapConverter for compatibility

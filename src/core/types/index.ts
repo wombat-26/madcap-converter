@@ -8,6 +8,7 @@ export interface ConversionOptions {
   rewriteLinks?: boolean;
   inputPath?: string; // Source file path for snippet resolution
   projectRootPath?: string; // Project root directory for batch processing snippet resolution
+  extractedVariables?: ExtractedVariable[]; // Pre-extracted variables from batch processing
   zendeskOptions?: ZendeskConversionOptions;
   variableOptions?: VariableExtractionOptions;
   asciidocOptions?: AsciiDocConversionOptions;
@@ -53,7 +54,7 @@ export interface AsciiDocConversionOptions {
     includeGlossary?: boolean; // Include glossary in conversion
     glossaryPath?: string; // Path to glossary file
     filterConditions?: string[] | boolean; // Conditions to filter glossary terms or false to disable filtering
-    glossaryFormat?: 'inline' | 'separate' | 'book-appendix'; // Format for glossary output
+    glossaryFormat?: 'separate' | 'book-appendix'; // Format for glossary output
     generateAnchors?: boolean; // Generate anchors for glossary terms
     includeIndex?: boolean; // Include alphabetical index
   };
@@ -176,6 +177,7 @@ export interface ConversionResult {
     format?: string;
     processingTime?: number; // Processing time in milliseconds (from PerformanceOptimizer)
     memoryUsage?: number; // Memory usage in MB (from PerformanceOptimizer)
+    qualityReport?: import('../services/quality-validator').QualityReport; // Quality validation results
   };
 }
 

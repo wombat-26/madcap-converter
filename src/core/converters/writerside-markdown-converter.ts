@@ -357,6 +357,18 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
         return this.handleDiv(element, content, document);
         
       case 'span':
+        // Handle preprocessed glossary terms
+        if (element.classList.contains('madcap-glossary-term')) {
+          const term = element.getAttribute('data-term') || element.textContent?.trim() || '';
+          if (term) {
+            const anchor = `glossary-${term.toLowerCase()
+              .replace(/[^a-z0-9]+/g, '-')
+              .replace(/^-+|-+$/g, '')}`;
+            console.log(`🔍 [WritersideMarkdown] Converting preprocessed glossary term: "${term}" -> [${term}](#${anchor})`);
+            return `[${term}](#${anchor})`;
+          }
+        }
+        
         return this.handleSpan(element, content);
         
       case 'br':
@@ -381,6 +393,10 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
       // Handle processed variable elements
       case 'var':
         return this.handleMadCapVariable(element);
+      
+      // Handle MadCap glossary term elements
+      case 'madcap:glossaryterm':
+        return this.handleMadCapGlossaryTerm(element);
         
       default:
         return content;
@@ -640,6 +656,26 @@ export default class WritersideMarkdownConverter implements DocumentConverter {
     }
     // Fallback if no name attribute
     return '';
+  }
+
+  private handleMadCapGlossaryTerm(element: Element): string {
+    const term = element.textContent?.trim() || '';
+    if (!term) {
+      return '';
+    }
+    
+    // Create anchor reference for the glossary term
+    // This matches the anchor format that would be used in a Writerside glossary
+    const anchor = `glossary-${term.toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')}`;
+    
+    console.log(`🔍 [WritersideMarkdown] Converting glossary term: "${term}" -> [${term}](${anchor})`);
+    
+    // Return Markdown link to glossary term
+    // In Writerside, this could also be <a anchor="${anchor}">${term}</a> 
+    // but standard Markdown link format is more portable
+    return `[${term}](#${anchor})`;
   }
 
   private handleMixedOrderedList(element: Element, document: Document): string {

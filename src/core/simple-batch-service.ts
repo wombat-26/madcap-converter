@@ -82,9 +82,19 @@ export class SimpleBatchService {
           result.filenameMapping.set(relativePath, relative(outputDir, outputPath));
         }
 
-        // Copy images if requested
-        if (options.copyImages && conversionResult.metadata?.images) {
-          await this.copyExtractedImages(conversionResult.metadata.images, outputDir);
+        // Copy images if requested, preserving relative paths as referenced in content
+        if (options.copyImages) {
+          const images = conversionResult.metadata?.images?.length
+            ? conversionResult.metadata.images
+            : await this.extractImageRefsFromFile(filePath);
+          if (images.length) {
+            await this.copyExtractedImages(
+              images,
+              filePath,
+              outputPath,
+              outputDir
+            );
+          }
         }
 
       } catch (error) {
@@ -192,14 +202,88 @@ export class SimpleBatchService {
     }
   }
 
-  private async copyExtractedImages(images: string[], outputDir: string): Promise<void> {
-    for (const imagePath of images) {
+  private async copyExtractedImages(
+    images: string[],
+    inputPath: string,
+    convertedOutputPath: string,
+    batchOutputRoot: string
+  ): Promise<void> {
+    const inputDir = dirname(inputPath);
+    const targetDocDir = dirname(convertedOutputPath);
+    
+    for (const ref of images) {
       try {
-        const outputPath = join(outputDir, 'images', basename(imagePath));
-        await this.ensureDirectoryExists(dirname(outputPath));
-        await copyFile(imagePath, outputPath);
+        // Skip external or inline images
+        if (!ref || ref.startsWith('http://') || ref.startsWith('https://') || ref.startsWith('data:')) {
+          continue;
+        }
+
+        // Resolve the source image on disk relative to the input file location
+        // Many MadCap projects use ../Images/... from topic files
+        const { resolve, join } = await import('path');
+        const sourceCandidates = [
+          resolve(inputDir, ref),
+        ];
+
+        // Attempt a few common MadCap layouts if the first candidate doesn't exist
+        const { stat } = await import('fs/promises');
+        let sourceImagePath: string | undefined;
+        for (const candidate of sourceCandidates) {
+          try {
+            await stat(candidate);
+            sourceImagePath = candidate;
+            break;
+          } catch {
+            // try next
+          }
+        }
+
+        // If still not found, try project-root based fallbacks
+        if (!sourceImagePath) {
+          // Heuristic project root: up from inputDir to a Content/ parent if present; else batch root
+          const contentIndex = inputDir.lastIndexOf(`${sep}Content${sep}`);
+          const projectRoot = contentIndex !== -1 ? inputDir.slice(0, contentIndex) : batchOutputRoot;
+          const normalized = ref.replace(/^\.\.\//, '');
+          const extraCandidates = [
+            join(projectRoot, normalized),
+            join(projectRoot, 'Content', normalized),
+            join(projectRoot, 'Resources', normalized),
+            join(projectRoot, 'Images', basename(ref)),
+            join(projectRoot, 'Resources', 'Images', basename(ref))
+          ];
+          for (const candidate of extraCandidates) {
+            try {
+              await stat(candidate);
+              sourceImagePath = candidate;
+              break;
+            } catch {
+              // continue searching
+            }
+          }
+        }
+
+        if (!sourceImagePath) {
+          console.warn(`Failed to locate image on disk for reference: ${ref}`);
+          continue;
+        }
+
+        // Compute target path preserving the same relative reference used in content
+        const targetPath = resolve(targetDocDir, ref);
+        
+        // Safety: ensure we don't escape the batch output root
+        const normalizedTargetRoot = resolve(batchOutputRoot);
+        if (!targetPath.startsWith(normalizedTargetRoot)) {
+          // Clamp to an Images folder at batch root if path escapes
+          const clampedTarget = join(batchOutputRoot, 'Images', basename(ref));
+          await this.ensureDirectoryExists(dirname(clampedTarget));
+          await copyFile(sourceImagePath, clampedTarget);
+          continue;
+        }
+
+        await this.ensureDirectoryExists(dirname(targetPath));
+        await copyFile(sourceImagePath, targetPath);
       } catch (error) {
-        console.warn(`Failed to copy image ${imagePath}:`, error);
+        console.warn(`Failed to copy image reference ${ref}:`, error);
       }
     }
   }
@@ -211,6 +295,17 @@ export class SimpleBatchService {
       if ((error as any).code !== 'EEXIST') {
         throw error;
       }
+    }
+  }
+
+  private async extractImageRefsFromFile(filePath: string): Promise<string[]> {
+    try {
+      const content = await readFile(filePath, 'utf8');
+      const matches = content.matchAll(/<img\s+[^>]*src=["']([^"']+)["'][^>]*>/gi);
+      const refs = Array.from(matches).map(m => m[1]);
+      return refs.filter(src => src && !src.startsWith('data:'));
+    } catch {
+      return [];
     }
   }
 
@@ -277,8 +372,18 @@ export class SimpleBatchService {
         result.convertedFiles++;
 
         // Copy images if requested
-        if (options.copyImages && conversionResult.metadata?.images) {
-          await this.copyExtractedImages(conversionResult.metadata.images, outputDir);
+        if (options.copyImages) {
+          const images = conversionResult.metadata?.images?.length
+            ? conversionResult.metadata.images
+            : await this.extractImageRefsFromFile(inputPath);
+          if (images.length) {
+            await this.copyExtractedImages(
+              images,
+              inputPath,
+              outputPath,
+              outputDir
+            );
+          }
         }
 
       } catch (error) {

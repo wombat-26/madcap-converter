@@ -1,7 +1,7 @@
 import { JSDOM } from 'jsdom';
 import { readFile, stat, readdir, existsSync } from 'fs';
 import { readFile as readFileAsync, stat as statAsync, readdir as readdirAsync } from 'fs/promises';
-import { resolve, dirname, join } from 'path';
+import { resolve, dirname, join, basename } from 'path';
 import { ConversionOptions } from '../types/index';
 
 /**
@@ -44,6 +44,18 @@ export class MadCapPreprocessor {
    */
   getExtractedVariables(): { name: string; value: string }[] {
     return Array.from(this.extractedVariables.values());
+  }
+
+  /**
+   * Load pre-extracted variables from batch processing
+   */
+  loadExtractedVariables(variables: { name: string; value: string }[]): void {
+    console.log(`🔍 [MadCapPreprocessor] Loading ${variables.length} pre-extracted variables`);
+    variables.forEach(variable => {
+      this.extractedVariables.set(variable.name, variable);
+      console.log(`    • Loaded variable: ${variable.name} = "${variable.value}"`);
+    });
+    console.log(`🔍 [MadCapPreprocessor] Total variables now available: ${this.extractedVariables.size}`);
   }
 
   /**
@@ -275,6 +287,7 @@ export class MadCapPreprocessor {
     const dropDowns: Element[] = [];
     const xrefs: Element[] = [];
     const variables: Element[] = [];
+    const glossaryTerms: Element[] = [];
     
     // Categorize elements in one pass
     for (const element of allElements) {
@@ -290,6 +303,8 @@ export class MadCapPreprocessor {
         xrefs.push(element);
       } else if (tagName === 'madcap:variable' || tagName === 'MadCap:variable' || tagName === 'MADCAP:VARIABLE' || tagName.toLowerCase() === 'madcap:variable' || element.hasAttribute('data-mc-variable') || (element.hasAttribute('name') && (tagName.includes('variable') || element.className.includes('mc-variable')))) {
         variables.push(element);
+      } else if (tagName === 'madcap:glossaryterm' || tagName === 'MadCap:glossaryterm' || tagName === 'MADCAP:GLOSSARYTERM' || tagName.toLowerCase() === 'madcap:glossaryterm') {
+        glossaryTerms.push(element);
       }
     }
     
@@ -299,6 +314,7 @@ export class MadCapPreprocessor {
     this.processDropDowns(dropDowns);
     this.processXrefs(xrefs);
     this.processVariables(variables);
+    this.processGlossaryTerms(glossaryTerms);
     
     // Fallback: Process any remaining madcap:variable elements that weren't caught
     this.processRemainingVariables(document);
@@ -343,9 +359,8 @@ export class MadCapPreprocessor {
             continue;
           }
           
-          // Load and process snippet content
-          const { readFileSync } = require('fs');
-          const rawContent = readFileSync(snippetPath, 'utf8');
+          // Load and process snippet content (async to avoid sync I/O)
+          const rawContent = await readFileAsync(snippetPath, 'utf8');
           const snippetContent = await this.processSnippetContent(rawContent);
           
           // Parse snippet content with JSDOM and extract body children with boundary preservation
@@ -735,6 +750,35 @@ export class MadCapPreprocessor {
     });
   }
 
+  /**
+   * Process MadCap glossary term elements and convert them to appropriate format
+   */
+  private processGlossaryTerms(glossaryTerms: Element[]): void {
+    console.log(`🔍 [MadCapPreprocessor] Processing ${glossaryTerms.length} glossary terms`);
+    
+    glossaryTerms.forEach(element => {
+      const term = element.textContent?.trim() || '';
+      if (!term) {
+        console.warn(`⚠️ [MadCapPreprocessor] Empty glossary term found, removing element`);
+        element.remove();
+        return;
+      }
+      
+      console.log(`🔍 [MadCapPreprocessor] Processing glossary term: "${term}"`);
+      
+      // For now, just replace with plain text and let individual converters handle the formatting
+      // Each converter (AsciiDoc, Writerside, Zendesk) will process the text node as needed
+      // We add a special class to mark it as a glossary term for later processing
+      const span = element.ownerDocument.createElement('span');
+      span.className = 'madcap-glossary-term';
+      span.setAttribute('data-term', term);
+      span.textContent = term;
+      
+      // Replace the MadCap element with a marked span
+      element.parentNode?.replaceChild(span, element);
+    });
+  }
+
   private processRemainingVariables(document: Document): void {
     // If preserveVariables is true, skip processing
     if (this.preserveVariables) {
@@ -900,7 +944,22 @@ export class MadCapPreprocessor {
   }
 
   private findProjectPath(inputPath: string): string | null {
-    // Find the project path by looking for the Flare project structure
+    // Check if this is a temp upload directory first
+    const isTempUpload = inputPath.includes('batch-convert') || inputPath.includes('/tmp/') || basename(inputPath) === 'input';
+    
+    if (isTempUpload) {
+      // For temp uploads, find the root directory to search recursively
+      const pathParts = inputPath.split('/');
+      const tempIndex = pathParts.findIndex(part => part.includes('batch-convert'));
+      if (tempIndex > 0) {
+        // Return the temp batch directory as the project root for recursive search
+        return pathParts.slice(0, tempIndex + 2).join('/'); // includes 'input' directory
+      }
+      // Fallback: use the input path directory itself
+      return dirname(inputPath);
+    }
+    
+    // For standard MadCap projects: Find the project path by looking for the Flare project structure
     const pathParts = inputPath.split('/');
     const contentIndex = pathParts.findIndex(part => part === 'Content');
     
@@ -910,13 +969,8 @@ export class MadCapPreprocessor {
       return `${projectBasePath}/Project/VariableSets`;
     }
     
-    // Fallback to common paths
-    const commonPaths = [
-      '/Volumes/Envoy Pro/Flare/Spend EN/Project/VariableSets',
-      '/Volumes/Envoy Pro/Flare/Administration DE/Project/VariableSets'
-    ];
-    
-    return commonPaths[0];
+    // No fallback paths - rely on project detection
+    return null;
   }
 
   private async loadVariableSets(projectPath: string): Promise<void> {
@@ -927,50 +981,95 @@ export class MadCapPreprocessor {
 
       const variables = new Map<string, string>();
       
-      // Dynamically find all .flvar files in the project directory
-      try {
-        const files = await readdirAsync(projectPath);
-        const flvarFiles = files.filter(file => file.endsWith('.flvar') && !file.startsWith('._'));
-        
-        // Load variable files in parallel
-        const variablePromises = flvarFiles.map(async (fileName) => {
-          try {
-            const variableSetPath = resolve(projectPath, fileName);
-            const variableContent = await this.readFileWithCache(variableSetPath);
-            
-            const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
-            const document = dom.window.document;
-            
-            const fileVariables = new Map<string, string>();
-            const variableElements = document.querySelectorAll('Variable');
-            variableElements.forEach(element => {
-              const name = element.getAttribute('Name');
-              const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+      // Check if this is a temp upload directory
+      const isTempUpload = projectPath.includes('batch-convert') || projectPath.includes('/tmp/') || basename(projectPath) === 'input';
+      
+      if (isTempUpload) {
+        // For temp uploads: search recursively for .flvar files
+        console.log(`🔍 [MadCapPreprocessor] Detected temp upload, searching recursively for .flvar files in: ${projectPath}`);
+        try {
+          const flvarFiles = await this.findFlvarFilesRecursively(projectPath);
+          console.log(`🔍 [MadCapPreprocessor] Found ${flvarFiles.length} .flvar files in temp upload`);
+          
+          // Load all found .flvar files
+          for (const flvarFile of flvarFiles) {
+            try {
+              const variableContent = await this.readFileWithCache(flvarFile);
+              await this.parseFlvarFile(variableContent, variables, basename(flvarFile));
+            } catch (error) {
+              console.warn(`Could not read .flvar file ${flvarFile}: ${error}`);
+            }
+          }
+        } catch (error) {
+          console.warn(`Could not search for .flvar files in temp upload: ${error}`);
+        }
+      } else {
+        // Standard MadCap project: projectPath should be Project/VariableSets directory
+        try {
+          const files = await readdirAsync(projectPath);
+          const flvarFiles = files.filter(file => file.endsWith('.flvar') && !file.startsWith('._'));
+          
+          console.log(`🔍 [MadCapPreprocessor] Found ${flvarFiles.length} .flvar files in standard project: ${projectPath}`);
+          
+          // Load variable files in parallel
+          const variablePromises = flvarFiles.map(async (fileName) => {
+            try {
+              const variableSetPath = resolve(projectPath, fileName);
+              const variableContent = await this.readFileWithCache(variableSetPath);
               
-              if (name && value) {
-                fileVariables.set(name, value);
-              }
-            });
+              const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
+              const document = dom.window.document;
+              
+              const fileVariables = new Map<string, string>();
+              const variableElements = document.querySelectorAll('Variable');
+              variableElements.forEach(element => {
+                const name = element.getAttribute('Name');
+                const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+                
+                if (name && value) {
+                  fileVariables.set(name, value);
+                }
+              });
+              
+              return fileVariables;
+            } catch (error) {
+              console.warn(`Could not load variable set ${fileName}:`, error);
+              return new Map<string, string>();
+            }
+          });
+          
+          // Await all variable file loads and merge results
+          const variableMaps = await Promise.all(variablePromises);
+          variableMaps.forEach(fileVariables => {
+            for (const [name, value] of fileVariables) {
+              variables.set(name, value);
+            }
+          });
+          
+        } catch (error) {
+          console.warn(`Could not read project directory for .flvar files (${projectPath}): ${error}`);
+          // If standard project structure fails, try recursive search as fallback
+          console.log(`🔍 [MadCapPreprocessor] Falling back to recursive search for standard project`);
+          try {
+            const parentDir = dirname(projectPath); // Go up from Project/VariableSets to project root
+            const flvarFiles = await this.findFlvarFilesRecursively(parentDir);
+            console.log(`🔍 [MadCapPreprocessor] Fallback found ${flvarFiles.length} .flvar files`);
             
-            return fileVariables;
-          } catch (error) {
-            console.warn(`Could not load variable set ${fileName}:`, error);
-            return new Map<string, string>();
+            for (const flvarFile of flvarFiles) {
+              try {
+                const variableContent = await this.readFileWithCache(flvarFile);
+                await this.parseFlvarFile(variableContent, variables, basename(flvarFile));
+              } catch (error) {
+                console.warn(`Could not read .flvar file ${flvarFile}: ${error}`);
+              }
+            }
+          } catch (fallbackError) {
+            console.warn(`Recursive search fallback also failed: ${fallbackError}`);
           }
-        });
-        
-        // Await all variable file loads and merge results
-        const variableMaps = await Promise.all(variablePromises);
-        variableMaps.forEach(fileVariables => {
-          for (const [name, value] of fileVariables) {
-            variables.set(name, value);
-          }
-        });
-        
-      } catch (error) {
-        console.warn('Could not read project directory for .flvar files:', error);
+        }
       }
       
+      console.log(`🔍 [MadCapPreprocessor] Loaded ${variables.size} total variables from all sources`);
       this.variableCache.set(projectPath, variables);
     } catch (error) {
       console.warn('Could not load MadCap variable sets:', error);
@@ -983,7 +1082,22 @@ export class MadCapPreprocessor {
       return null;
     }
     
-    // First, try to find the full variable path in the loaded variable sets
+    // First, check pre-extracted variables (highest priority - from batch processing)
+    const preExtractedVariable = this.extractedVariables.get(variableRef);
+    if (preExtractedVariable) {
+      console.log(`🔍 [MadCapPreprocessor] Found variable in pre-extracted: ${variableRef} = "${preExtractedVariable.value}"`);
+      return preExtractedVariable.value;
+    }
+    
+    // Also try just the variable name without namespace in pre-extracted
+    const variableName = parts[parts.length - 1];
+    const preExtractedByName = this.extractedVariables.get(variableName);
+    if (preExtractedByName) {
+      console.log(`🔍 [MadCapPreprocessor] Found variable by name in pre-extracted: ${variableName} = "${preExtractedByName.value}"`);
+      return preExtractedByName.value;
+    }
+    
+    // Second, try to find the full variable path in the loaded variable sets (from file system)
     for (const variables of this.variableCache.values()) {
       // Try the full reference
       const value = variables.get(variableRef);
@@ -992,7 +1106,6 @@ export class MadCapPreprocessor {
       }
       
       // Also try just the last part as a fallback
-      const variableName = parts[parts.length - 1];
       const fallbackValue = variables.get(variableName);
       if (fallbackValue) {
         return fallbackValue;
@@ -1002,6 +1115,57 @@ export class MadCapPreprocessor {
     // No fallbacks - rely entirely on MadCap project variable sets
     
     return null;
+  }
+
+  private async findFlvarFilesRecursively(dir: string): Promise<string[]> {
+    const result: string[] = [];
+    
+    async function search(currentDir: string): Promise<void> {
+      try {
+        const entries = await readdirAsync(currentDir);
+        
+        for (const entry of entries) {
+          if (entry.startsWith('.') || entry.startsWith('._')) {
+            continue; // Skip hidden files
+          }
+          
+          const fullPath = resolve(currentDir, entry);
+          const stats = await statAsync(fullPath);
+          
+          if (stats.isDirectory()) {
+            await search(fullPath);
+          } else if (stats.isFile() && entry.endsWith('.flvar')) {
+            result.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Skip directories we can't read
+        console.warn(`Could not read directory ${currentDir}: ${error}`);
+      }
+    }
+    
+    await search(dir);
+    return result;
+  }
+
+  private async parseFlvarFile(content: string, variables: Map<string, string>, fileName: string): Promise<void> {
+    try {
+      const dom = new JSDOM(content, { contentType: 'application/xml' });
+      const document = dom.window.document;
+      
+      const variableElements = document.querySelectorAll('Variable');
+      variableElements.forEach(element => {
+        const name = element.getAttribute('Name');
+        const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+        
+        if (name && value) {
+          variables.set(name, value);
+          console.log(`📝 [MadCapPreprocessor] Loaded variable from ${fileName}: ${name} = ${value}`);
+        }
+      });
+    } catch (error) {
+      console.warn(`Could not parse .flvar file ${fileName}: ${error}`);
+    }
   }
 
   /**
@@ -1053,11 +1217,63 @@ export class MadCapPreprocessor {
     // Ensure W3C XHTML compliance
     this.ensureW3CCompliance(document);
     
+    // Convert inline note markers (e.g., span.noteInDiv + snippet) into proper note blocks
+    this.transformInlineNotes(document);
+
     // Separate mixed content in paragraphs  
     this.separateMixedContent(document);
     
     // Normalize block structure and remove empty paragraphs
     this.normalizeBlockStructure(document, outputFormat);
+  }
+
+  /**
+   * Transform span.noteInDiv patterns into proper note blocks that converters recognize.
+   * Typical pattern: <p>... <br/><span class="noteInDiv">Note:</span> <MadCap:snippetText .../></p>
+   * We convert the parent paragraph into class "mc-note" and remove the label span/preceding br.
+   */
+  private transformInlineNotes(document: Document): void {
+    const noteSpans = Array.from(document.querySelectorAll('span.noteInDiv'));
+    for (const span of noteSpans) {
+      const p = span.closest('p');
+      if (!p) {
+        // Fallback: wrap span in a div.mc-note
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mc-note';
+        // Move following siblings of the span into the wrapper
+        while (span.nextSibling) {
+          wrapper.appendChild(span.nextSibling);
+        }
+        // Replace span with wrapper
+        span.parentNode?.replaceChild(wrapper, span);
+        continue;
+      }
+
+      // Remove an immediate preceding <br> before the label to avoid stray continuations
+      const prev = span.previousSibling as Element | null;
+      if (prev && prev.nodeType === 1 && (prev as Element).tagName.toLowerCase() === 'br') {
+        prev.remove();
+      }
+
+      // Remove the label span itself
+      span.remove();
+
+      // Mark the paragraph as a note so the AsciiDoc converter emits NOTE:
+      if (!p.classList.contains('mc-note') && !p.classList.contains('note')) {
+        p.classList.add('mc-note');
+      }
+
+      // If paragraph became empty (label only), try to pull next meaningful siblings into it
+      if ((p.textContent || '').trim().length === 0) {
+        let next = p.nextSibling;
+        while (next && next.nodeType === 3 && (next.textContent || '').trim().length === 0) {
+          next = next.nextSibling;
+        }
+        if (next && next.nodeType === 1) {
+          p.appendChild(next);
+        }
+      }
+    }
   }
 
   /**
