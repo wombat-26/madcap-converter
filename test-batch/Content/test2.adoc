@@ -1,0 +1,9 @@
+= Test 2
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+include::includes/variables.adoc[]
+
+More content with variables {Test. Variable}.

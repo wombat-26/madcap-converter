@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CatapultVariableSet>
+    <Variable 
+        Name="ProductName"
+        Definition="MadCap Converter"
+        Comment="" />
+    <Variable 
+        Name="Version" 
+        Definition="1.1.0"
+        Comment="" />
+</CatapultVariableSet>

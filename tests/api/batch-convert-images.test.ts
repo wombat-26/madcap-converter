@@ -136,7 +136,12 @@ describe('/api/batch-convert - Image Export Tests', () => {
     });
 
     const formData = new FormData();
-    allFiles.forEach(file => formData.append('files', file));
+    allFiles.forEach(file => {
+      formData.append('files', file);
+      // Add the path information that the API expects
+      const relativePath = (file as any).webkitRelativePath || file.name;
+      formData.append('paths', relativePath);
+    });
     formData.append('format', 'asciidoc');
     formData.append('options', JSON.stringify({
       copyImages: true,
@@ -169,9 +174,9 @@ describe('/api/batch-convert - Image Export Tests', () => {
       console.log('Conversion Summary:', JSON.parse(summaryHeader));
     }
 
-    // Verify converted documents exist
+    // Verify converted documents exist (may include variables.adoc)
     const documentFiles = Object.keys(zip.files).filter(name => name.endsWith('.adoc'));
-    expect(documentFiles).toHaveLength(2);
+    expect(documentFiles.length).toBeGreaterThanOrEqual(2);
     expect(documentFiles.some(name => name.includes('document-with-images'))).toBe(true);
     expect(documentFiles.some(name => name.includes('document-without-images'))).toBe(true);
 
@@ -227,7 +232,12 @@ describe('/api/batch-convert - Image Export Tests', () => {
     const allFiles = [...files, ...imageFiles];
 
     const formData = new FormData();
-    allFiles.forEach(file => formData.append('files', file));
+    allFiles.forEach(file => {
+      formData.append('files', file);
+      // Add the path information that the API expects
+      const relativePath = (file as any).webkitRelativePath || file.name;
+      formData.append('paths', relativePath);
+    });
     formData.append('format', 'asciidoc');
     formData.append('options', JSON.stringify({
       copyImages: true
@@ -300,7 +310,12 @@ describe('/api/batch-convert - Image Export Tests', () => {
     const allFiles = [...files, ...imageFiles];
 
     const formData = new FormData();
-    allFiles.forEach(file => formData.append('files', file));
+    allFiles.forEach(file => {
+      formData.append('files', file);
+      // Add the path information that the API expects
+      const relativePath = (file as any).webkitRelativePath || file.name;
+      formData.append('paths', relativePath);
+    });
     formData.append('format', 'asciidoc');
     formData.append('options', JSON.stringify({
       copyImages: true
@@ -369,7 +384,12 @@ describe('/api/batch-convert - Image Export Tests', () => {
     const allFiles = [...files, ...imageFiles];
 
     const formData = new FormData();
-    allFiles.forEach(file => formData.append('files', file));
+    allFiles.forEach(file => {
+      formData.append('files', file);
+      // Add the path information that the API expects
+      const relativePath = (file as any).webkitRelativePath || file.name;
+      formData.append('paths', relativePath);
+    });
     formData.append('format', 'asciidoc');
     formData.append('options', JSON.stringify({
       copyImages: false
@@ -393,8 +413,10 @@ describe('/api/batch-convert - Image Export Tests', () => {
 
     expect(imageFilesInZip.length).toBe(0);
 
-    // But the document should still be there
-    const documentFiles = Object.keys(zip.files).filter(name => name.endsWith('.adoc'));
+    // But the document should still be there (excluding variables.adoc)
+    const documentFiles = Object.keys(zip.files).filter(name => 
+      name.endsWith('.adoc') && !name.includes('variables.adoc')
+    );
     expect(documentFiles.length).toBe(1);
   });
 
@@ -422,7 +444,12 @@ describe('/api/batch-convert - Image Export Tests', () => {
     const allFiles = [...files, ...imageFiles];
 
     const formData = new FormData();
-    allFiles.forEach(file => formData.append('files', file));
+    allFiles.forEach(file => {
+      formData.append('files', file);
+      // Add the path information that the API expects
+      const relativePath = (file as any).webkitRelativePath || file.name;
+      formData.append('paths', relativePath);
+    });
     formData.append('format', 'asciidoc');
     formData.append('options', JSON.stringify({
       copyImages: true

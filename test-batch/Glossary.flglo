@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CatapultGlossary>
+    <GlossaryEntry>
+        <Terms>
+            <Term>API</Term>
+        </Terms>
+        <Definition>Application Programming Interface - a set of protocols and tools for building software applications.</Definition>
+    </GlossaryEntry>
+    <GlossaryEntry>
+        <Terms>
+            <Term>REST</Term>
+        </Terms>
+        <Definition>Representational State Transfer - an architectural style for designing networked applications.</Definition>
+    </GlossaryEntry>
+</CatapultGlossary>

@@ -834,10 +834,33 @@ export default function MadCapConverterWebUI() {
       return
     }
     
+    // Enhanced debugging for folder structure
+    console.log(`📁 [Folder Upload Debug] Total files: ${fileArray.length}`)
+    
+    const filesByType: Record<string, number> = {}
+    const filesWithPaths = fileArray.filter(file => (file as any).webkitRelativePath)
+    const filesWithoutPaths = fileArray.filter(file => !(file as any).webkitRelativePath)
+    
     fileArray.forEach(file => {
+      const ext = file.name.split('.').pop()?.toLowerCase() || 'unknown'
+      filesByType[ext] = (filesByType[ext] || 0) + 1
+      
       const relativePath = (file as any).webkitRelativePath
-      console.log(`📄 File: ${file.name} (webkitRelativePath: ${relativePath})`)
+      if (relativePath) {
+        console.log(`📄 ${file.name} -> ${relativePath} (${file.size} bytes)`)
+      } else {
+        console.log(`⚠️ ${file.name} -> NO PATH (${file.size} bytes)`)
+      }
     })
+    
+    console.log(`📊 [Folder Upload Analysis]`)
+    console.log(`  - Files with paths: ${filesWithPaths.length}`)
+    console.log(`  - Files without paths: ${filesWithoutPaths.length}`)
+    console.log(`  - File types:`, filesByType)
+    
+    // Show sample of folder structure
+    const uniquePaths = [...new Set(filesWithPaths.map(f => (f as any).webkitRelativePath.split('/')[0]))]
+    console.log(`  - Top-level directories: ${uniquePaths.join(', ')}`)
     
     setBatchFiles(fileArray)
     addNotification({
@@ -850,13 +873,18 @@ export default function MadCapConverterWebUI() {
 
   // Recursive function to process folder entries from drag-and-drop
   const processEntry = async (entry: any, path: string, results: Array<{file: File, path: string}>): Promise<void> => {
+    console.log(`🔍 Processing entry: ${entry.name} (isFile: ${entry.isFile}, isDirectory: ${entry.isDirectory}) with path: "${path}"`)
+    
     if (entry.isFile) {
       const fileEntry = entry as any
       const file = await new Promise<File>((resolve, reject) => {
         fileEntry.file((file: File) => resolve(file), (error: any) => reject(error))
       })
-      results.push({ file, path: path + entry.name })
+      const fullPath = path + entry.name
+      console.log(`📄 Found file: ${entry.name} -> ${fullPath} (${file.size} bytes)`)
+      results.push({ file, path: fullPath })
     } else if (entry.isDirectory) {
+      console.log(`📁 Processing directory: ${entry.name}`)
       const dirEntry = entry as any
       const reader = dirEntry.createReader()
       let allEntries: any[] = []
@@ -867,14 +895,16 @@ export default function MadCapConverterWebUI() {
           reader.readEntries((entries: any[]) => resolve(entries))
         })
         if (entries.length > 0) {
+          console.log(`📂 Directory ${entry.name} contains ${entries.length} entries`)
           allEntries = allEntries.concat(entries)
           await readEntries() // Continue reading
         }
       }
       
       await readEntries()
+      console.log(`📊 Total entries in ${entry.name}: ${allEntries.length}`)
       
-      // Process all child entries
+      // Process all child entries with proper path construction
       for (const childEntry of allEntries) {
         await processEntry(childEntry, path + entry.name + '/', results)
       }
@@ -893,22 +923,31 @@ export default function MadCapConverterWebUI() {
     if (multiple) {
       // Process folder drops using FileSystemEntry API
       if (items.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
-        console.log('🗂️ Processing folder drop with FileSystemEntry API')
+        console.log(`🗂️ Processing folder drop with FileSystemEntry API (${items.length} items)`)
         const filesWithPaths: Array<{file: File, path: string}> = []
         
         for (const item of items) {
           if (item.kind === 'file') {
             const entry = item.webkitGetAsEntry()
             if (entry) {
+              console.log(`📂 Processing root entry: ${entry.name} (isFile: ${entry.isFile}, isDirectory: ${entry.isDirectory})`)
               await processEntry(entry, '', filesWithPaths)
             }
           }
         }
         
+        console.log(`📊 FileSystemEntry processing complete: ${filesWithPaths.length} files found`)
+        
         if (filesWithPaths.length > 0) {
+          // Debug: Show sample of discovered files
+          console.log('📋 Sample of discovered files:')
+          filesWithPaths.slice(0, 10).forEach((item, index) => {
+            console.log(`  ${index + 1}. ${item.file.name} -> ${item.path} (${item.file.size} bytes)`)
+          })
+          
           // Store files with their preserved paths
           const filesArray = filesWithPaths.map(item => {
-            // Attach the path to the file object
+            // Attach the path to the file object for backend processing
             const fileWithPath = item.file as any
             fileWithPath.webkitRelativePath = item.path
             return item.file
@@ -1556,7 +1595,7 @@ export default function MadCapConverterWebUI() {
                       id="folder-input"
                       type="file"
                       className="hidden"
-                      accept=".html,.htm,.docx,.doc,.flsnp,.xml"
+                      accept="*/*"
                       {...({ webkitdirectory: "", directory: "" } as any)}
                       multiple
                       onChange={handleFolderSelect}

@@ -1,0 +1,2 @@
+// Generated AsciiDoc variables from MadCap conversion
+// This file contains document attributes for variable substitution
