@@ -476,8 +476,11 @@ export default function MadCapConverterWebUI() {
         console.log(`📤 Preparing to upload ${batchFiles.length} files for batch conversion`)
         
         batchFiles.forEach((file, index) => {
-          console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type})`)
+          const relativePath = (file as any).webkitRelativePath || file.name
+          console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type}, path: ${relativePath})`)
           formData.append('files', file)
+          // Include the relative path for proper folder structure preservation
+          formData.append('paths', relativePath)
         })
         formData.append('format', outputFormat)
         formData.append('options', JSON.stringify(buildOptions()))
@@ -540,8 +543,11 @@ export default function MadCapConverterWebUI() {
         console.log(`📤 Preparing to upload ${batchFiles.length} files for batch conversion (ZIP mode)`)
         
         batchFiles.forEach((file, index) => {
-          console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type})`)
+          const relativePath = (file as any).webkitRelativePath || file.name
+          console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type}, path: ${relativePath})`)
           formData.append('files', file)
+          // Include the relative path for proper folder structure preservation
+          formData.append('paths', relativePath)
         })
         formData.append('format', outputFormat)
         formData.append('options', JSON.stringify(buildOptions()))
@@ -746,7 +752,9 @@ export default function MadCapConverterWebUI() {
     const formData = new FormData();
     
     chunk.forEach(file => {
+      const relativePath = (file as any).webkitRelativePath || file.name
       formData.append('files', file);
+      formData.append('paths', relativePath);
     });
     formData.append('format', outputFormat);
     formData.append('options', JSON.stringify(buildOptions()));
@@ -840,7 +848,40 @@ export default function MadCapConverterWebUI() {
     })
   }
 
-  const handleDrop = (e: React.DragEvent, multiple: boolean = false) => {
+  // Recursive function to process folder entries from drag-and-drop
+  const processEntry = async (entry: any, path: string, results: Array<{file: File, path: string}>): Promise<void> => {
+    if (entry.isFile) {
+      const fileEntry = entry as any
+      const file = await new Promise<File>((resolve, reject) => {
+        fileEntry.file((file: File) => resolve(file), (error: any) => reject(error))
+      })
+      results.push({ file, path: path + entry.name })
+    } else if (entry.isDirectory) {
+      const dirEntry = entry as any
+      const reader = dirEntry.createReader()
+      let allEntries: any[] = []
+      
+      // Read all entries (may need multiple calls for large directories)
+      const readEntries = async (): Promise<void> => {
+        const entries = await new Promise<any[]>((resolve) => {
+          reader.readEntries((entries: any[]) => resolve(entries))
+        })
+        if (entries.length > 0) {
+          allEntries = allEntries.concat(entries)
+          await readEntries() // Continue reading
+        }
+      }
+      
+      await readEntries()
+      
+      // Process all child entries
+      for (const childEntry of allEntries) {
+        await processEntry(childEntry, path + entry.name + '/', results)
+      }
+    }
+  }
+
+  const handleDrop = async (e: React.DragEvent, multiple: boolean = false) => {
     e.preventDefault()
     
     // Handle both files and folder drops
@@ -850,18 +891,41 @@ export default function MadCapConverterWebUI() {
     console.log(`🎯 Drag & drop detected: ${files.length} files, ${items.length} items`)
     
     if (multiple) {
-      // Check if folder was dropped (folder shows up as 0 files but has items)
-      if (files.length === 0 && items.length > 0) {
-        addNotification({
-          type: 'warning',
-          title: 'Folder drag not supported',
-          message: 'Please use the "Browse" button to select a folder instead of dragging it. Drag & drop only works for individual files.',
-          duration: 8000,
-        })
-        return
+      // Process folder drops using FileSystemEntry API
+      if (items.length > 0 && typeof items[0].webkitGetAsEntry === 'function') {
+        console.log('🗂️ Processing folder drop with FileSystemEntry API')
+        const filesWithPaths: Array<{file: File, path: string}> = []
+        
+        for (const item of items) {
+          if (item.kind === 'file') {
+            const entry = item.webkitGetAsEntry()
+            if (entry) {
+              await processEntry(entry, '', filesWithPaths)
+            }
+          }
+        }
+        
+        if (filesWithPaths.length > 0) {
+          // Store files with their preserved paths
+          const filesArray = filesWithPaths.map(item => {
+            // Attach the path to the file object
+            const fileWithPath = item.file as any
+            fileWithPath.webkitRelativePath = item.path
+            return item.file
+          })
+          setBatchFiles(filesArray)
+          
+          addNotification({
+            type: 'success',
+            title: 'Project folder loaded successfully',
+            message: `Loaded ${filesWithPaths.length} files with complete folder structure preserved. Ready for batch conversion.`,
+            duration: 5000,
+          })
+          return
+        }
       }
       
-      // Validate dropped files
+      // If not a folder drop, handle regular file drops
       const validation = validateFiles(files)
       
       if (!validation.valid) {

@@ -69,17 +69,26 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Extract files with validation
+    // Extract files and paths with validation
     let files: File[];
+    let paths: string[];
     try {
       files = formData.getAll('files') as File[];
-      console.log(`📁 Found ${files.length} files in FormData`);
+      paths = formData.getAll('paths') as string[];
+      
+      console.log(`📁 Found ${files.length} files and ${paths.length} paths in FormData`);
       
       // Validate files are actual File objects
       for (const file of files) {
         if (!(file instanceof File)) {
           throw new Error(`Invalid file object: expected File but got ${typeof file}`);
         }
+      }
+      
+      // Ensure we have paths for all files (fallback to filename if missing)
+      if (paths.length !== files.length) {
+        console.log(`⚠️ Path count mismatch: ${files.length} files vs ${paths.length} paths - using filenames as fallback`);
+        paths = files.map(file => file.name);
       }
     } catch (fileError) {
       console.error('❌ File extraction failed:', fileError);
@@ -142,20 +151,24 @@ export async function POST(request: NextRequest) {
     // Track excluded files for user feedback
     const excludedFiles: Array<{ name: string; path: string; reason: string }> = [];
     const validFiles: File[] = [];
+    const validPaths: string[] = [];
     
-    // First pass: Filter out files from excluded directories
+    // First pass: Filter out files from excluded directories using provided paths
     for (let i = 0; i < files.length; i++) {
       const file = files[i];
       console.log(`🔍 Processing file ${i + 1}/${files.length}: ${file.name} (${file.size} bytes, type: ${file.type})`);
       
-      // Determine file path first (before reading content)
+      // Use provided path first, then fallback to webkitRelativePath or filename
+      const providedPath = paths[i];
       const webkitPath = (file as any).webkitRelativePath;
-      let relativePath = webkitPath || file.name;
+      let relativePath = providedPath || webkitPath || file.name;
       
-      // Fallback logic for when webkitRelativePath is not available
-      if (!webkitPath && file.name) {
+      // Only infer structure if we have no path information at all
+      if (!providedPath && !webkitPath && file.name) {
         relativePath = inferMadCapProjectStructure(file.name, file.type);
         console.log(`🔧 Inferred project structure: ${file.name} -> ${relativePath}`);
+      } else if (providedPath) {
+        console.log(`📍 Using provided path: ${file.name} -> ${relativePath}`);
       }
       
       // Check if file is from excluded directory
@@ -173,9 +186,10 @@ export async function POST(request: NextRequest) {
         continue; // Skip this file
       }
       
-      // File is valid, add to processing list
+      // File is valid, add to processing list with its path
       console.log(`✅ File approved for processing: ${relativePath}`);
       validFiles.push(file);
+      validPaths.push(relativePath);
     }
     
     // Log filtering results
@@ -214,11 +228,12 @@ export async function POST(request: NextRequest) {
       );
     }
     
-    // Second pass: Save valid files to temp directory
+    // Second pass: Save valid files to temp directory using their preserved paths
     console.log(`📦 Saving ${validFiles.length} valid files to temp directory:`);
     for (let i = 0; i < validFiles.length; i++) {
       const file = validFiles[i];
-      console.log(`💾 Saving file ${i + 1}/${validFiles.length}: ${file.name}`);
+      const relativePath = validPaths[i]; // Use the preserved path
+      console.log(`💾 Saving file ${i + 1}/${validFiles.length}: ${file.name} -> ${relativePath}`);
       
       // Read file content
       let bytes: ArrayBuffer;
@@ -233,17 +248,9 @@ export async function POST(request: NextRequest) {
         throw new Error(`Failed to read file "${file.name}": ${readError instanceof Error ? readError.message : 'Unknown read error'}`);
       }
       
-      // Determine file path (same logic as filtering pass)
-      const webkitPath = (file as any).webkitRelativePath;
-      let relativePath = webkitPath || file.name;
-      
-      if (!webkitPath && file.name) {
-        relativePath = inferMadCapProjectStructure(file.name, file.type);
-      }
-      
       const filePath = join(inputDir, relativePath);
       
-      console.log(`📄 Saving file: ${relativePath} (${buffer.length} bytes) [webkitRelativePath: ${webkitPath || 'undefined'}]`);
+      console.log(`📄 Saving file with preserved structure: ${relativePath} (${buffer.length} bytes)`);
       
       // Create subdirectories if needed
       const fileDir = join(inputDir, relativePath.substring(0, relativePath.lastIndexOf('/')));
