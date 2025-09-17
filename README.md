@@ -4,7 +4,7 @@
 
 Transform your technical documentation with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like dynamic variable resolution, snippet processing, cross-reference handling, condition filtering, and comprehensive batch operations with specialized Zendesk Help Center support.
 
-## ✅ COMPLETE RESTORATION COMPLETED (January 2025)
+## ✅ COMPLETE RESTORATION COMPLETED (July 2025)
 
 **ALL ADVANCED FUNCTIONALITY FULLY RESTORED**: Following a major regression in commit b3e2996 where ~75% of functionality was lost during web app conversion, a comprehensive restoration project has been completed:
 
