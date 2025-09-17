@@ -476,7 +476,7 @@ export default function MadCapConverterWebUI() {
         console.log(`📤 Preparing to upload ${batchFiles.length} files for batch conversion`)
         
         batchFiles.forEach((file, index) => {
-          const relativePath = (file as any).webkitRelativePath || file.name
+          const relativePath = (file as any).webkitRelativePath || (file as any)._webkitRelativePath || file.name
           console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type}, path: ${relativePath})`)
           formData.append('files', file)
           // Include the relative path for proper folder structure preservation
@@ -543,7 +543,7 @@ export default function MadCapConverterWebUI() {
         console.log(`📤 Preparing to upload ${batchFiles.length} files for batch conversion (ZIP mode)`)
         
         batchFiles.forEach((file, index) => {
-          const relativePath = (file as any).webkitRelativePath || file.name
+          const relativePath = (file as any).webkitRelativePath || (file as any)._webkitRelativePath || file.name
           console.log(`📎 Adding file ${index + 1}: ${file.name} (${file.size} bytes, type: ${file.type}, path: ${relativePath})`)
           formData.append('files', file)
           // Include the relative path for proper folder structure preservation
@@ -752,7 +752,7 @@ export default function MadCapConverterWebUI() {
     const formData = new FormData();
     
     chunk.forEach(file => {
-      const relativePath = (file as any).webkitRelativePath || file.name
+      const relativePath = (file as any).webkitRelativePath || (file as any)._webkitRelativePath || file.name
       formData.append('files', file);
       formData.append('paths', relativePath);
     });
@@ -947,9 +947,19 @@ export default function MadCapConverterWebUI() {
           
           // Store files with their preserved paths
           const filesArray = filesWithPaths.map(item => {
-            // Attach the path to the file object for backend processing
+            // Attach the path to the file object for backend processing using defineProperty
             const fileWithPath = item.file as any
-            fileWithPath.webkitRelativePath = item.path
+            try {
+              Object.defineProperty(fileWithPath, 'webkitRelativePath', {
+                value: item.path,
+                writable: false,
+                enumerable: true,
+                configurable: true
+              })
+            } catch (e) {
+              // Fallback: create a custom property if defineProperty fails
+              fileWithPath._webkitRelativePath = item.path
+            }
             return item.file
           })
           setBatchFiles(filesArray)
@@ -1627,7 +1637,7 @@ export default function MadCapConverterWebUI() {
                       </Button>
                     </div>
                     {batchFiles.map((file, index) => {
-                      const displayPath = (file as any).webkitRelativePath || file.name;
+                      const displayPath = (file as any).webkitRelativePath || (file as any)._webkitRelativePath || file.name;
                       return (
                         <div key={index} className="flex items-center justify-between p-2 bg-muted rounded text-sm">
                           <span className="truncate font-mono text-xs">{displayPath}</span>

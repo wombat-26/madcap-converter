@@ -28,10 +28,11 @@ describe('MadCap-Specific Features Tests', () => {
     it('should parse FLVAR file correctly', async () => {
       const flvarPath = path.join(FLARE_SOURCE_PATH, 'Project/VariableSets/General.flvar');
       
-      const variables = await flvarParser.parseFile(flvarPath);
+      const variableSet = await flvarParser.parseFile(flvarPath);
       
-      expect(variables.length).toBeGreaterThan(0);
-      expect(variables).toEqual(
+      expect(variableSet.variables.length).toBeGreaterThan(0);
+      expect(variableSet.name).toBe('General');
+      expect(variableSet.variables).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             name: 'CompanyName',
@@ -42,8 +43,8 @@ describe('MadCap-Specific Features Tests', () => {
             value: 'Plan'
           }),
           expect.objectContaining({
-            name: 'VersionNumber',
-            value: 'November 2024'
+            name: 'Version',
+            value: '2.0'
           })
         ])
       );
@@ -52,12 +53,12 @@ describe('MadCap-Specific Features Tests', () => {
     it('should handle DateTime variables correctly', async () => {
       const flvarPath = path.join(FLARE_SOURCE_PATH, 'Project/VariableSets/General.flvar');
       
-      const variables = await flvarParser.parseFile(flvarPath);
-      const yearVariable = variables.find(v => v.name === 'Year');
+      const variableSet = await flvarParser.parseFile(flvarPath);
+      const yearVariable = variableSet.variables.find(v => v.name === 'Year');
       
       expect(yearVariable).toBeDefined();
       expect(yearVariable?.type).toBe('DateTime');
-      expect(yearVariable?.value).toBe('yyyy');
+      expect(yearVariable?.value).toBe('2025');
     });
 
     it('should convert MadCap variables to Writerside format', async () => {
