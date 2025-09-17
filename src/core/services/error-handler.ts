@@ -17,7 +17,7 @@ export interface ValidationError {
 
 export class ErrorHandler {
   private static readonly MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-  private static readonly SUPPORTED_EXTENSIONS = ['.htm', '.html', '.docx', '.doc', '.md', '.adoc'];
+  private static readonly SUPPORTED_EXTENSIONS = ['.htm', '.html', '.docx', '.doc', '.md', '.adoc', '.flsnp', '.flglo', '.fltoc', '.xml'];
   
   private operationLog: FileOperation[] = [];
 

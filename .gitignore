@@ -102,5 +102,10 @@ Thumbs.db
 # Test files
 test-output/
 *.log
+direct-test.mjs
+test-snippet.js
+test-*.js
+test-*.json
+test-*.adoc
 # Local Netlify folder
 .netlify

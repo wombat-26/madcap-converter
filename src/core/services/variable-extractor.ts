@@ -2,12 +2,18 @@ import { ExtractedVariable, VariableExtractionOptions } from '../types/index.js'
 import { readdir, readFile, stat } from 'fs/promises';
 import { join, extname } from 'path';
 import { JSDOM } from 'jsdom';
+import { FLVARParser } from './flvar-parser';
 
 /**
  * Service for extracting MadCap variables and generating format-specific variable files
  */
 export class VariableExtractor {
   private extractedVariables: Map<string, ExtractedVariable> = new Map();
+  private flvarParser: FLVARParser;
+
+  constructor() {
+    this.flvarParser = new FLVARParser();
+  }
 
   /**
    * Add a variable to the extraction collection
@@ -36,14 +42,11 @@ export class VariableExtractor {
   generateVariablesFile(options: VariableExtractionOptions): string {
     const variables = this.getVariables();
     
-    if (variables.length === 0) {
-      return '';
-    }
-
     if (!options.variableFormat) {
       throw new Error('Variable format is required');
     }
 
+    // Generate empty file with proper headers even when no variables exist
     switch (options.variableFormat) {
       case 'adoc':
         return this.generateAsciiDocVariables(variables, options);
@@ -270,7 +273,10 @@ export class VariableExtractor {
    * Extract all variables from .flvar files in the Flare project directory
    */
   async extractAllVariablesFromProject(projectDir: string): Promise<void> {
+    console.log(`🔍 [BREADCRUMB] extractAllVariablesFromProject() ENTRY POINT`);
+    console.log(`🔍 [BREADCRUMB] About to call this.findFlvarFiles()`);
     const flvarFiles = await this.findFlvarFiles(projectDir);
+    console.log(`🔍 [BREADCRUMB] findFlvarFiles() returned ${flvarFiles.length} files`);
     
     for (const flvarFile of flvarFiles) {
       try {
@@ -289,6 +295,7 @@ export class VariableExtractor {
    * Find all .flvar files in the project directory
    */
   private async findFlvarFiles(projectDir: string): Promise<string[]> {
+    console.log(`🔍 [VariableExtractor] Searching for .flvar files in project directory: ${projectDir}`);
     const flvarFiles: string[] = [];
     
     const searchDirectories = [
@@ -300,18 +307,40 @@ export class VariableExtractor {
       projectDir // Also search the root directory
     ];
 
+    console.log(`🔍 [VariableExtractor] Will search in directories:`, searchDirectories);
+
     for (const searchDir of searchDirectories) {
       try {
+        console.log(`🔍 [VariableExtractor] Searching directory: ${searchDir}`);
         const files = await this.findFlvarFilesRecursive(searchDir);
+        console.log(`📁 [VariableExtractor] Found ${files.length} .flvar files in ${searchDir}:`, files);
         flvarFiles.push(...files);
       } catch (error) {
+        console.log(`⚠️ [VariableExtractor] Could not search directory ${searchDir}: ${error}`);
         // Directory might not exist, continue with next search location
         continue;
       }
     }
 
+    console.log(`📚 [VariableExtractor] Total .flvar files found before deduplication: ${flvarFiles.length}`);
+    
     // Remove duplicates
-    return Array.from(new Set(flvarFiles));
+    const uniqueFiles = Array.from(new Set(flvarFiles));
+    console.log(`📚 [VariableExtractor] Unique .flvar files after deduplication: ${uniqueFiles.length}`, uniqueFiles);
+    
+    // FALLBACK: If no .flvar files found in expected locations, search all uploaded files
+    if (uniqueFiles.length === 0) {
+      console.log(`🔍 [VariableExtractor FALLBACK] No .flvar files found in expected directories, searching all uploaded files...`);
+      try {
+        const fallbackFiles = await this.findFlvarFilesRecursive(projectDir);
+        console.log(`📚 [VariableExtractor FALLBACK] Found ${fallbackFiles.length} .flvar files in fallback search:`, fallbackFiles);
+        return fallbackFiles;
+      } catch (error) {
+        console.error(`❌ [VariableExtractor FALLBACK] Fallback search failed:`, error);
+      }
+    }
+    
+    return uniqueFiles;
   }
 
   /**
@@ -353,38 +382,31 @@ export class VariableExtractor {
     }
     
     try {
-      const content = await readFile(flvarPath, 'utf8');
-      const dom = new JSDOM(content, { contentType: 'text/xml' });
-      const document = dom.window.document;
+      console.log(`🔧 [VariableExtractor] Parsing FLVAR file with FLVARParser: ${flvarPath}`);
       
-      // Find all variable elements in the .flvar file
-      const variables = document.querySelectorAll('Variable');
+      // Use the FLVARParser that we know works
+      const variableSet = await this.flvarParser.parseFile(flvarPath);
       
-      for (const variableElement of variables) {
-        const name = variableElement.getAttribute('Name');
-        if (!name) continue;
-        
-        // Get the variable value - could be text content or in a definition element
-        let value = '';
-        
-        // Try to get value from Definition element
-        const definitionElement = variableElement.querySelector('Definition');
-        if (definitionElement) {
-          value = definitionElement.textContent?.trim() || '';
-        } else {
-          // Fallback to direct text content
-          value = variableElement.textContent?.trim() || '';
-        }
-        
-        // Clean up any XML artifacts from the value
-        value = this.cleanVariableValue(value);
-        
-        if (value) {
-          const extractedVariable = VariableExtractor.createExtractedVariable(name, value, 'madcap');
+      console.log(`🔧 [VariableExtractor] FLVARParser found ${variableSet.variables.length} variables in ${variableSet.name}`);
+      
+      // Convert MadCapVariable objects to ExtractedVariable objects
+      for (const madcapVariable of variableSet.variables) {
+        if (madcapVariable.name && madcapVariable.value) {
+          const extractedVariable = VariableExtractor.createExtractedVariable(
+            madcapVariable.name, 
+            madcapVariable.value, 
+            'madcap'
+          );
           this.addVariable(extractedVariable);
+          
+          console.log(`✅ [VariableExtractor] Added variable: ${madcapVariable.name} = "${madcapVariable.value}"`);
         }
       }
+      
+      console.log(`🔧 [VariableExtractor] Total variables now stored: ${this.getVariables().length}`);
+      
     } catch (error) {
+      console.error(`❌ [VariableExtractor] Failed to parse FLVAR file ${flvarPath}:`, error);
       throw new Error(`Failed to parse .flvar file ${flvarPath}: ${error}`);
     }
   }

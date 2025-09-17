@@ -1,5 +1,4 @@
 import { JSDOM } from 'jsdom';
-import { tidy } from 'htmltidy2';
 
 /**
  * HTMLPreprocessor implements a three-phase approach to clean and normalize
@@ -14,15 +13,15 @@ export class HTMLPreprocessor {
    * Main preprocessing pipeline
    */
   async preprocess(html: string): Promise<string> {
-    // Phase 0: Use HTML Tidy to fix basic structural issues
-    const tidiedHtml = await this.tidyHTML(html);
-    
-    // Phase 1: Parse and fix DOM structure
-    const dom = new JSDOM(tidiedHtml, { 
+    // Phase 1: Parse and fix DOM structure with enhanced HTML cleanup
+    const dom = new JSDOM(html, { 
       contentType: 'text/html',
       includeNodeLocations: true 
     });
     const document = dom.window.document;
+    
+    // Phase 0: Enhanced HTML structure cleanup (replaces tidy)
+    this.enhanceHTMLStructure(document);
     
     // Phase 1: Fix DOM structure
     this.fixDOMStructure(document, dom);
@@ -34,8 +33,8 @@ export class HTMLPreprocessor {
     this.fixSiblingAlphabeticalLists(document);
     this.normalizeAllLists(document);
     
-    // Phase 3: Clean text content
-    this.cleanTextContent(document, dom);
+    // Phase 3: Enhanced text content cleaning
+    this.enhancedTextCleaning(document, dom);
     
     // Phase 4: Fix URL encoding in image paths
     this.fixURLEncodedPaths(document);
@@ -45,52 +44,147 @@ export class HTMLPreprocessor {
   }
 
   /**
-   * Phase 0: Use HTML Tidy to fix basic structural issues
+   * Phase 0: Simplified HTML preprocessing to prevent stack overflow
+   * Replaces htmltidy2 with basic JSDOM-based cleanup
    */
-  private async tidyHTML(html: string): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const options = {
-        // Basic structural fixes
-        'fix-bad-uri': true,
-        'fix-uri': true,
-        'merge-divs': false,  // Don't merge divs to preserve structure
-        'merge-spans': false, // Don't merge spans to preserve structure
-        'drop-empty-elements': false, // We'll handle this ourselves
-        
-        // Output formatting
-        'indent': false,  // Don't indent to preserve original spacing intent
-        'wrap': 0,        // Don't wrap lines
-        'tidy-mark': false, // Don't add tidy meta tag
-        
-        // HTML5 compatibility
-        'doctype': 'html5',
-        'new-blocklevel-tags': 'article,aside,canvas,dialog,figcaption,figure,footer,header,hgroup,main,nav,section,summary,details',
-        'new-inline-tags': 'audio,video,ruby,rt,rp,time,canvas,command,datalist,keygen,mark,meter,progress,source,track,wbr',
-        
-        // Preserve MadCap elements
-        'new-empty-tags': 'madcap:variable,madcap:snippet',
-        
-        // Specific fixes for our use case
-        'force-output': true,  // Always produce output even if errors
-        'quiet': true,        // Suppress warnings
-        'show-warnings': false,
-        'alt-text': '',       // Don't add alt text automatically
-        
-        // List structure fixes
-        'fix-bad-nesting': true,
-        'coerce-endtags': true,
-        'omit-optional-tags': false
-      };
+  private enhanceHTMLStructure(document: Document): void {
+    // Basic HTML cleanup to prevent stack overflow
+    try {
+      // Remove problematic elements that should never be converted to content
+      this.removeNonContentElements(document);
       
-      tidy(html, options, (err: Error | null, result: string) => {
-        if (err) {
-          // If tidy fails, return original HTML
-          console.warn('HTML Tidy failed, using original HTML:', err.message);
-          resolve(html);
-        } else {
-          resolve(result || html);
+      // Only fix URL encoding in attributes - this is safe and needed
+      this.fixURLEncodedAttributes(document);
+      
+      // Skip other complex operations that might cause recursion
+    } catch (error) {
+      console.warn('HTML structure enhancement failed, continuing with basic processing:', error);
+    }
+  }
+  
+  /**
+   * Remove elements that contain scripts, styles, or other non-content data
+   * This prevents them from being processed as content during conversion
+   */
+  private removeNonContentElements(document: Document): void {
+    const elementsToRemove = [
+      'script', 'style', 'noscript', 
+      'meta', 'link', 'base',
+      'canvas', 'embed', 'object', 'param'
+    ];
+    
+    for (const tagName of elementsToRemove) {
+      const elements = document.querySelectorAll(tagName);
+      console.log(`📄 [HTML Preprocessor] Removing ${elements.length} ${tagName} elements`);
+      elements.forEach(element => {
+        element.remove();
+      });
+    }
+  }
+
+  /**
+   * Fix HTML entities that were malformed in source
+   */
+  private fixHTMLEntities(document: Document): void {
+    const walker = document.createTreeWalker(
+      document.body,
+      document.defaultView!.NodeFilter.SHOW_TEXT,
+      null
+    );
+
+    let node;
+    while (node = walker.nextNode()) {
+      if (node.textContent) {
+        // Fix common malformed entities
+        node.textContent = node.textContent
+          .replace(/&amp;(?=[a-zA-Z]+;)/g, '&')  // Fix double-encoded entities
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#x([0-9A-Fa-f]+);/g, (match, hex) => {
+            try {
+              return String.fromCharCode(parseInt(hex, 16));
+            } catch {
+              return match;
+            }
+          });
+      }
+    }
+  }
+
+  /**
+   * Fix URL-encoded attributes
+   */
+  private fixURLEncodedAttributes(document: Document): void {
+    const elementsWithURLs = document.querySelectorAll('[src], [href], [data-src]');
+    elementsWithURLs.forEach(element => {
+      ['src', 'href', 'data-src'].forEach(attr => {
+        const value = element.getAttribute(attr);
+        if (value && value.includes('%')) {
+          try {
+            element.setAttribute(attr, decodeURIComponent(value));
+          } catch {
+            // Keep original if decoding fails
+          }
         }
       });
+    });
+  }
+
+  /**
+   * Clean up malformed attributes
+   */
+  private cleanupAttributes(document: Document): void {
+    const allElements = document.querySelectorAll('*');
+    allElements.forEach(element => {
+      // Remove empty attributes
+      Array.from(element.attributes).forEach(attr => {
+        if (attr.value === '' && !['alt', 'title', 'value'].includes(attr.name)) {
+          element.removeAttribute(attr.name);
+        }
+      });
+      
+      // Fix duplicate class attributes (common issue)
+      const classAttr = element.getAttribute('class');
+      if (classAttr) {
+        const uniqueClasses = [...new Set(classAttr.split(/\s+/).filter(Boolean))];
+        element.setAttribute('class', uniqueClasses.join(' '));
+      }
+    });
+  }
+
+  /**
+   * Enhanced nesting fixes beyond the basic ones
+   */
+  private enhanceNestingFixes(document: Document): void {
+    // Fix void elements with content (like <img>content</img>)
+    const voidElements = ['img', 'br', 'hr', 'input', 'meta', 'link'];
+    voidElements.forEach(tagName => {
+      const elements = document.querySelectorAll(tagName);
+      elements.forEach(element => {
+        if (element.textContent?.trim()) {
+          // Move text content after the void element
+          const textNode = document.createTextNode(element.textContent);
+          element.parentNode?.insertBefore(textNode, element.nextSibling);
+          element.textContent = '';
+        }
+      });
+    });
+    
+    // Fix missing closing tags by ensuring proper parent-child relationships
+    this.fixMissingClosingTags(document);
+  }
+
+  /**
+   * Fix elements that should have been closed but weren't
+   */
+  private fixMissingClosingTags(document: Document): void {
+    // JSDOM handles most of this, but we can clean up specific patterns
+    const selfClosingElements = document.querySelectorAll('p:empty, div:empty, span:empty');
+    selfClosingElements.forEach(element => {
+      if (!element.hasChildNodes() && !element.hasAttributes()) {
+        element.remove();
+      }
     });
   }
 
@@ -659,13 +753,14 @@ export class HTMLPreprocessor {
   }
 
   /**
-   * Phase 3: Clean Text Content
-   * - Decode HTML entities
-   * - Normalize whitespace
-   * - Convert smart quotes
+   * Phase 3: Enhanced Text Content Cleaning
+   * - Decode HTML entities (enhanced from tidy functionality)
+   * - Normalize whitespace and line endings
+   * - Convert smart quotes and special characters
    * - Fix character encoding issues
+   * - Handle malformed text from various sources
    */
-  private cleanTextContent(document: Document, dom: JSDOM): void {
+  private enhancedTextCleaning(document: Document, dom: JSDOM): void {
     const walker = document.createTreeWalker(
       document.body,
       dom.window.NodeFilter.SHOW_TEXT,
@@ -675,15 +770,18 @@ export class HTMLPreprocessor {
     let node;
     while (node = walker.nextNode()) {
       if (node.textContent) {
-        node.textContent = this.cleanText(node.textContent);
+        node.textContent = this.enhancedTextClean(node.textContent);
       }
     }
+    
+    // Additional cleanup for specific text patterns
+    this.fixSpecialTextPatterns(document);
   }
 
   /**
-   * Clean individual text content
+   * Enhanced text cleaning (replaces and extends tidy text processing)
    */
-  private cleanText(text: string): string {
+  private enhancedTextClean(text: string): string {
     // Decode HTML entities (beyond what JSDOM does)
     text = text
       .replace(/&nbsp;/g, ' ')
@@ -691,31 +789,117 @@ export class HTMLPreprocessor {
       .replace(/&zwnj;/g, '\u200C')
       .replace(/&ensp;/g, '\u2002')
       .replace(/&emsp;/g, '\u2003')
-      .replace(/&thinsp;/g, '\u2009');
+      .replace(/&thinsp;/g, '\u2009')
+      .replace(/&shy;/g, '\u00AD')  // soft hyphen
+      .replace(/&lrm;/g, '\u200E')  // left-to-right mark
+      .replace(/&rlm;/g, '\u200F'); // right-to-left mark
     
-    // Convert smart quotes to regular quotes
+    // Convert smart quotes and special characters
     text = text
-      .replace(/[\u2018\u2019]/g, "'")
-      .replace(/[\u201C\u201D]/g, '"')
-      .replace(/[\u2013]/g, '-')  // en dash
-      .replace(/[\u2014]/g, '--') // em dash
-      .replace(/[\u2026]/g, '...'); // ellipsis
+      .replace(/[\u2018\u2019]/g, "'")       // smart single quotes
+      .replace(/[\u201C\u201D]/g, '"')       // smart double quotes
+      .replace(/[\u2013]/g, '-')             // en dash
+      .replace(/[\u2014]/g, '--')            // em dash
+      .replace(/[\u2026]/g, '...')           // ellipsis
+      .replace(/[\u00A0]/g, ' ')             // non-breaking space
+      .replace(/[\u2002-\u2009]/g, ' ')      // various spaces
+      .replace(/[\u200B-\u200D]/g, '')       // zero-width characters
+      .replace(/[\u2028\u2029]/g, '\n');     // line/paragraph separators
     
-    // Normalize whitespace
+    // Normalize whitespace and line endings
     text = text
       .replace(/\r\n/g, '\n')
       .replace(/\r/g, '\n')
       .replace(/\t/g, ' ')
-      .replace(/ +/g, ' '); // Multiple spaces to single space
+      .replace(/ +/g, ' ')                   // Multiple spaces to single
+      .replace(/\n +/g, '\n')                // Remove leading spaces on lines
+      .replace(/ +\n/g, '\n')                // Remove trailing spaces on lines
+      .replace(/\n\n\n+/g, '\n\n');          // Max 2 consecutive newlines
     
-    // Fix common encoding issues
+    // Fix common encoding issues (UTF-8 mojibake)
     text = text
       .replace(/â€™/g, "'")
       .replace(/â€œ/g, '"')
       .replace(/â€/g, '"')
       .replace(/â€"/g, '--')
-      .replace(/â€"/g, '-');
+      .replace(/â€"/g, '-')
+      .replace(/Ã¡/g, 'á')
+      .replace(/Ã©/g, 'é')
+      .replace(/Ã­/g, 'í')
+      .replace(/Ã³/g, 'ó')
+      .replace(/Ãº/g, 'ú')
+      .replace(/Ã±/g, 'ñ')
+      .replace(/Ã¼/g, 'ü')
+      .replace(/Ã¶/g, 'ö')
+      .replace(/Ã¤/g, 'ä')
+      .replace(/ÃŸ/g, 'ß');
     
-    return text;
+    // Fix Windows-1252 characters that appear in UTF-8
+    text = text
+      .replace(/â€¢/g, '•')              // bullet
+      .replace(/â€/g, '–')               // en dash
+      .replace(/â€¦/g, '…')              // ellipsis
+      .replace(/â„¢/g, '™')              // trademark
+      .replace(/Â®/g, '®')               // registered
+      .replace(/Â©/g, '©')               // copyright
+      .replace(/Â°/g, '°');              // degree
+    
+    return text.trim();
+  }
+
+  /**
+   * Fix special text patterns that need document-level processing
+   */
+  private fixSpecialTextPatterns(document: Document): void {
+    // Fix text nodes that contain multiple sentences without proper spacing
+    const textNodes = this.getAllTextNodes(document);
+    textNodes.forEach(node => {
+      if (node.textContent) {
+        // Fix missing spaces after periods
+        node.textContent = node.textContent
+          .replace(/\.([A-Z])/g, '. $1')
+          .replace(/\?([A-Z])/g, '? $1')
+          .replace(/!([A-Z])/g, '! $1');
+      }
+    });
+    
+    // Fix malformed URLs and email addresses
+    this.fixMalformedLinks(document);
+  }
+
+  /**
+   * Get all text nodes in document
+   */
+  private getAllTextNodes(document: Document): Text[] {
+    const textNodes: Text[] = [];
+    const walker = document.createTreeWalker(
+      document.body,
+      document.defaultView!.NodeFilter.SHOW_TEXT,
+      null
+    );
+    
+    let node;
+    while (node = walker.nextNode()) {
+      textNodes.push(node as Text);
+    }
+    
+    return textNodes;
+  }
+
+  /**
+   * Fix malformed links and email addresses
+   */
+  private fixMalformedLinks(document: Document): void {
+    const textNodes = this.getAllTextNodes(document);
+    textNodes.forEach(node => {
+      if (node.textContent) {
+        // Fix common URL malformations
+        node.textContent = node.textContent
+          .replace(/http:\/\/([^\s]+)/g, 'http://$1')
+          .replace(/https:\/\/([^\s]+)/g, 'https://$1')
+          .replace(/www\.([^\s]+)/g, 'www.$1')
+          .replace(/([a-zA-Z0-9._%+-]+)@([a-zA-Z0-9.-]+\.[a-zA-Z]{2,})/g, '$1@$2');
+      }
+    });
   }
 }

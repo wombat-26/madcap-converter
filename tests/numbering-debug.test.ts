@@ -1,6 +1,6 @@
 import { describe, test, expect } from '@jest/globals';
-import { AsciiDocConverter } from '../src/converters/asciidoc-converter.js';
-import { ConversionOptions } from '../src/types/index.js';
+import { AsciiDocConverter } from '../src/core/converters/asciidoc-converter.js';
+import { ConversionOptions } from '../src/core/types/index.js';
 
 describe('Numbering Debug Tests', () => {
   let converter: AsciiDocConverter;

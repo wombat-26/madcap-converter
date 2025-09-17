@@ -1,7 +1,7 @@
 import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
 import { mkdir, writeFile, rm } from 'fs/promises';
 import { join } from 'path';
-import { WritersideBatchService } from '../src/services/writerside-batch-service.js';
+import { WritersideBatchService } from '../src/core/services/writerside-batch-service.js';
 
 describe('FLVAR File Discovery Fix', () => {
   let tempDir: string;

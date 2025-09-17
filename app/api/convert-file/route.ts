@@ -34,10 +34,16 @@ export async function POST(request: NextRequest) {
     tempFilePath = join(tmpdir(), `upload-${randomUUID()}-${file.name}`);
     await writeFile(tempFilePath, buffer);
     
-    // Convert the file
+    // Convert the file - preserve original file name for snippet resolution
     const documentService = new DocumentService();
+    
+    // Resolve inputPath for snippet resolution; prefer caller-provided originalPath.
+    const originalPath = options.originalPath as string | undefined;
+
     const result = await documentService.convertFile(tempFilePath, {
       format: format as any,
+      // Prefer provided originalPath; fallback to the temp file path
+      inputPath: originalPath || tempFilePath,
       ...options
     });
     

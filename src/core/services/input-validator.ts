@@ -12,7 +12,7 @@ export interface ValidationResult {
 export class InputValidator {
   private static readonly MAX_PATH_LENGTH = 4096;
   private static readonly MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
-  private static readonly SUPPORTED_INPUT_FORMATS = ['.htm', '.html', '.docx', '.doc'];
+  private static readonly SUPPORTED_INPUT_FORMATS = ['.htm', '.html', '.docx', '.doc', '.flsnp', '.flglo', '.fltoc', '.xml', '.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.bmp'];
   private static readonly OUTPUT_FORMATS = ['markdown', 'asciidoc', 'enhanced-asciidoc', 'optimized-asciidoc', 'zendesk', 'pandoc-asciidoc', 'pandoc-markdown', 'enhanced-markdown', 'madcap-markdown', 'writerside-markdown'];
   private static readonly VARIABLE_FORMATS = ['adoc', 'writerside'];
   
@@ -299,8 +299,8 @@ export class InputValidator {
 
     // Validate boolean options
     if (typeof options.extractVariables !== 'undefined' && typeof options.extractVariables !== 'boolean') {
-      warnings.push('extractVariables should be boolean, defaulting to false');
-      sanitizedOptions.extractVariables = false;
+      warnings.push('extractVariables should be boolean, defaulting to true');
+      sanitizedOptions.extractVariables = true;
     }
 
     if (typeof options.preserveVariableStructure !== 'undefined' && typeof options.preserveVariableStructure !== 'boolean') {

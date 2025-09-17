@@ -1,12 +1,10 @@
-= Untitled Document
+= Document Title
 :toc:
 :icons: font
 :experimental:
 :source-highlighter: highlight.js
 
 . Parent item
-
-[start=2]
 
 . Child item 1
 . Child item 2

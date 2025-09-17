@@ -1,8 +1,10 @@
-= Untitled Document
+= Document Title
 :toc:
 :icons: font
 :experimental:
 :source-highlighter: highlight.js
 
 . Text item
-. Item with image image:test.png[Test Image]
+. Item with image
+
+image::test.png[Test Image]

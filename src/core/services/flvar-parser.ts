@@ -1,6 +1,6 @@
 import { JSDOM } from 'jsdom';
 import { readFile } from 'fs/promises';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, basename } from 'path';
 
 export interface MadCapVariable {
   name: string;
@@ -132,21 +132,73 @@ export class FLVARParser {
    * Find all FLVAR files in a MadCap project
    */
   async findFLVARFiles(projectPath: string): Promise<string[]> {
-    // Try to find the VariableSets directory
-    const variableSetsPath = resolve(projectPath, 'Project', 'VariableSets');
+    const { readdir } = await import('fs/promises');
     
-    try {
-      const { readdir } = await import('fs/promises');
-      const files = await readdir(variableSetsPath);
+    // Check if this looks like a temp upload directory
+    const isTempUpload = projectPath.includes('batch-convert') || projectPath.includes('/tmp/') || basename(projectPath) === 'input';
+    
+    if (isTempUpload) {
+      // For temp uploads: search recursively for .flvar files anywhere
+      console.log(`🔍 [FlvarParser] Detected temp upload, searching recursively for .flvar files in: ${projectPath}`);
+      try {
+        const files = await this.findFilesRecursively(projectPath, '.flvar');
+        console.log(`🔍 [FlvarParser] Found ${files.length} .flvar files in temp upload`);
+        return files;
+      } catch (error) {
+        console.warn(`Could not search temp upload directory for .flvar files: ${error}`);
+        return [];
+      }
+    } else {
+      // Standard MadCap project: try the VariableSets directory first
+      const variableSetsPath = resolve(projectPath, 'Project', 'VariableSets');
       
-      return files
-        .filter(file => file.endsWith('.flvar') && !file.startsWith('._'))
-        .map(file => resolve(variableSetsPath, file));
-    } catch (error) {
-      // If VariableSets directory doesn't exist, return empty array
-      console.warn(`Could not find VariableSets directory at ${variableSetsPath}`);
-      return [];
+      try {
+        const files = await readdir(variableSetsPath);
+        return files
+          .filter(file => file.endsWith('.flvar') && !file.startsWith('._'))
+          .map(file => resolve(variableSetsPath, file));
+      } catch (error) {
+        console.warn(`Could not find VariableSets directory at ${variableSetsPath}, trying recursive search`);
+        // Fallback: search recursively
+        try {
+          return await this.findFilesRecursively(projectPath, '.flvar');
+        } catch (fallbackError) {
+          console.warn(`Recursive .flvar search also failed: ${fallbackError}`);
+          return [];
+        }
+      }
     }
+  }
+
+  private async findFilesRecursively(dir: string, extension: string): Promise<string[]> {
+    const { readdir } = await import('fs/promises');
+    const result: string[] = [];
+    
+    async function search(currentDir: string): Promise<void> {
+      try {
+        const entries = await readdir(currentDir, { withFileTypes: true });
+        
+        for (const entry of entries) {
+          if (entry.name.startsWith('.') || entry.name.startsWith('._')) {
+            continue; // Skip hidden files
+          }
+          
+          const fullPath = resolve(currentDir, entry.name);
+          
+          if (entry.isDirectory()) {
+            await search(fullPath);
+          } else if (entry.isFile() && entry.name.endsWith(extension)) {
+            result.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Skip directories we can't read
+        console.warn(`Could not read directory ${currentDir}: ${error}`);
+      }
+    }
+    
+    await search(dir);
+    return result;
   }
 
   /**

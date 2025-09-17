@@ -1,16 +1,16 @@
 import { describe, it, expect, beforeAll } from '@jest/globals';
 import fs from 'fs/promises';
 import path from 'path';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
-import { FLVARParser } from '../src/services/flvar-parser.js';
-import { MadCapPreprocessor } from '../src/services/madcap-preprocessor.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
+import { FLVARParser } from '../src/core/services/flvar-parser.js';
+import { MadCapPreprocessor } from '../src/core/services/madcap-preprocessor.js';
 
 /**
  * Specialized tests for MadCap Flare-specific features
  * Focus on variables, conditions, snippets, and MadCap-specific elements
  */
 
-const FLARE_SOURCE_PATH = '/Volumes/Envoy Pro/Flare/Plan_EN';
+const FLARE_SOURCE_PATH = './tests/fixtures/sample-flare-project';
 
 describe('MadCap-Specific Features Tests', () => {
   let converter: WritersideMarkdownConverter;
@@ -28,10 +28,11 @@ describe('MadCap-Specific Features Tests', () => {
     it('should parse FLVAR file correctly', async () => {
       const flvarPath = path.join(FLARE_SOURCE_PATH, 'Project/VariableSets/General.flvar');
       
-      const variables = await flvarParser.parseFile(flvarPath);
+      const variableSet = await flvarParser.parseFile(flvarPath);
       
-      expect(variables.length).toBeGreaterThan(0);
-      expect(variables).toEqual(
+      expect(variableSet.variables.length).toBeGreaterThan(0);
+      expect(variableSet.name).toBe('General');
+      expect(variableSet.variables).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             name: 'CompanyName',
@@ -42,8 +43,8 @@ describe('MadCap-Specific Features Tests', () => {
             value: 'Plan'
           }),
           expect.objectContaining({
-            name: 'VersionNumber',
-            value: 'November 2024'
+            name: 'Version',
+            value: '2.0'
           })
         ])
       );
@@ -52,12 +53,12 @@ describe('MadCap-Specific Features Tests', () => {
     it('should handle DateTime variables correctly', async () => {
       const flvarPath = path.join(FLARE_SOURCE_PATH, 'Project/VariableSets/General.flvar');
       
-      const variables = await flvarParser.parseFile(flvarPath);
-      const yearVariable = variables.find(v => v.name === 'Year');
+      const variableSet = await flvarParser.parseFile(flvarPath);
+      const yearVariable = variableSet.variables.find(v => v.name === 'Year');
       
       expect(yearVariable).toBeDefined();
       expect(yearVariable?.type).toBe('DateTime');
-      expect(yearVariable?.value).toBe('yyyy');
+      expect(yearVariable?.value).toBe('2025');
     });
 
     it('should convert MadCap variables to Writerside format', async () => {

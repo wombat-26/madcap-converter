@@ -1,0 +1,9 @@
+= Test 1
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+include::includes/variables.adoc[]
+
+Content with *bold* text.

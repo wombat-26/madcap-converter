@@ -148,7 +148,7 @@ export class TestFileSystem {
   async cleanup(): Promise<void> {
     const cleanupPromises = this.createdDirs.map(async (dir) => {
       try {
-        await fs.rmdir(dir, { recursive: true });
+        await fs.rm(dir, { recursive: true });
       } catch (error) {
         // Directory might already be removed or not exist
         console.warn(`Failed to cleanup directory ${dir}:`, error);

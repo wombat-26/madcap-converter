@@ -208,13 +208,13 @@ export class AsciiDocConverter implements DocumentConverter {
           const glossaryResult = await this.processGlossary(options, warnings);
           if (glossaryResult) {
             // Handle different glossary formats
-            const glossaryFormat = options.asciidocOptions.glossaryOptions.glossaryFormat || 'inline';
+            const glossaryFormat = options.asciidocOptions.glossaryOptions.glossaryFormat || 'separate';
             
-            if (glossaryFormat === 'inline' || glossaryFormat === 'book-appendix') {
+            if (glossaryFormat === 'book-appendix') {
               // Append glossary to main content
               content += '\n\n' + glossaryResult;
-            } else if (glossaryFormat === 'separate') {
-              // Store as separate content for file generation
+            } else {
+              // Default to separate format - store as separate content for file generation
               glossaryContent = glossaryResult;
             }
           }
@@ -3512,7 +3512,7 @@ export class AsciiDocConverter implements DocumentConverter {
       
       // Create converter options
       const glossaryConversionOptions: GlossaryConversionOptions = {
-        format: glossaryOptions.glossaryFormat || 'inline',
+        format: glossaryOptions.glossaryFormat || 'separate',
         generateAnchors: glossaryOptions.generateAnchors !== false,
         includeIndex: glossaryOptions.includeIndex || false,
         title: glossaryOptions.glossaryTitle || 'Glossary',

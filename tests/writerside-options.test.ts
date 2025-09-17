@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from '@jest/globals';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
 
 describe('WritersideMarkdownConverter - Options Testing', () => {
   let converter: WritersideMarkdownConverter;

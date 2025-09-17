@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html xmlns:MadCap="http://www.madcapsoftware.com/Schemas/MadCap.xsd">
+<head>
+    <title>Test MadCap Document</title>
+</head>
+<body>
+    <h1>Documentation with Conditions</h1>
+    
+    <p>This is regular content that should always appear.</p>
+    
+    <p madcap:conditions="General.Deprecated">
+        This content is marked as deprecated and should be excluded by default.
+    </p>
+    
+    <div data-mc-conditions="Internal, Draft">
+        This is internal draft content for development team only.
+    </div>
+    
+    <section madcap:conditions="CustomerPortal.Advanced">
+        This is advanced customer portal content for premium users.
+    </section>
+    
+    <p data-mc-conditions="Print-Only">
+        This content is specifically for print output only.
+    </p>
+    
+    <div madcap:conditions="Beta">
+        This is beta content for testing new features.
+    </div>
+    
+    <div madcap:conditions="Hidden, Legacy">
+        This is hidden legacy content that needs cleanup.
+    </div>
+    
+    <p madcap:conditions="Red">
+        This content is marked with red color condition for urgent review.
+    </p>
+    
+    <div data-mc-conditions="Alpha, Development">
+        This is alpha development content - very early stage.
+    </div>
+    
+    <p madcap:conditions="OnlineOnly">
+        This content is only for online documentation.
+    </p>
+    
+    <section data-mc-conditions="Maintenance, Obsolete">
+        This section contains obsolete content for maintenance review.
+    </section>
+</body>
+</html>

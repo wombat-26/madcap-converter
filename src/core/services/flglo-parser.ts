@@ -25,15 +25,9 @@ export class FlgloParser {
   private readonly conditionFilters: string[];
 
   constructor(conditionFilters: string[] = []) {
-    // Default condition filters for excluded content
-    this.conditionFilters = conditionFilters.length > 0 ? conditionFilters : [
-      'deprecated', 'deprecation', 'obsolete', 'legacy', 'old',
-      'print only', 'print-only', 'printonly',
-      'cancelled', 'canceled', 'abandoned', 'shelved',
-      'hidden', 'internal', 'private', 'draft',
-      'paused', 'halted', 'stopped', 'discontinued', 'retired',
-      'Black', 'Red', 'Gray', 'Grey'
-    ];
+    // Use the exact condition filters provided by user - no hardcoded defaults
+    // If user wants to filter "deprecated" content, they can explicitly provide it
+    this.conditionFilters = conditionFilters;
   }
 
   async parseGlossaryFile(filePath: string): Promise<ParsedGlossary> {
@@ -46,16 +40,22 @@ export class FlgloParser {
   }
 
   parseGlossaryContent(xmlContent: string, sourceFile: string = 'inline'): ParsedGlossary {
+    console.log(`📚 [FlgloParser] Parsing glossary content from: ${sourceFile} (${xmlContent.length} chars)`);
     const $ = cheerio.load(xmlContent, { xml: true });
     const entries: GlossaryEntry[] = [];
     let hasConditions = false;
+    let totalEntriesFound = 0;
+    let filteredEntries = 0;
 
     $('GlossaryEntry').each((_, element) => {
+      totalEntriesFound++;
       const $entry = $(element);
       const conditions = $entry.attr('conditions') || '';
       
       // Check if entry should be filtered based on conditions
       if (this.shouldFilterEntry(conditions)) {
+        filteredEntries++;
+        console.log(`⚠️ [FlgloParser] Filtered entry with conditions: "${conditions}"`);
         return; // Skip this entry
       }
 
@@ -98,6 +98,12 @@ export class FlgloParser {
       }
     });
 
+    console.log(`📚 [FlgloParser] Parsing results for ${sourceFile}:`);
+    console.log(`  - Total entries found: ${totalEntriesFound}`);
+    console.log(`  - Entries filtered out: ${filteredEntries}`);
+    console.log(`  - Final entries included: ${entries.length}`);
+    console.log(`  - Has conditions: ${hasConditions}`);
+
     return {
       entries,
       metadata: {
@@ -118,35 +124,67 @@ export class FlgloParser {
   }
 
   async findGlossaryFiles(projectPath: string): Promise<string[]> {
+    console.log(`🔍 [FlgloParser] Searching for .flglo files in: ${projectPath}`);
     const glossaryFiles: string[] = [];
     
-    async function searchDirectory(dir: string): Promise<void> {
+    // Enhanced temp upload detection
+    const isTempUpload = projectPath.includes('batch-convert') || 
+                        projectPath.includes('/tmp/') || 
+                        path.basename(projectPath) === 'input' ||
+                        path.dirname(projectPath).includes('batch-convert');
+    
+    console.log(`🔍 [FlgloParser] Detected ${isTempUpload ? 'temp upload' : 'standard project'} structure`);
+    
+    // Track search depth for temp uploads to prevent infinite recursion
+    let maxDepth = isTempUpload ? 10 : 5;
+    
+    async function searchDirectory(dir: string, depth: number = 0): Promise<void> {
+      // Prevent excessive recursion
+      if (depth > maxDepth) {
+        console.log(`🔍 [FlgloParser] Max depth reached (${maxDepth}) for: ${dir}`);
+        return;
+      }
+      
       try {
         const entries = await fs.readdir(dir, { withFileTypes: true });
+        console.log(`🔍 [FlgloParser] Checking directory: ${dir} (${entries.length} entries, depth: ${depth})`);
         
         for (const entry of entries) {
           const fullPath = path.join(dir, entry.name);
           
-          // Skip macOS metadata files
-          if (entry.name.startsWith('._') || entry.name === '.DS_Store') {
+          // Skip macOS metadata files and node_modules
+          if (entry.name.startsWith('._') || 
+              entry.name === '.DS_Store' || 
+              entry.name === 'node_modules' ||
+              entry.name.startsWith('.git')) {
             continue;
           }
           
           if (entry.isDirectory()) {
-            // Common glossary directories in MadCap projects
-            if (['Glossaries', 'Project', 'Content'].includes(entry.name)) {
-              await searchDirectory(fullPath);
+            // For temp uploads: search ALL directories recursively (with depth limit)
+            // For standard projects: only search known MadCap directories
+            const shouldRecurse = isTempUpload || 
+              ['Glossaries', 'Project', 'Content', 'input', 'Resources'].includes(entry.name) || 
+              dir === projectPath;
+            
+            if (shouldRecurse) {
+              console.log(`🔍 [FlgloParser] Recursing into directory: ${entry.name} (depth ${depth + 1})`);
+              await searchDirectory(fullPath, depth + 1);
+            } else {
+              console.log(`🔍 [FlgloParser] Skipping directory: ${entry.name} (not in standard MadCap structure)`);
             }
           } else if (entry.isFile() && entry.name.endsWith('.flglo')) {
+            console.log(`📚 [FlgloParser] Found .flglo file: ${fullPath}`);
             glossaryFiles.push(fullPath);
           }
         }
       } catch (error) {
-        console.warn(`Error searching directory ${dir}:`, error);
+        console.warn(`❌ [FlgloParser] Error searching directory ${dir}:`, error);
       }
     }
     
-    await searchDirectory(projectPath);
+    await searchDirectory(projectPath, 0);
+    console.log(`🔍 [FlgloParser] Search complete. Found ${glossaryFiles.length} .flglo files: ${glossaryFiles.join(', ')}`);
     return glossaryFiles;
   }
 

@@ -1,0 +1,20 @@
+= Test Document
+:toc:
+:icons: font
+:experimental:
+:source-highlighter: highlight.js
+
+include::includes/variables.adoc[]
+
+This document uses variables: {MyVariables. ProductName} and {MyVariables. Version}.
+
+Here is an image:
+
+
+image::Images/test-image.png[Test Image]
+
+APIAnother glossary term: REST
+
+
+// Include glossary
+include::../glossary.adoc[]

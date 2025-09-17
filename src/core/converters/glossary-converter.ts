@@ -3,7 +3,7 @@ import { GlossaryEntry } from '../services/flglo-parser';
 
 type CheerioElement = any;
 
-export type GlossaryFormat = 'inline' | 'separate' | 'book-appendix';
+export type GlossaryFormat = 'separate' | 'book-appendix' | 'inline';
 
 export interface GlossaryConversionOptions {
   format: GlossaryFormat;
@@ -57,86 +57,137 @@ export class GlossaryConverter {
   }
 
   private processInlineElements($elem: cheerio.Cheerio<CheerioElement>): string {
-    let html = $elem.html() || '';
+    // Use proper DOM processing instead of regex for better spacing control
+    const tempDiv = cheerio.load('<div></div>')('div');
+    tempDiv.html($elem.html() || '');
     
-    // Convert inline formatting
-    html = html.replace(/<i>(.+?)<\/i>/g, '_$1_');
-    html = html.replace(/<em>(.+?)<\/em>/g, '_$1_');
-    html = html.replace(/<b>(.+?)<\/b>/g, '*$1*');
-    html = html.replace(/<strong>(.+?)<\/strong>/g, '*$1*');
-    html = html.replace(/<code>(.+?)<\/code>/g, '`$1`');
+    return this.processInlineContent(tempDiv[0]);
+  }
+  
+  /**
+   * Process inline content with proper spacing (similar to main AsciiDoc converter)
+   */
+  private processInlineContent(element: any): string {
+    let result = '';
+    const childNodes = Array.from(element.childNodes || []) as any[];
     
-    // Remove remaining HTML tags
-    html = html.replace(/<[^>]+>/g, '');
+    for (let i = 0; i < childNodes.length; i++) {
+      const child = childNodes[i];
+      
+      if (child.nodeType === 3) { // Text node
+        const text = child.textContent || '';
+        result += text;
+      } else if (child.nodeType === 1) { // Element node
+        const elementResult = this.convertInlineElement(child);
+        
+        if (elementResult) {
+          // Add space before if needed
+          if (this.shouldAddSpaceBefore(result, elementResult)) {
+            result += ' ';
+          }
+          
+          result += elementResult;
+          
+          // Add space after if needed
+          const nextSibling = childNodes[i + 1];
+          if (nextSibling && this.shouldAddSpaceAfter(elementResult, nextSibling)) {
+            result += ' ';
+          }
+        }
+      }
+    }
     
-    // Decode HTML entities
-    const $ = cheerio.load(`<div>${html}</div>`);
-    return $.text();
+    // Clean up excessive whitespace while preserving necessary spacing
+    return result.replace(/\s+/g, ' ').replace(/^\s+|\s+$/g, '');
+  }
+  
+  private convertInlineElement(element: any): string {
+    const tagName = element.tagName?.toLowerCase();
+    const textContent = this.getTextContent(element);
+    
+    switch (tagName) {
+      case 'strong':
+      case 'b':
+        return `*${textContent}*`;
+      case 'em':
+      case 'i':
+        return `_${textContent}_`;
+      case 'code':
+        return `\`${textContent}\``;
+      default:
+        return textContent;
+    }
+  }
+  
+  private getTextContent(element: any): string {
+    if (element.childNodes && element.childNodes.length > 0) {
+      return this.processInlineContent(element);
+    }
+    return element.textContent || '';
+  }
+  
+  private shouldAddSpaceBefore(currentResult: string, elementResult: string): boolean {
+    if (!currentResult || /\s$/.test(currentResult)) {
+      return false;
+    }
+    
+    if (/^\s/.test(elementResult)) {
+      return false;
+    }
+    
+    const lastChar = currentResult.slice(-1);
+    const firstChar = elementResult.charAt(0);
+    
+    // Add space before bold/italic formatting when preceded by word characters
+    if (elementResult.match(/^[\*_`]/) && lastChar.match(/\w/)) {
+      return true;
+    }
+    
+    // Add space between word characters
+    if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+      return true;
+    }
+    
+    return false;
+  }
+  
+  private shouldAddSpaceAfter(elementResult: string, nextSibling: any): boolean {
+    if (nextSibling.nodeType === 3) { // Text node
+      const nextText = nextSibling.textContent || '';
+      if (/^\s/.test(nextText)) {
+        return false;
+      }
+      
+      const lastChar = elementResult.slice(-1);
+      const firstChar = nextText.charAt(0);
+      
+      // Add space after bold/italic formatting when followed by word characters
+      if (elementResult.match(/[\*_`]$/) && firstChar.match(/\w/)) {
+        return true;
+      }
+      
+      // Add space between word characters
+      if (lastChar.match(/\w/) && firstChar.match(/\w/)) {
+        return true;
+      }
+    }
+    
+    return false;
   }
 
   convertToAsciiDoc(entries: GlossaryEntry[], options: GlossaryConversionOptions): string {
     const sortedEntries = this.sortEntriesAlphabetically(entries);
     
     switch (options.format) {
-      case 'inline':
-        return this.convertToInlineFormat(sortedEntries, options);
       case 'separate':
         return this.convertToSeparateFormat(sortedEntries, options);
       case 'book-appendix':
         return this.convertToBookAppendixFormat(sortedEntries, options);
       default:
-        return this.convertToInlineFormat(sortedEntries, options);
+        return this.convertToSeparateFormat(sortedEntries, options);
     }
   }
 
-  private convertToInlineFormat(entries: GlossaryEntry[], options: GlossaryConversionOptions): string {
-    let content = '';
-    
-    // Add title if provided
-    if (options.title) {
-      const level = '='.repeat((options.levelOffset || 0) + 1);
-      content += `${level} ${options.title}\n\n`;
-    }
-    
-    // Generate index if requested
-    if (options.includeIndex) {
-      content += this.generateIndex(entries);
-      content += '\n\n';
-    }
-    
-    // Convert entries to definition list format
-    for (const entry of entries) {
-      // Add anchor if requested
-      if (options.generateAnchors) {
-        const anchorId = this.generateAnchorId(entry.terms[0]);
-        content += `[[${anchorId}]]\n`;
-      }
-      
-      // Primary term
-      content += `${entry.terms[0]}::\n`;
-      
-      // Additional terms (synonyms)
-      if (entry.terms.length > 1) {
-        const synonyms = entry.terms.slice(1).join(', ');
-        content += `_Also: ${synonyms}_\n+\n`;
-      }
-      
-      // Definition
-      const definition = this.convertDefinition(entry.definition);
-      const definitionLines = definition.split('\n');
-      definitionLines.forEach((line, index) => {
-        if (index === 0) {
-          content += `  ${line}\n`;
-        } else {
-          content += `  +\n  ${line}\n`;
-        }
-      });
-      
-      content += '\n';
-    }
-    
-    return content.trim();
-  }
 
   private convertToSeparateFormat(entries: GlossaryEntry[], options: GlossaryConversionOptions): string {
     let content = '';

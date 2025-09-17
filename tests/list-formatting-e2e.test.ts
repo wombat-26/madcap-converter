@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from '@jest/globals';
 import { writeFile, mkdir, rm, readFile } from 'fs/promises';
 import { join } from 'path';
-import { AsciiDocConverter } from '../src/converters/asciidoc-converter.js';
-import { ConversionOptions } from '../src/types/index.js';
+import { AsciiDocConverter } from '../src/core/converters/asciidoc-converter.js';
+import { ConversionOptions } from '../src/core/types/index.js';
 
 describe('List Formatting End-to-End Tests', () => {
   const testDir = join(__dirname, 'temp-list-formatting');
@@ -110,7 +110,7 @@ describe('List Formatting End-to-End Tests', () => {
 
     // Test expected list structure - alphabetic lists are now working correctly
     expect(convertedContent).toContain('. On the _Type_ page:');
-    expect(convertedContent).toContain('[loweralpha]');
+    // Depth-based lists automatically render as alphabetic in AsciiDoc
     expect(convertedContent).toContain('a. Use the *Activity type* list to select');
     expect(convertedContent).toContain('b. Use the *Parent* list to select');
     expect(convertedContent).toContain('c. Click *Next*');
@@ -201,7 +201,7 @@ describe('List Formatting End-to-End Tests', () => {
 
     // Verify that snippets are properly handled within list items - now working correctly
     expect(convertedContent).toContain('. First step:');
-    expect(convertedContent).toContain('[loweralpha]');
+    // Depth-based lists automatically render as alphabetic in AsciiDoc
     expect(convertedContent).toContain('a. Sub-step A');
     expect(convertedContent).toContain('b. Sub-step B');
     expect(convertedContent).toContain('. Second step:');
@@ -268,7 +268,7 @@ describe('List Formatting End-to-End Tests', () => {
     // Verify proper nesting structure
     expect(convertedContent).toContain('. Initial Setup');
     expect(convertedContent).toContain('. Advanced Configuration');
-    expect(convertedContent).toContain('[loweralpha]');
+    // Depth-based lists automatically render as alphabetic in AsciiDoc
     expect(convertedContent).toContain('a. Install software');
     expect(convertedContent).toContain('b. Configure settings');
     expect(convertedContent).toContain('c. Test installation');

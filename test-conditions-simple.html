@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Conditions</title>
+</head>
+<body>
+    <h1>Test Document</h1>
+    <p>This is regular content.</p>
+    
+    <!-- MadCap conditional content -->
+    <p MadCap:conditions="PrintOnly.Yes">This content is for print only.</p>
+    <p MadCap:conditions="OnlineOnly.Yes">This content is for online only.</p>
+    <p MadCap:conditions="Advanced.Yes">This is advanced content.</p>
+    
+    <div MadCap:conditions="Draft.Yes">
+        <p>This is draft content that should be excluded.</p>
+    </div>
+    
+    <span MadCap:conditions="Deprecated.Yes">Deprecated feature</span>
+</body>
+</html>

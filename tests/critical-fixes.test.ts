@@ -1,5 +1,5 @@
 import { describe, it, expect } from '@jest/globals';
-import WritersideMarkdownConverter from '../src/converters/writerside-markdown-converter.js';
+import WritersideMarkdownConverter from '../src/core/converters/writerside-markdown-converter.js';
 
 /**
  * Critical fixes test - focused on the most important conversion issues

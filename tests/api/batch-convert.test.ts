@@ -4,7 +4,7 @@
 
 import { POST } from '../../app/api/batch-convert/route';
 import { NextRequest } from 'next/server';
-import { writeFile, mkdir, rmdir } from 'fs/promises';
+import { writeFile, mkdir, rm } from 'fs/promises';
 import { join } from 'path';
 import { tmpdir } from 'os';
 
@@ -19,7 +19,7 @@ describe('/api/batch-convert', () => {
 
     afterEach(async () => {
       try {
-        await rmdir(testDir, { recursive: true });
+        await rm(testDir, { recursive: true });
       } catch (error) {
         // Directory might already be removed
       }

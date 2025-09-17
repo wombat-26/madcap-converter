@@ -1,7 +1,8 @@
 import { JSDOM } from 'jsdom';
 import { readFile, stat, readdir, existsSync } from 'fs';
 import { readFile as readFileAsync, stat as statAsync, readdir as readdirAsync } from 'fs/promises';
-import { resolve, dirname, join } from 'path';
+import { resolve, dirname, join, basename } from 'path';
+import { ConversionOptions } from '../types/index';
 
 /**
  * Shared MadCap preprocessing service used by both MadCapConverter and ZendeskConverter
@@ -46,9 +47,21 @@ export class MadCapPreprocessor {
   }
 
   /**
+   * Load pre-extracted variables from batch processing
+   */
+  loadExtractedVariables(variables: { name: string; value: string }[]): void {
+    console.log(`🔍 [MadCapPreprocessor] Loading ${variables.length} pre-extracted variables`);
+    variables.forEach(variable => {
+      this.extractedVariables.set(variable.name, variable);
+      console.log(`    • Loaded variable: ${variable.name} = "${variable.value}"`);
+    });
+    console.log(`🔍 [MadCapPreprocessor] Total variables now available: ${this.extractedVariables.size}`);
+  }
+
+  /**
    * Main preprocessing method - cleans up MadCap elements, resolves variables, processes snippets
    */
-  async preprocessMadCapContent(html: string, inputPath?: string, outputFormat?: string): Promise<string> {
+  async preprocessMadCapContent(html: string, inputPath?: string, outputFormat?: string, projectRootPath?: string, options?: ConversionOptions): Promise<string> {
     // Reset snippet loading cache for each conversion
     this.loadedSnippets.clear();
     
@@ -67,11 +80,11 @@ export class MadCapPreprocessor {
     const dom = new JSDOM(cleanedHtml, { contentType: 'text/html' });
     const document = dom.window.document;
     
-    // Remove elements with skip conditions before processing
-    this.removeSkipConditionElements(document);
+    // Remove elements with conditions based on user selection
+    this.removeConditionElements(document, options);
     
     // Batch process all MadCap elements in one pass
-    await this.processMadCapElementsBatch(document, inputPath);
+    await this.processMadCapElementsBatch(document, inputPath, projectRootPath);
     
     // Clean up DOM structure for all converters
     this.cleanupDOMStructure(document, outputFormat);
@@ -82,8 +95,8 @@ export class MadCapPreprocessor {
   /**
    * Check if content should be skipped due to MadCap conditions
    */
-  shouldSkipContent(html: string): boolean {
-    return this.checkSkipConditions(html);
+  shouldSkipContent(html: string, options?: ConversionOptions): boolean {
+    return this.checkConditionsForSkip(html, options);
   }
 
   /**
@@ -137,64 +150,30 @@ export class MadCapPreprocessor {
     }
   }
 
-  private checkSkipConditions(content: string): boolean {
-    // Regex patterns for deprecation and exclusion conditions
-    const skipPatterns = [
-      // Color-based conditions (case insensitive)
-      /\b(Black|Red|Gray|Grey)\b/i,
-      
-      // Deprecation patterns (various forms)
-      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
-      
-      // Status patterns
-      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
-      
-      // Print-only patterns
-      /\b(print[\s\-_]?only|printonly)\b/i,
-      
-      // Development status
-      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
-      
-      // Hidden/internal patterns
-      /\b(hidden|internal|private|draft)\b/i
-    ];
-    
-    // Check for madcap:conditions attributes
-    const conditionPattern = /(?:madcap:conditions|data-mc-conditions)="([^"]+)"/gi;
-    const matches = content.matchAll(conditionPattern);
-    
-    for (const match of matches) {
-      const conditions = match[1];
-      // Check if any skip pattern matches the conditions
-      if (skipPatterns.some(pattern => pattern.test(conditions))) {
-        return true;
-      }
+  private checkConditionsForSkip(content: string, options?: ConversionOptions): boolean {
+    if (!options || (!options.excludeConditions && !options.includeConditions)) {
+      // No condition filtering specified - don't skip any content
+      return false;
     }
     
-    return false;
+    // Only skip entire content if ALL conditional content would be excluded
+    // For individual element filtering, let removeConditionElements handle it
+    
+    // This method is used by batch processing to skip files that would be entirely empty
+    // after condition filtering. For typical use cases, we should not skip content here
+    // as individual elements can be filtered during preprocessing.
+    
+    // TODO: In future, could implement logic to detect if document would be completely empty
+    // after filtering, but for now, let individual element filtering handle this
+    
+    return false; // Don't skip entire content - let element filtering handle it
   }
 
-  private removeSkipConditionElements(document: Document): void {
-    // Regex patterns for deprecation and exclusion conditions
-    const skipPatterns = [
-      // Color-based conditions (case insensitive)
-      /\b(Black|Red|Gray|Grey)\b/i,
-      
-      // Deprecation patterns (various forms)
-      /\b(deprecated?|deprecation|obsolete|legacy|old)\b/i,
-      
-      // Status patterns
-      /\b(paused?|halted?|stopped?|discontinued?|retired?)\b/i,
-      
-      // Print-only patterns
-      /\b(print[\s\-_]?only|printonly)\b/i,
-      
-      // Development status
-      /\b(cancelled?|canceled?|abandoned|shelved)\b/i,
-      
-      // Hidden/internal patterns
-      /\b(hidden|internal|private|draft)\b/i
-    ];
+  private removeConditionElements(document: Document, options?: ConversionOptions): void {
+    if (!options || (!options.excludeConditions && !options.includeConditions)) {
+      // No condition filtering specified - don't remove any elements
+      return;
+    }
     
     // Find elements with madcap:conditions attributes
     const conditionalElements = document.querySelectorAll('[madcap\\:conditions], [data-mc-conditions]');
@@ -202,19 +181,65 @@ export class MadCapPreprocessor {
     conditionalElements.forEach(element => {
       const madcapConditions = element.getAttribute('madcap:conditions') || '';
       const dataMcConditions = element.getAttribute('data-mc-conditions') || '';
-      const allConditions = madcapConditions + ' ' + dataMcConditions;
+      const allConditionsString = madcapConditions + ' ' + dataMcConditions;
+      const conditions = this.parseConditionString(allConditionsString);
       
-      // Check if any skip patterns match the conditions
-      const shouldSkip = skipPatterns.some(pattern => pattern.test(allConditions));
+      let shouldRemove = false;
       
-      if (shouldSkip) {
+      // If includeConditions is specified, only include content with those conditions
+      if (options.includeConditions && options.includeConditions.length > 0) {
+        const hasIncludedCondition = conditions.some(condition => 
+          options.includeConditions!.includes(condition)
+        );
+        if (!hasIncludedCondition) {
+          shouldRemove = true; // Remove content that doesn't have any included conditions
+        }
+      }
+      
+      // If excludeConditions is specified, exclude content with those conditions
+      if (options.excludeConditions && options.excludeConditions.length > 0) {
+        const hasExcludedCondition = conditions.some(condition => 
+          options.excludeConditions!.includes(condition)
+        );
+        if (hasExcludedCondition) {
+          shouldRemove = true; // Remove content with excluded conditions
+        }
+      }
+      
+      if (shouldRemove) {
         // Add a comment indicating the removed content
+        const conditionsList = conditions.join(', ');
         const comment = document.createComment(
-          ` Removed content with MadCap conditions: ${madcapConditions || dataMcConditions} `
+          ` Removed content with MadCap conditions: ${conditionsList} `
         );
         element.parentNode?.replaceChild(comment, element);
       }
     });
+  }
+  
+  /**
+   * Parse a condition string into individual conditions
+   * Handles comma-separated, semicolon-separated, and space-separated conditions
+   */
+  private parseConditionString(conditionString: string): string[] {
+    if (!conditionString.trim()) {
+      return [];
+    }
+    
+    // Split by common separators and clean up
+    return conditionString
+      .split(/[,;]/)
+      .map(condition => condition.trim())
+      .filter(condition => condition.length > 0)
+      .map(condition => {
+        // Remove common prefixes/suffixes
+        return condition
+          .replace(/^["']|["']$/g, '') // Remove quotes
+          .replace(/^General\./i, '') // Remove "General." prefix
+          .replace(/^Default\./i, '') // Remove "Default." prefix
+          .trim();
+      })
+      .filter(condition => condition.length > 0);
   }
 
   private removeMicrosoftProperties(html: string): string {
@@ -252,7 +277,8 @@ export class MadCapPreprocessor {
     return result;
   }
 
-  private async processMadCapElementsBatch(document: Document, inputPath?: string): Promise<void> {
+  private async processMadCapElementsBatch(document: Document, inputPath?: string, projectRootPath?: string): Promise<void> {
+    // Process MadCap elements with proper snippet resolution
     // Single DOM traversal to find all MadCap elements
     const allElements = Array.from(document.querySelectorAll('*'));
     
@@ -261,6 +287,7 @@ export class MadCapPreprocessor {
     const dropDowns: Element[] = [];
     const xrefs: Element[] = [];
     const variables: Element[] = [];
+    const glossaryTerms: Element[] = [];
     
     // Categorize elements in one pass
     for (const element of allElements) {
@@ -276,15 +303,18 @@ export class MadCapPreprocessor {
         xrefs.push(element);
       } else if (tagName === 'madcap:variable' || tagName === 'MadCap:variable' || tagName === 'MADCAP:VARIABLE' || tagName.toLowerCase() === 'madcap:variable' || element.hasAttribute('data-mc-variable') || (element.hasAttribute('name') && (tagName.includes('variable') || element.className.includes('mc-variable')))) {
         variables.push(element);
+      } else if (tagName === 'madcap:glossaryterm' || tagName === 'MadCap:glossaryterm' || tagName === 'MADCAP:GLOSSARYTERM' || tagName.toLowerCase() === 'madcap:glossaryterm') {
+        glossaryTerms.push(element);
       }
     }
     
     // Process each type efficiently
-    await this.processSnippetBlocks(snippetBlocks, inputPath);
-    await this.processSnippetTexts(snippetTexts, inputPath);
+    await this.processSnippetBlocks(snippetBlocks, inputPath, projectRootPath);
+    await this.processSnippetTexts(snippetTexts, inputPath, projectRootPath);
     this.processDropDowns(dropDowns);
     this.processXrefs(xrefs);
     this.processVariables(variables);
+    this.processGlossaryTerms(glossaryTerms);
     
     // Fallback: Process any remaining madcap:variable elements that weren't caught
     this.processRemainingVariables(document);
@@ -293,14 +323,34 @@ export class MadCapPreprocessor {
     this.processRemainingXrefs(document);
   }
 
-  private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string): Promise<void> {
+  private async processSnippetBlocks(snippetBlocks: Element[], inputPath?: string, projectRootPath?: string): Promise<void> {
+    // Process all snippet blocks for seamless content integration
     for (const element of snippetBlocks) {
       const snippetSrc = element.getAttribute('src');
       
+      // TEMPORARY FIX: If inputPath is missing, try to construct it from the upload context
+      if (snippetSrc && !inputPath) {
+        console.log(`[SNIPPET DEBUG] inputPath is missing! snippetSrc: ${snippetSrc}`);
+        // For now, create a simple placeholder instead of crashing
+        const div = element.ownerDocument.createElement('div');
+        div.innerHTML = `<p><strong>⚠️ NO INPUT PATH:</strong> Cannot resolve snippet ${snippetSrc} without inputPath</p>`;
+        element.parentNode?.replaceChild(div, element);
+        continue;
+      }
+      
       if (snippetSrc && inputPath) {
         try {
-          // Resolve snippet path relative to the current document
-          const snippetPath = resolve(dirname(inputPath), snippetSrc);
+          // Resolve snippet path using MadCap project structure (same as processSnippetTexts)
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath, projectRootPath);
+          
+          // Resolve snippet path relative to the input document
+          
+          // Check if file exists before trying to read it
+          if (!existsSync(snippetPath)) {
+            console.error(`[SNIPPET ERROR] File does not exist: ${snippetPath}`);
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+            continue;
+          }
           
           // Check for circular references
           if (this.loadedSnippets.has(snippetPath)) {
@@ -309,18 +359,9 @@ export class MadCapPreprocessor {
             continue;
           }
           
-          // Check cache first
-          let snippetContent: string;
-          if (this.snippetCache.has(snippetPath)) {
-            snippetContent = this.snippetCache.get(snippetPath)!;
-          } else {
-            // Mark snippet as being loaded
-            this.loadedSnippets.add(snippetPath);
-            
-            const rawContent = await readFileAsync(snippetPath, 'utf8');
-            snippetContent = await this.processSnippetContent(rawContent);
-            this.snippetCache.set(snippetPath, snippetContent);
-          }
+          // Load and process snippet content (async to avoid sync I/O)
+          const rawContent = await readFileAsync(snippetPath, 'utf8');
+          const snippetContent = await this.processSnippetContent(rawContent);
           
           // Parse snippet content with JSDOM and extract body children with boundary preservation
           const snippetDom = new JSDOM(snippetContent, { contentType: 'text/html' });
@@ -351,14 +392,20 @@ export class MadCapPreprocessor {
           }
           
         } catch (error) {
-          console.warn(`Could not load snippet ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
+          console.error(`[SNIPPET ERROR] Failed to load snippet ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
+          console.error(`[SNIPPET ERROR] Resolved path was: ${resolve(dirname(inputPath), snippetSrc)}`);
+          console.error(`[SNIPPET ERROR] Input path: ${inputPath}`);
+          console.error(`[SNIPPET ERROR] Full error:`, error);
           this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         }
       } else {
         // If no src attribute or inputPath, create a placeholder
+        console.log(`[SNIPPET DEBUG] No src or inputPath - snippetSrc: ${snippetSrc}, inputPath: ${inputPath}`);
         if (snippetSrc) {
+          console.log(`[SNIPPET DEBUG] Creating placeholder for missing inputPath`);
           this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         } else {
+          console.log(`[SNIPPET DEBUG] No src attribute, using innerHTML`);
           const div = element.ownerDocument.createElement('div');
           div.innerHTML = element.innerHTML;
           element.parentNode?.replaceChild(div, element);
@@ -367,20 +414,37 @@ export class MadCapPreprocessor {
     }
   }
 
-  private async processSnippetTexts(snippetTexts: Element[], inputPath?: string): Promise<void> {
+  private async processSnippetTexts(snippetTexts: Element[], inputPath?: string, projectRootPath?: string): Promise<void> {
     for (const element of snippetTexts) {
       const snippetSrc = element.getAttribute('src');
+      
+      // TEMPORARY FIX: If inputPath is missing, try to construct it from the upload context
+      if (snippetSrc && !inputPath) {
+        console.log(`[SNIPPET DEBUG] inputPath is missing for snippetText! snippetSrc: ${snippetSrc}`);
+        // Create a placeholder similar to processSnippetBlocks
+        const div = element.ownerDocument.createElement('div');
+        div.innerHTML = `<p><strong>⚠️ NO INPUT PATH:</strong> Cannot resolve snippet text ${snippetSrc} without inputPath</p>`;
+        element.parentNode?.replaceChild(div, element);
+        continue;
+      }
       
       if (snippetSrc && inputPath) {
         try {
           // Resolve snippet path from MadCap project root, not relative to current document
           // Snippets are always in /Content/Resources/Snippets/ directory
-          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath);
+          const snippetPath = this.resolveSnippetPath(snippetSrc, inputPath, projectRootPath);
+          
+          // Check if file exists before trying to read it
+          if (!existsSync(snippetPath)) {
+            console.error(`[SNIPPET ERROR] Snippet text file does not exist: ${snippetPath}`);
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+            continue;
+          }
           
           // Check for circular references
           if (this.loadedSnippets.has(snippetPath)) {
             console.warn(`Circular snippet reference detected: ${snippetPath}`);
-            element.remove();
+            this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
             continue;
           }
           
@@ -423,78 +487,115 @@ export class MadCapPreprocessor {
           
         } catch (error) {
           console.warn(`Could not load snippet text ${snippetSrc}:`, error instanceof Error ? error.message : String(error));
-          element.remove();
+          // Create a placeholder instead of removing
+          this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
         }
       } else {
-        // Remove element if no valid src
-        element.remove();
+        // Create placeholder if no valid src
+        if (snippetSrc) {
+          console.log(`[SNIPPET DEBUG] Creating placeholder for snippet text with missing inputPath`);
+          this.createSnippetPlaceholder(element.ownerDocument, element, snippetSrc);
+        } else {
+          console.log(`[SNIPPET DEBUG] No src attribute on snippet text, removing element`);
+          element.remove();
+        }
       }
     }
+  }
+
+  /**
+   * Find the MadCap project root from an input file path
+   * The project root is the directory that contains Content/, Project/, etc.
+   */
+  private findMadCapProjectRoot(inputPath: string): string {
+    let currentDir = dirname(inputPath);
+    
+    // Walk up the directory tree looking for MadCap project indicators
+    while (currentDir !== dirname(currentDir)) { // Stop at filesystem root
+      const contentDir = join(currentDir, 'Content');
+      const projectDir = join(currentDir, 'Project');
+      
+      // Check if this directory looks like a MadCap project root
+      if (existsSync(contentDir) || existsSync(projectDir)) {
+        console.log(`[SNIPPET RESOLVE] Found MadCap project root: ${currentDir}`);
+        return currentDir;
+      }
+      
+      // Move up one directory level
+      currentDir = dirname(currentDir);
+    }
+    
+    // If we didn't find a clear project root, assume the directory containing the input file
+    const fallbackRoot = dirname(inputPath);
+    console.log(`[SNIPPET RESOLVE] Using fallback project root: ${fallbackRoot}`);
+    return fallbackRoot;
   }
 
   /**
    * Resolve snippet path from MadCap project structure
    * Snippets are always in /Content/Resources/Snippets/ directory
    */
-  private resolveSnippetPath(snippetSrc: string, inputPath: string): string {
-    // Find the MadCap project root by looking for /Content/ directory
-    const projectRoot = this.findMadCapProjectRoot(inputPath);
+  private resolveSnippetPath(snippetSrc: string, inputPath: string, projectRootPath?: string): string {
+    console.log(`[SNIPPET RESOLVE] Resolving snippet: "${snippetSrc}" from input: "${inputPath}", projectRoot: "${projectRootPath}"`);
+    
+    // Use provided project root path if available, otherwise find it from input path
+    const projectRoot = projectRootPath || this.findMadCapProjectRoot(inputPath);
     
     // Clean the snippet source path
     let cleanSnippetSrc = snippetSrc;
     
     // Remove leading ../ patterns that try to go relative
+    const originalSnippetSrc = cleanSnippetSrc;
     cleanSnippetSrc = cleanSnippetSrc.replace(/^(\.\.\/)+/, '');
+    if (originalSnippetSrc !== cleanSnippetSrc) {
+      console.log(`[SNIPPET RESOLVE] Removed relative path prefix: "${originalSnippetSrc}" -> "${cleanSnippetSrc}"`);
+    }
+    
+    // Try multiple possible paths for the snippet
+    const possiblePaths = [];
     
     // If the path already contains Resources/Snippets/, use it directly from Content root
-    if (cleanSnippetSrc.startsWith('Resources/Snippets/')) {
-      const snippetPath = join(projectRoot, 'Content', cleanSnippetSrc);
-      return snippetPath;
+    if (cleanSnippetSrc.includes('Resources/Snippets/') || cleanSnippetSrc.includes('Resources\\Snippets\\')) {
+      const normalizedPath = cleanSnippetSrc.replace(/\\/g, '/');
+      const snippetPart = normalizedPath.substring(normalizedPath.indexOf('Resources/Snippets/'));
+      possiblePaths.push(join(projectRoot, 'Content', snippetPart));
     }
     
-    // Remove leading Snippets/ if present (since we'll add the full path)
-    cleanSnippetSrc = cleanSnippetSrc.replace(/^Snippets\//, '');
+    // Try standard MadCap snippet location
+    const baseSnippetName = cleanSnippetSrc.replace(/^(Resources[\/\\])?Snippets[\/\\]/, '');
+    possiblePaths.push(join(projectRoot, 'Content', 'Resources', 'Snippets', baseSnippetName));
     
-    // Construct the full snippet path
-    const snippetPath = join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
+    // Try relative to current file
+    if (snippetSrc.startsWith('../') || snippetSrc.startsWith('..\\')) {
+      const relativePath = resolve(dirname(inputPath), snippetSrc);
+      possiblePaths.push(relativePath);
+    }
     
-    return snippetPath;
+    // Try as absolute path (in case it's already resolved)
+    if (existsSync(snippetSrc)) {
+      possiblePaths.push(snippetSrc);
+    }
+    
+    // Log all paths we're trying
+    console.log(`[SNIPPET RESOLVE] Trying ${possiblePaths.length} possible paths:`);
+    for (const [index, path] of possiblePaths.entries()) {
+      console.log(`[SNIPPET RESOLVE]   ${index + 1}. ${path}`);
+      if (existsSync(path)) {
+        console.log(`[SNIPPET RESOLVE] ✓ Found at path #${index + 1}: ${path}`);
+        return path;
+      }
+    }
+    
+    // If none found, return the most likely path
+    const defaultPath = possiblePaths[0] || join(projectRoot, 'Content', 'Resources', 'Snippets', cleanSnippetSrc);
+    console.log(`[SNIPPET RESOLVE] ✗ No snippet found, using default: ${defaultPath}`);
+    return defaultPath;
   }
 
-  /**
-   * Find the MadCap project root directory by walking up from input path
-   */
-  private findMadCapProjectRoot(inputPath: string): string {
-    let currentDir = dirname(inputPath);
-    
-    // Walk up directory tree to find Content directory
-    while (currentDir !== dirname(currentDir)) {
-      const contentDir = join(currentDir, 'Content');
-      try {
-        // Check if Content directory exists
-        if (existsSync(contentDir)) {
-          return currentDir;
-        }
-      } catch (error) {
-        // Continue searching
-      }
-      currentDir = dirname(currentDir);
-    }
-    
-    // Fallback: if no Content directory found, assume current directory structure
-    // Extract path before /Content/ if it exists
-    const contentIndex = inputPath.indexOf('/Content/');
-    if (contentIndex >= 0) {
-      return inputPath.substring(0, contentIndex);
-    }
-    
-    // Ultimate fallback
-    return dirname(inputPath);
-  }
 
   private async processSnippetContent(snippetContent: string): Promise<string> {
     // Clean the snippet content
-    let cleanedSnippet = snippetContent
+    const cleanedSnippet = snippetContent
       .replace(/<\?xml[^>]*>/g, '')
       .replace(/xmlns:MadCap="[^"]*"/g, '');
     
@@ -509,11 +610,12 @@ export class MadCapPreprocessor {
   }
 
   private createSnippetPlaceholder(document: Document, element: Element, snippetSrc: string): void {
+    // Temporarily create a visible error to understand when this is called
     const div = document.createElement('div');
     div.className = 'snippet-placeholder';
     
     const noteP = document.createElement('p');
-    noteP.innerHTML = `<strong>📄 Content:</strong> Snippet from <code>${snippetSrc}</code>`;
+    noteP.innerHTML = `<strong>🚨 SNIPPET PLACEHOLDER:</strong> ${snippetSrc} - Check server logs for details`;
     div.appendChild(noteP);
     
     // If the element has content, include it
@@ -580,7 +682,7 @@ export class MadCapPreprocessor {
         }
         
         link.setAttribute('href', convertedHref);
-        link.textContent = linkText || `See ${convertedHref}`;
+        link.textContent = linkText || convertedHref;
         
         // Copy any additional attributes that might be useful
         const attributes = element.attributes;
@@ -648,6 +750,35 @@ export class MadCapPreprocessor {
     });
   }
 
+  /**
+   * Process MadCap glossary term elements and convert them to appropriate format
+   */
+  private processGlossaryTerms(glossaryTerms: Element[]): void {
+    console.log(`🔍 [MadCapPreprocessor] Processing ${glossaryTerms.length} glossary terms`);
+    
+    glossaryTerms.forEach(element => {
+      const term = element.textContent?.trim() || '';
+      if (!term) {
+        console.warn(`⚠️ [MadCapPreprocessor] Empty glossary term found, removing element`);
+        element.remove();
+        return;
+      }
+      
+      console.log(`🔍 [MadCapPreprocessor] Processing glossary term: "${term}"`);
+      
+      // For now, just replace with plain text and let individual converters handle the formatting
+      // Each converter (AsciiDoc, Writerside, Zendesk) will process the text node as needed
+      // We add a special class to mark it as a glossary term for later processing
+      const span = element.ownerDocument.createElement('span');
+      span.className = 'madcap-glossary-term';
+      span.setAttribute('data-term', term);
+      span.textContent = term;
+      
+      // Replace the MadCap element with a marked span
+      element.parentNode?.replaceChild(span, element);
+    });
+  }
+
   private processRemainingVariables(document: Document): void {
     // If preserveVariables is true, skip processing
     if (this.preserveVariables) {
@@ -708,7 +839,7 @@ export class MadCapPreprocessor {
           }
           
           link.setAttribute('href', convertedHref);
-          link.textContent = linkText || `See ${convertedHref}`;
+          link.textContent = linkText || convertedHref;
           
           // Copy any additional attributes that might be useful
           const attributes = element.attributes;
@@ -800,16 +931,35 @@ export class MadCapPreprocessor {
 
   private extractVariableName(className: string): string | undefined {
     const dotMatch = className.match(/mc-variable\.(\w+)/)?.[1];
-    if (dotMatch) return dotMatch;
+    if (dotMatch) {
+      return dotMatch;
+    }
     
     const spaceMatch = className.match(/mc-variable\s+([^.\s]+)\.([^.\s]+)/);
-    if (spaceMatch) return `${spaceMatch[1]}.${spaceMatch[2]}`;
+    if (spaceMatch) {
+      return `${spaceMatch[1]}.${spaceMatch[2]}`;
+    }
     
     return undefined;
   }
 
   private findProjectPath(inputPath: string): string | null {
-    // Find the project path by looking for the Flare project structure
+    // Check if this is a temp upload directory first
+    const isTempUpload = inputPath.includes('batch-convert') || inputPath.includes('/tmp/') || basename(inputPath) === 'input';
+    
+    if (isTempUpload) {
+      // For temp uploads, find the root directory to search recursively
+      const pathParts = inputPath.split('/');
+      const tempIndex = pathParts.findIndex(part => part.includes('batch-convert'));
+      if (tempIndex > 0) {
+        // Return the temp batch directory as the project root for recursive search
+        return pathParts.slice(0, tempIndex + 2).join('/'); // includes 'input' directory
+      }
+      // Fallback: use the input path directory itself
+      return dirname(inputPath);
+    }
+    
+    // For standard MadCap projects: Find the project path by looking for the Flare project structure
     const pathParts = inputPath.split('/');
     const contentIndex = pathParts.findIndex(part => part === 'Content');
     
@@ -819,13 +969,8 @@ export class MadCapPreprocessor {
       return `${projectBasePath}/Project/VariableSets`;
     }
     
-    // Fallback to common paths
-    const commonPaths = [
-      '/Volumes/Envoy Pro/Flare/Spend EN/Project/VariableSets',
-      '/Volumes/Envoy Pro/Flare/Administration DE/Project/VariableSets'
-    ];
-    
-    return commonPaths[0];
+    // No fallback paths - rely on project detection
+    return null;
   }
 
   private async loadVariableSets(projectPath: string): Promise<void> {
@@ -836,50 +981,95 @@ export class MadCapPreprocessor {
 
       const variables = new Map<string, string>();
       
-      // Dynamically find all .flvar files in the project directory
-      try {
-        const files = await readdirAsync(projectPath);
-        const flvarFiles = files.filter(file => file.endsWith('.flvar') && !file.startsWith('._'));
-        
-        // Load variable files in parallel
-        const variablePromises = flvarFiles.map(async (fileName) => {
-          try {
-            const variableSetPath = resolve(projectPath, fileName);
-            const variableContent = await this.readFileWithCache(variableSetPath);
-            
-            const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
-            const document = dom.window.document;
-            
-            const fileVariables = new Map<string, string>();
-            const variableElements = document.querySelectorAll('Variable');
-            variableElements.forEach(element => {
-              const name = element.getAttribute('Name');
-              const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+      // Check if this is a temp upload directory
+      const isTempUpload = projectPath.includes('batch-convert') || projectPath.includes('/tmp/') || basename(projectPath) === 'input';
+      
+      if (isTempUpload) {
+        // For temp uploads: search recursively for .flvar files
+        console.log(`🔍 [MadCapPreprocessor] Detected temp upload, searching recursively for .flvar files in: ${projectPath}`);
+        try {
+          const flvarFiles = await this.findFlvarFilesRecursively(projectPath);
+          console.log(`🔍 [MadCapPreprocessor] Found ${flvarFiles.length} .flvar files in temp upload`);
+          
+          // Load all found .flvar files
+          for (const flvarFile of flvarFiles) {
+            try {
+              const variableContent = await this.readFileWithCache(flvarFile);
+              await this.parseFlvarFile(variableContent, variables, basename(flvarFile));
+            } catch (error) {
+              console.warn(`Could not read .flvar file ${flvarFile}: ${error}`);
+            }
+          }
+        } catch (error) {
+          console.warn(`Could not search for .flvar files in temp upload: ${error}`);
+        }
+      } else {
+        // Standard MadCap project: projectPath should be Project/VariableSets directory
+        try {
+          const files = await readdirAsync(projectPath);
+          const flvarFiles = files.filter(file => file.endsWith('.flvar') && !file.startsWith('._'));
+          
+          console.log(`🔍 [MadCapPreprocessor] Found ${flvarFiles.length} .flvar files in standard project: ${projectPath}`);
+          
+          // Load variable files in parallel
+          const variablePromises = flvarFiles.map(async (fileName) => {
+            try {
+              const variableSetPath = resolve(projectPath, fileName);
+              const variableContent = await this.readFileWithCache(variableSetPath);
               
-              if (name && value) {
-                fileVariables.set(name, value);
-              }
-            });
+              const dom = new JSDOM(variableContent, { contentType: 'application/xml' });
+              const document = dom.window.document;
+              
+              const fileVariables = new Map<string, string>();
+              const variableElements = document.querySelectorAll('Variable');
+              variableElements.forEach(element => {
+                const name = element.getAttribute('Name');
+                const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+                
+                if (name && value) {
+                  fileVariables.set(name, value);
+                }
+              });
+              
+              return fileVariables;
+            } catch (error) {
+              console.warn(`Could not load variable set ${fileName}:`, error);
+              return new Map<string, string>();
+            }
+          });
+          
+          // Await all variable file loads and merge results
+          const variableMaps = await Promise.all(variablePromises);
+          variableMaps.forEach(fileVariables => {
+            for (const [name, value] of fileVariables) {
+              variables.set(name, value);
+            }
+          });
+          
+        } catch (error) {
+          console.warn(`Could not read project directory for .flvar files (${projectPath}): ${error}`);
+          // If standard project structure fails, try recursive search as fallback
+          console.log(`🔍 [MadCapPreprocessor] Falling back to recursive search for standard project`);
+          try {
+            const parentDir = dirname(projectPath); // Go up from Project/VariableSets to project root
+            const flvarFiles = await this.findFlvarFilesRecursively(parentDir);
+            console.log(`🔍 [MadCapPreprocessor] Fallback found ${flvarFiles.length} .flvar files`);
             
-            return fileVariables;
-          } catch (error) {
-            console.warn(`Could not load variable set ${fileName}:`, error);
-            return new Map<string, string>();
+            for (const flvarFile of flvarFiles) {
+              try {
+                const variableContent = await this.readFileWithCache(flvarFile);
+                await this.parseFlvarFile(variableContent, variables, basename(flvarFile));
+              } catch (error) {
+                console.warn(`Could not read .flvar file ${flvarFile}: ${error}`);
+              }
+            }
+          } catch (fallbackError) {
+            console.warn(`Recursive search fallback also failed: ${fallbackError}`);
           }
-        });
-        
-        // Await all variable file loads and merge results
-        const variableMaps = await Promise.all(variablePromises);
-        variableMaps.forEach(fileVariables => {
-          for (const [name, value] of fileVariables) {
-            variables.set(name, value);
-          }
-        });
-        
-      } catch (error) {
-        console.warn('Could not read project directory for .flvar files:', error);
+        }
       }
       
+      console.log(`🔍 [MadCapPreprocessor] Loaded ${variables.size} total variables from all sources`);
       this.variableCache.set(projectPath, variables);
     } catch (error) {
       console.warn('Could not load MadCap variable sets:', error);
@@ -892,7 +1082,22 @@ export class MadCapPreprocessor {
       return null;
     }
     
-    // First, try to find the full variable path in the loaded variable sets
+    // First, check pre-extracted variables (highest priority - from batch processing)
+    const preExtractedVariable = this.extractedVariables.get(variableRef);
+    if (preExtractedVariable) {
+      console.log(`🔍 [MadCapPreprocessor] Found variable in pre-extracted: ${variableRef} = "${preExtractedVariable.value}"`);
+      return preExtractedVariable.value;
+    }
+    
+    // Also try just the variable name without namespace in pre-extracted
+    const variableName = parts[parts.length - 1];
+    const preExtractedByName = this.extractedVariables.get(variableName);
+    if (preExtractedByName) {
+      console.log(`🔍 [MadCapPreprocessor] Found variable by name in pre-extracted: ${variableName} = "${preExtractedByName.value}"`);
+      return preExtractedByName.value;
+    }
+    
+    // Second, try to find the full variable path in the loaded variable sets (from file system)
     for (const variables of this.variableCache.values()) {
       // Try the full reference
       const value = variables.get(variableRef);
@@ -901,7 +1106,6 @@ export class MadCapPreprocessor {
       }
       
       // Also try just the last part as a fallback
-      const variableName = parts[parts.length - 1];
       const fallbackValue = variables.get(variableName);
       if (fallbackValue) {
         return fallbackValue;
@@ -911,6 +1115,57 @@ export class MadCapPreprocessor {
     // No fallbacks - rely entirely on MadCap project variable sets
     
     return null;
+  }
+
+  private async findFlvarFilesRecursively(dir: string): Promise<string[]> {
+    const result: string[] = [];
+    
+    async function search(currentDir: string): Promise<void> {
+      try {
+        const entries = await readdirAsync(currentDir);
+        
+        for (const entry of entries) {
+          if (entry.startsWith('.') || entry.startsWith('._')) {
+            continue; // Skip hidden files
+          }
+          
+          const fullPath = resolve(currentDir, entry);
+          const stats = await statAsync(fullPath);
+          
+          if (stats.isDirectory()) {
+            await search(fullPath);
+          } else if (stats.isFile() && entry.endsWith('.flvar')) {
+            result.push(fullPath);
+          }
+        }
+      } catch (error) {
+        // Skip directories we can't read
+        console.warn(`Could not read directory ${currentDir}: ${error}`);
+      }
+    }
+    
+    await search(dir);
+    return result;
+  }
+
+  private async parseFlvarFile(content: string, variables: Map<string, string>, fileName: string): Promise<void> {
+    try {
+      const dom = new JSDOM(content, { contentType: 'application/xml' });
+      const document = dom.window.document;
+      
+      const variableElements = document.querySelectorAll('Variable');
+      variableElements.forEach(element => {
+        const name = element.getAttribute('Name');
+        const value = element.getAttribute('EvaluatedDefinition') || element.textContent?.trim();
+        
+        if (name && value) {
+          variables.set(name, value);
+          console.log(`📝 [MadCapPreprocessor] Loaded variable from ${fileName}: ${name} = ${value}`);
+        }
+      });
+    } catch (error) {
+      console.warn(`Could not parse .flvar file ${fileName}: ${error}`);
+    }
   }
 
   /**
@@ -962,11 +1217,63 @@ export class MadCapPreprocessor {
     // Ensure W3C XHTML compliance
     this.ensureW3CCompliance(document);
     
+    // Convert inline note markers (e.g., span.noteInDiv + snippet) into proper note blocks
+    this.transformInlineNotes(document);
+
     // Separate mixed content in paragraphs  
     this.separateMixedContent(document);
     
     // Normalize block structure and remove empty paragraphs
     this.normalizeBlockStructure(document, outputFormat);
+  }
+
+  /**
+   * Transform span.noteInDiv patterns into proper note blocks that converters recognize.
+   * Typical pattern: <p>... <br/><span class="noteInDiv">Note:</span> <MadCap:snippetText .../></p>
+   * We convert the parent paragraph into class "mc-note" and remove the label span/preceding br.
+   */
+  private transformInlineNotes(document: Document): void {
+    const noteSpans = Array.from(document.querySelectorAll('span.noteInDiv'));
+    for (const span of noteSpans) {
+      const p = span.closest('p');
+      if (!p) {
+        // Fallback: wrap span in a div.mc-note
+        const wrapper = document.createElement('div');
+        wrapper.className = 'mc-note';
+        // Move following siblings of the span into the wrapper
+        while (span.nextSibling) {
+          wrapper.appendChild(span.nextSibling);
+        }
+        // Replace span with wrapper
+        span.parentNode?.replaceChild(wrapper, span);
+        continue;
+      }
+
+      // Remove an immediate preceding <br> before the label to avoid stray continuations
+      const prev = span.previousSibling as Element | null;
+      if (prev && prev.nodeType === 1 && (prev as Element).tagName.toLowerCase() === 'br') {
+        prev.remove();
+      }
+
+      // Remove the label span itself
+      span.remove();
+
+      // Mark the paragraph as a note so the AsciiDoc converter emits NOTE:
+      if (!p.classList.contains('mc-note') && !p.classList.contains('note')) {
+        p.classList.add('mc-note');
+      }
+
+      // If paragraph became empty (label only), try to pull next meaningful siblings into it
+      if ((p.textContent || '').trim().length === 0) {
+        let next = p.nextSibling;
+        while (next && next.nodeType === 3 && (next.textContent || '').trim().length === 0) {
+          next = next.nextSibling;
+        }
+        if (next && next.nodeType === 1) {
+          p.appendChild(next);
+        }
+      }
+    }
   }
 
   /**
@@ -1751,8 +2058,8 @@ export class MadCapPreprocessor {
   /**
    * Static method for batch service to check if file should be skipped
    */
-  static shouldSkipFile(content: string): boolean {
+  static shouldSkipFile(content: string, options?: ConversionOptions): boolean {
     const preprocessor = new MadCapPreprocessor();
-    return preprocessor.shouldSkipContent(content);
+    return preprocessor.shouldSkipContent(content, options);
   }
 }
