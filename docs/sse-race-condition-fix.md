@@ -1,5 +1,7 @@
 # SSE Session Race Condition Fix
 
+> Note: Early prototype — only working and tested with macOS and Linux file paths. Windows paths are not yet supported/verified.
+
 ## Problem
 
 The MadCap Converter experienced race conditions when establishing Server-Sent Events (SSE) connections for progress tracking. The issue occurred when:

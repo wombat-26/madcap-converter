@@ -9,6 +9,7 @@ import { Switch } from '@/components/ui/switch'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion'
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog'
 import { 
   FileText, 
   Settings, 
@@ -20,6 +21,7 @@ import {
   Tag,
   Shield,
   AlertTriangle,
+  X,
 } from 'lucide-react'
 import Image from 'next/image'
 import { ThemeToggle } from '@/components/theme-toggle'
@@ -37,10 +39,12 @@ import { ConditionSelectionModal } from '@/components/ConditionSelectionModal'
 import JSZip from 'jszip'
 
 export default function MadCapConverterWebUI() {
+  const appVersion = process.env.NEXT_PUBLIC_APP_VERSION || 'dev'
   const [activeTab, setActiveTab] = useState('batch')
   const [outputFolderName, setOutputFolderName] = useState('converted-madcap-project')
   const [supportsFileSystemAccess, setSupportsFileSystemAccess] = useState(false)
   const [selectedOutputDir, setSelectedOutputDir] = useState<FileSystemDirectoryHandle | null>(null)
+  const [showPrototypeNotice, setShowPrototypeNotice] = useState(true)
   
   // Zustand stores
   const {
@@ -85,10 +89,27 @@ export default function MadCapConverterWebUI() {
   const [renameFiles, setRenameFiles] = useState(true)
   const [copyImages, setCopyImages] = useState(true)
   const [recursive, setRecursive] = useState(true)
+  // Preflight warnings modal state
+  const [preflightWarnings, setPreflightWarnings] = useState<string[]>([])
+  const [showPreflightModal, setShowPreflightModal] = useState(false)
 
   useEffect(() => {
     setSupportsFileSystemAccess('showDirectoryPicker' in window)
-  }, [])
+    try {
+      const dismissedVersion = localStorage.getItem('prototypeNoticeDismissedVersion')
+      const legacyDismissed = localStorage.getItem('prototypeNoticeDismissed')
+
+      if (dismissedVersion === appVersion) {
+        setShowPrototypeNotice(false)
+      } else if (!dismissedVersion && legacyDismissed === 'true') {
+        // Migrate legacy boolean dismissal to current version
+        localStorage.setItem('prototypeNoticeDismissedVersion', appVersion)
+        setShowPrototypeNotice(false)
+      } else {
+        setShowPrototypeNotice(true)
+      }
+    } catch {}
+  }, [appVersion])
 
   const handleSelectOutputDirectory = async () => {
     if (!supportsFileSystemAccess) {
@@ -325,11 +346,11 @@ export default function MadCapConverterWebUI() {
           if (resourceStatus.preflightWarnings && resourceStatus.preflightWarnings.length > 0) {
             console.log('⚠️ Preflight warnings detected:', resourceStatus.preflightWarnings)
             
-            // Show warnings as info notification
-            info(
-              `Conversion completed with ${resourceStatus.preflightWarnings.length} notice(s)`,
-              resourceStatus.preflightWarnings.join(' ')
-            )
+            // Persist warnings and show high-visibility modal
+            setPreflightWarnings(resourceStatus.preflightWarnings)
+            setShowPreflightModal(true)
+            // Also show a compact toast
+            info(`Preflight: ${resourceStatus.preflightWarnings.length} notice(s)`, 'Click to view details in the modal.')
             
             // Log individual warnings
             resourceStatus.preflightWarnings.forEach((warning: string, index: number) => {
@@ -457,6 +478,34 @@ export default function MadCapConverterWebUI() {
         </header>
 
         <div className="space-y-6">
+          {/* Prototype platform support notice */}
+          {showPrototypeNotice && (
+            <div
+              role="alert"
+              className="flex items-start gap-3 rounded-md border border-yellow-300 bg-yellow-50 p-3 text-yellow-900 shadow-sm"
+            >
+              <AlertTriangle className="h-5 w-5 mt-0.5 text-yellow-600" aria-hidden="true" />
+              <div className="text-sm">
+                <strong>Early prototype:</strong> Only working and tested with macOS and Linux file paths. Windows paths are not yet supported/verified.
+              </div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto h-6 px-2 text-yellow-800 hover:text-yellow-900 hover:bg-yellow-100"
+                aria-label="Dismiss notice"
+                onClick={() => {
+                  setShowPrototypeNotice(false)
+                  try {
+                    localStorage.setItem('prototypeNoticeDismissedVersion', appVersion)
+                    localStorage.removeItem('prototypeNoticeDismissed')
+                  } catch {}
+                }}
+              >
+                <X className="h-4 w-4" />
+              </Button>
+            </div>
+          )}
+
           <Card>
             <CardHeader>
               <CardTitle>Output Format</CardTitle>
@@ -756,6 +805,57 @@ export default function MadCapConverterWebUI() {
           isLoading={isAnalyzingConditions}
         />
       </div>
+
+      {/* Preflight Warnings Modal */}
+      <Dialog open={showPreflightModal} onOpenChange={setShowPreflightModal}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-yellow-600" />
+              Preflight warnings detected
+            </DialogTitle>
+            <DialogDescription>
+              Some expected MadCap resources were not found in your upload. This can result in empty glossary or variables.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-3 mt-2">
+            {preflightWarnings.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No details available.</p>
+            ) : (
+              <ul className="list-disc pl-6 space-y-2">
+                {preflightWarnings.map((w, i) => (
+                  <li key={i} className="text-sm">{w}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+
+          <div className="mt-4 text-sm">
+            <p className="font-medium mb-1">How to fix</p>
+            <ul className="list-disc pl-6 space-y-1 text-muted-foreground">
+              <li>Upload your full Flare project, including <code>Project/Glossaries/*.flglo</code> and <code>Project/VariableSets/*.flvar</code>.</li>
+              <li>Alternatively set <code>asciidocOptions.glossaryOptions.glossaryPath</code> and <code>variableOptions.flvarFiles</code> explicitly.</li>
+            </ul>
+            <div className="mt-3 flex gap-3">
+              <a
+                className="text-blue-600 hover:underline text-sm"
+                href="https://github.com/wombat-26/madcap-converter#multiple-output-formats"
+                target="_blank" rel="noreferrer"
+              >
+                Docs: Glossary generation
+              </a>
+              <a
+                className="text-blue-600 hover:underline text-sm"
+                href="https://github.com/wombat-26/madcap-converter#advanced-processing-capabilities"
+                target="_blank" rel="noreferrer"
+              >
+                Docs: Variable extraction
+              </a>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -1,5 +1,7 @@
 # Server Stability Guide
 
+> Note: Early prototype — only working and tested with macOS and Linux file paths. Windows paths are not yet supported/verified.
+
 ## Overview
 
 The MadCap Converter uses a Next.js frontend that communicates with an MCP (Model Context Protocol) server backend via an API route. This guide covers common issues and solutions for stable server operation.

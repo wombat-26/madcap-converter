@@ -17,6 +17,7 @@ import { ImprovedPathResolver, PathResolutionOptions } from './improved-path-res
 import { EnhancedVariableProcessor, EnhancedVariableOptions } from '../services/enhanced-variable-processor.js';
 import { FlgloParser } from '../services/flglo-parser.js';
 import { GlossaryConverter, GlossaryConversionOptions } from './glossary-converter.js';
+import { join as pathJoin, isAbsolute as pathIsAbsolute } from 'path';
 
 export class AsciiDocConverter implements DocumentConverter {
   supportedInputTypes = ['html'];
@@ -871,7 +872,8 @@ export class AsciiDocConverter implements DocumentConverter {
         if (!href) return children;
         
         // Convert .htm/.html to .adoc for internal links and normalize filenames
-        let convertedHref = href;
+        // Also sanitize file:// URIs by stripping absolute paths to just the filename
+        let convertedHref = this.sanitizeHref(href);
         if (this.isDocumentLink(href)) {
           // Apply filename normalization for links that need it
           const needsNormalization = convertedHref.includes(' ') || /[A-Z]/.test(convertedHref);
@@ -879,9 +881,22 @@ export class AsciiDocConverter implements DocumentConverter {
           if (needsNormalization) {
             // Extract anchor fragment if present
             const [baseHref, fragment] = convertedHref.split('#');
-            const [path, filename] = baseHref.split('/').length > 1 
-              ? [baseHref.substring(0, baseHref.lastIndexOf('/')), baseHref.substring(baseHref.lastIndexOf('/') + 1)]
-              : ['', baseHref];
+            // If the original was a file:// URI, drop the path entirely
+            const isFileUri = /^file:\/\//i.test(href);
+            let path = '';
+            let filename = baseHref;
+            if (!isFileUri) {
+              if (baseHref.split('/').length > 1) {
+                path = baseHref.substring(0, baseHref.lastIndexOf('/'));
+                filename = baseHref.substring(baseHref.lastIndexOf('/') + 1);
+              }
+            } else {
+              // When sanitized, baseHref should already be just a filename
+              const lastSlash = baseHref.lastIndexOf('/');
+              if (lastSlash >= 0) {
+                filename = baseHref.substring(lastSlash + 1);
+              }
+            }
             
             const cleanFilename = filename
               .replace(/\.(htm|html)$/i, '') // Remove extension first
@@ -1055,7 +1070,8 @@ export class AsciiDocConverter implements DocumentConverter {
                   const imgElement = link.querySelector('img');
                   const titleElement = link.querySelector('h1, h2, h3, h4, h5, h6');
                   const descElement = link.querySelector('p');
-                  const href = link.getAttribute('href') || '#';
+                  const rawHref = link.getAttribute('href') || '#';
+                  const href = this.sanitizeHref(rawHref);
                   
                   result += '|';
                   if (imgElement) {
@@ -2276,6 +2292,34 @@ export class AsciiDocConverter implements DocumentConverter {
     return documentExtensions.some(ext => href.toLowerCase().includes(ext));
   }
 
+  /**
+   * Sanitize HREFs coming from file:// URIs or absolute system paths by
+   * reducing them to a local filename (preserving any anchor fragment).
+   */
+  private sanitizeHref(href: string): string {
+    try {
+      // Preserve anchors
+      const [base, fragment] = href.split('#');
+      // Handle file:// URIs explicitly
+      if (/^file:\/\//i.test(base)) {
+        const lastSlash = base.lastIndexOf('/');
+        const filename = lastSlash >= 0 ? base.substring(lastSlash + 1) : base;
+        return fragment ? `${filename}#${fragment}` : filename;
+      }
+      // Handle raw Windows absolute paths like C:/... or C:\...
+      if (/^[a-zA-Z]:[\/\\]/.test(base)) {
+        const normalized = base.replace(/\\/g, '/');
+        const lastSlash = normalized.lastIndexOf('/');
+        const filename = lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+        return fragment ? `${filename}#${fragment}` : filename;
+      }
+      // Otherwise, return as-is
+      return href;
+    } catch {
+      return href;
+    }
+  }
+
   private isMadCapCalloutClass(className: string): boolean {
     const calloutClasses = [
       'note', 'tip', 'warning', 'caution', 'important', 'danger', 'error',
@@ -3480,10 +3524,19 @@ export class AsciiDocConverter implements DocumentConverter {
 
     try {
       let glossaryPath = glossaryOptions.glossaryPath;
+
+      // Resolve relative glossaryPath against projectRootPath if provided
+      if (glossaryPath && options.projectRootPath && !pathIsAbsolute(glossaryPath)) {
+        glossaryPath = pathJoin(options.projectRootPath, glossaryPath);
+      }
       
       // Auto-discover glossary file if not provided
-      if (!glossaryPath && options.inputPath) {
-        const projectPath = this.findProjectPath(options.inputPath);
+      if (!glossaryPath) {
+        // Prefer explicit projectRootPath if available
+        let projectPath: string | null = options.projectRootPath || null;
+        if (!projectPath && options.inputPath) {
+          projectPath = this.findProjectPath(options.inputPath);
+        }
         if (projectPath) {
           const glossaryFiles = await this.flgloParser.findGlossaryFiles(projectPath);
           if (glossaryFiles.length > 0) {

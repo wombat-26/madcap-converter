@@ -420,7 +420,16 @@ export default function MadCapConverterWebUI() {
       const fileHandle = await currentDir.getFileHandle(fileName, { create: true })
       const writable = await fileHandle.createWritable()
       if (file.binary) {
-        const blob = new Blob([file.content as Uint8Array])
+        // Ensure Blob receives an ArrayBuffer (not ArrayBufferLike)
+        const bytes = file.content as Uint8Array
+        const ab: ArrayBuffer =
+          bytes.byteOffset === 0 && bytes.byteLength === bytes.buffer.byteLength
+            ? (bytes.buffer as ArrayBuffer)
+            : (bytes.buffer.slice(
+                bytes.byteOffset,
+                bytes.byteOffset + bytes.byteLength
+              ) as ArrayBuffer)
+        const blob = new Blob([ab])
         await writable.write(blob)
       } else {
         await writable.write(file.content as string)

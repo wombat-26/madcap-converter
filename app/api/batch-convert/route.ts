@@ -260,7 +260,54 @@ export async function POST(request: NextRequest) {
       
       await writeFile(filePath, buffer);
     }
-    
+
+    // Preflight: scan for glossary (.flglo) and variables (.flvar) files in uploaded project
+    try {
+      const { readdir, stat } = await import('fs/promises');
+      const { extname, join: pjoin } = await import('path');
+
+      const foundFiles: { flglo: number; flvar: number } = { flglo: 0, flvar: 0 };
+
+      const walk = async (dir: string): Promise<void> => {
+        let entries: string[] = [];
+        try {
+          entries = await readdir(dir);
+        } catch {
+          return; // ignore unreadable directories
+        }
+        for (const entry of entries) {
+          const full = pjoin(dir, entry);
+          try {
+            const st = await stat(full);
+            if (st.isDirectory()) {
+              // Skip typical excluded dirs already handled elsewhere
+              if (['.git', 'node_modules', '.next', 'Output', 'output', 'Temporary', 'temporary', 'TargetOutput', 'Backup', 'backup'].includes(entry)) {
+                continue;
+              }
+              await walk(full);
+            } else if (st.isFile()) {
+              const ext = extname(entry).toLowerCase();
+              if (ext === '.flglo') foundFiles.flglo++;
+              if (ext === '.flvar') foundFiles.flvar++;
+            }
+          } catch {
+            // ignore file access errors
+          }
+        }
+      };
+
+      await walk(inputDir);
+
+      if (foundFiles.flglo === 0) {
+        preflightWarnings.push('No .flglo (MadCap glossary) files found in uploaded project. Glossary will be empty unless you include Project/Glossaries/*.flglo or set asciidocOptions.glossaryOptions.glossaryPath.');
+      }
+      if (foundFiles.flvar === 0 && (options.variableOptions?.extractVariables ?? true)) {
+        preflightWarnings.push('No .flvar (MadCap variables) files found in uploaded project. Variables file will be empty unless you include Project/VariableSets/*.flvar or set variableOptions.flvarFiles.');
+      }
+    } catch (pfError) {
+      console.warn('⚠️ Preflight checks for glossary/variables failed:', pfError);
+    }
+
     console.log(`✅ All valid files saved to: ${inputDir}`);
     
     // Initialize progress session with valid file count (after filtering)
@@ -784,5 +831,4 @@ function inferMadCapProjectStructure(fileName: string, fileType: string): string
   // Default: place unknown files in Content/
   return `Content/${fileName}`;
 }
-
 

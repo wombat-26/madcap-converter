@@ -1,5 +1,7 @@
 # List Processing Architecture Analysis
 
+> Note: Early prototype — only working and tested with macOS and Linux file paths. Windows paths are not yet supported/verified.
+
 ## Current Architecture Problems
 
 The MadCap converter has **dangerous regression risks** due to multiple overlapping list processing implementations that create conflicting execution paths.

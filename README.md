@@ -4,6 +4,8 @@
 
 Transform your technical documentation with intelligent conversion that preserves structure, formatting, and semantic meaning while supporting advanced features like dynamic variable resolution, snippet processing, cross-reference handling, condition filtering, and comprehensive batch operations with specialized Zendesk Help Center support.
 
+> IMPORTANT: Early prototype — only working and tested with macOS and Linux file paths. Windows paths are not yet supported/verified.
+
 
 ## ✅ COMPLETE RESTORATION COMPLETED (August 2025)
 
@@ -1567,7 +1569,7 @@ npm install
 - **Node.js**: 18.0.0 or higher
 - **Memory**: 512MB minimum (2GB+ for large documents)
 - **Storage**: 100MB for installation + space for converted files
-- **Platform**: Cross-platform (Windows, macOS, Linux)
+ - **Platform**: macOS and Linux only (Windows file paths currently untested/unsupported)
 
 ### Performance Benchmarks
 | Document Type | Size | Conversion Time | Memory Usage | Notes |

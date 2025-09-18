@@ -835,7 +835,7 @@ export class BatchService {
         if (format === 'writerside-markdown') {
           // Update Markdown links: [text](path) and [text](path#anchor)
           updatedContent = content.replace(/\[([^\]]*)\]\(([^)]+)\)/g, (match, text, url) => {
-            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!, outputPath, outputDir);
             if (updatedUrl !== url) {
               hasChanges = true;
               return `[${text}](${updatedUrl})`;
@@ -845,7 +845,7 @@ export class BatchService {
         } else if (format === 'asciidoc') {
           // Update AsciiDoc links: link:path[text] and xref:path[text]
           updatedContent = content.replace(/(link|xref):([^\[]+)\[([^\]]*)\]/g, (match, linkType, url, text) => {
-            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!, outputPath, outputDir);
             if (updatedUrl !== url) {
               hasChanges = true;
               return `${linkType}:${updatedUrl}[${text}]`;
@@ -855,7 +855,7 @@ export class BatchService {
         } else if (format === 'zendesk') {
           // Update HTML links: <a href="path">text</a>
           updatedContent = content.replace(/<a\s+([^>]*\s+)?href="([^"]*)"([^>]*)>([^<]*)<\/a>/gi, (match, before, url, after, text) => {
-            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!);
+            const updatedUrl = this.updateLinkUrl(url, result.filenameMapping!, outputPath, outputDir);
             if (updatedUrl !== url) {
               hasChanges = true;
               return `<a ${before || ''}href="${updatedUrl}"${after || ''}>${text}</a>`;
@@ -876,30 +876,47 @@ export class BatchService {
     }
   }
 
-  private updateLinkUrl(url: string, filenameMapping: Map<string, string>): string {
+  private updateLinkUrl(
+    url: string,
+    filenameMapping: Map<string, string>,
+    currentOutputPath: string,
+    outputDir: string
+  ): string {
     // Skip external URLs, anchors, and mailto links
     if (url.startsWith('http') || url.startsWith('mailto:') || url.startsWith('#')) {
       return url;
     }
 
     // Split URL and anchor
-    const [path, anchor] = url.split('#');
-    
+    const [rawPath, anchor] = url.split('#');
+
+    // Normalize incoming path for matching against mapping keys
+    // - strip leading ../ or ./ segments
+    // - strip leading user/ (some conversions emit root-relative paths)
+    let path = rawPath
+      .replace(/^(\.\.\/)+/, '')
+      .replace(/^\.\//, '')
+      .replace(/^user\//, '');
+
     // Check if this path (or a variation) exists in our mapping
     for (const [oldPath, newPath] of filenameMapping.entries()) {
       // Try exact match
       if (path === oldPath) {
-        return anchor ? `${newPath}#${anchor}` : newPath;
+        return this.calculateRelativePath(currentOutputPath, newPath, outputDir, anchor);
       }
-      
+
       // Try without extension for cross-format references
       const pathWithoutExt = path.replace(/\.(html?|adoc|md)$/i, '');
       const oldPathWithoutExt = oldPath.replace(/\.(html?|adoc|md)$/i, '');
-      
       if (pathWithoutExt === oldPathWithoutExt) {
-        const newPathWithoutExt = newPath.replace(/\.(html?|adoc|md)$/i, '');
-        const extension = path.match(/\.(html?|adoc|md)$/i)?.[0] || '';
-        return anchor ? `${newPathWithoutExt}${extension}#${anchor}` : `${newPathWithoutExt}${extension}`;
+        return this.calculateRelativePath(currentOutputPath, newPath, outputDir, anchor);
+      }
+
+      // Try basename match as a fallback (when only filename is referenced)
+      const pathBase = basename(pathWithoutExt);
+      const oldBase = basename(oldPathWithoutExt);
+      if (pathBase && pathBase === oldBase) {
+        return this.calculateRelativePath(currentOutputPath, newPath, outputDir, anchor);
       }
     }
 
