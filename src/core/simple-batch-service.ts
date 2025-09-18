@@ -267,8 +267,29 @@ export class SimpleBatchService {
           continue;
         }
 
-        // Compute target path preserving the same relative reference used in content
-        const targetPath = resolve(targetDocDir, ref);
+        // Compute target path
+        // Prefer mapping common MadCap image directories to a top-level Images folder
+        const normalizedRef = ref.replace(/\\/g, '/');
+        const lowerRef = normalizedRef.toLowerCase();
+        let targetPath: string;
+
+        const imagesIdx = lowerRef.indexOf('images/');
+        const resImagesIdx = lowerRef.indexOf('resources/images/');
+        const contentResImagesIdx = lowerRef.indexOf('content/resources/images/');
+
+        if (contentResImagesIdx !== -1) {
+          const sub = normalizedRef.slice(contentResImagesIdx + 'content/resources/images/'.length);
+          targetPath = join(batchOutputRoot, 'Images', sub);
+        } else if (resImagesIdx !== -1) {
+          const sub = normalizedRef.slice(resImagesIdx + 'resources/images/'.length);
+          targetPath = join(batchOutputRoot, 'Images', sub);
+        } else if (imagesIdx !== -1) {
+          const sub = normalizedRef.slice(imagesIdx + 'images/'.length);
+          targetPath = join(batchOutputRoot, 'Images', sub);
+        } else {
+          // Fallback: preserve the same relative reference used in content
+          targetPath = resolve(targetDocDir, ref);
+        }
         
         // Safety: ensure we don't escape the batch output root
         const normalizedTargetRoot = resolve(batchOutputRoot);

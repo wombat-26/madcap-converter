@@ -859,7 +859,7 @@ export class AsciiDocConverter implements DocumentConverter {
   }
   
   private processLink(link: Element): string {
-    const href = link.getAttribute('href') || '';
+    const href = this.sanitizeHref(link.getAttribute('href') || '');
     const text = link.textContent || '';
     
     // Convert .htm/.html to .adoc for cross-references (handle hash fragments)
@@ -869,6 +869,27 @@ export class AsciiDocConverter implements DocumentConverter {
     }
     
     return `${href}[${text}]`;
+  }
+
+  // Reduce file:// and absolute Windows paths to just the filename
+  private sanitizeHref(href: string): string {
+    try {
+      const [base, fragment] = href.split('#');
+      if (/^file:\/\//i.test(base)) {
+        const lastSlash = base.lastIndexOf('/');
+        const filename = lastSlash >= 0 ? base.substring(lastSlash + 1) : base;
+        return fragment ? `${filename}#${fragment}` : filename;
+      }
+      if (/^[a-zA-Z]:[\/\\]/.test(base)) {
+        const normalized = base.replace(/\\/g, '/');
+        const lastSlash = normalized.lastIndexOf('/');
+        const filename = lastSlash >= 0 ? normalized.substring(lastSlash + 1) : normalized;
+        return fragment ? `${filename}#${fragment}` : filename;
+      }
+      return href;
+    } catch {
+      return href;
+    }
   }
   
   private processInlineContent(element: Element, context: ConversionContext): string {
