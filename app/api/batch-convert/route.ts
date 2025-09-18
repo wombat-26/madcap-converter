@@ -676,45 +676,53 @@ export async function POST(request: NextRequest) {
     
     console.log(`✅ Conversion completed for session ${sessionId}`);
     
-    // Return zip file with session ID and enhanced conversion details in headers
-    return new NextResponse(zipBuffer as any, {
-      headers: {
-        'Content-Type': 'application/zip',
-        'Content-Disposition': `attachment; filename=${outputFolderName}.zip`,
-        'X-Session-Id': sessionId,
-        'X-Conversion-Summary': JSON.stringify({
-          totalFiles: result.totalFiles,
-          convertedFiles: result.convertedFiles,
-          skippedFiles: result.skippedFiles,
-          skippedFilesList: result.skippedFilesList,
-          errors: result.errors.length,
-          errorDetails: result.errors,
-          resourceCopying: {
-            imagesCopied: outputAnalysis.imageFiles > 0,
-            totalImages: outputAnalysis.imageFiles,
-            resourcesIncluded: outputAnalysis.totalFiles - outputAnalysis.supportedFiles
-          }
-        }),
-        'X-Resource-Status': JSON.stringify({
-          input: {
-            totalFiles: folderAnalysis.totalFiles,
-            snippetFiles: folderAnalysis.snippetFiles,
-            imageFiles: folderAnalysis.imageFiles,
-            contentFiles: folderAnalysis.contentFiles
-          },
-          output: {
-            totalFiles: outputAnalysis.totalFiles,
-            imageFiles: outputAnalysis.imageFiles,
-            convertedFiles: outputAnalysis.supportedFiles
-          },
-          inference: {
-            usedFallbackStructure: files.some(f => !(f as any).webkitRelativePath),
-            missingDirectories: folderAnalysis.missingCommonDirs
-          },
-          preflightWarnings: preflightWarnings || []
-        }),
+    // Helper: sanitize header values to avoid invalid characters and keep size small
+    const sanitizeHeader = (value: string, maxLen = 2000): string => {
+      // Remove control chars (including newlines) per Fetch/Headers spec
+      const cleaned = value.replace(/[\u0000-\u001F\u007F]+/g, ' ').slice(0, maxLen);
+      return cleaned;
+    };
+
+    // Build compact summaries for headers (avoid large/complex JSON)
+    const summary = {
+      totalFiles: result.totalFiles,
+      convertedFiles: result.convertedFiles,
+      skippedFiles: result.skippedFiles,
+      errors: Array.isArray(result.errors) ? result.errors.length : 0,
+      imagesCopied: outputAnalysis.imageFiles > 0,
+    };
+
+    const resourceStatus = {
+      input: {
+        totalFiles: folderAnalysis.totalFiles,
+        imageFiles: folderAnalysis.imageFiles,
+        contentFiles: folderAnalysis.contentFiles,
       },
-    });
+      output: {
+        totalFiles: outputAnalysis.totalFiles,
+        imageFiles: outputAnalysis.imageFiles,
+        convertedFiles: outputAnalysis.supportedFiles,
+      },
+      preflightWarnings: preflightWarnings?.length || 0,
+    };
+
+    // Create response and set minimal, sanitized headers
+    const res = new NextResponse(zipBuffer as any);
+    res.headers.set('Content-Type', 'application/zip');
+    // Guard against invalid filename characters in header
+    const safeName = (outputFolderName || 'converted-files').replace(/[^A-Za-z0-9._-]+/g, '_');
+    res.headers.set('Content-Disposition', `attachment; filename=${safeName}.zip`);
+    res.headers.set('X-Session-Id', String(sessionId));
+
+    try {
+      res.headers.set('X-Conversion-Totals', sanitizeHeader(JSON.stringify(summary)));
+      res.headers.set('X-Resource-Status', sanitizeHeader(JSON.stringify(resourceStatus)));
+    } catch (e) {
+      // If any custom header fails validation, skip it to prevent 500s on hosts with strict header rules
+      console.warn('Skipping custom summary headers due to validation error:', e);
+    }
+
+    return res;
   } catch (error) {
     // Notify session manager of error if sessionId exists
     if (typeof sessionId === 'string') {
@@ -831,4 +839,3 @@ function inferMadCapProjectStructure(fileName: string, fileType: string): string
   // Default: place unknown files in Content/
   return `Content/${fileName}`;
 }
-

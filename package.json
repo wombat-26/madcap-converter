@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "NODE_OPTIONS='--max-old-space-size=8192' next build",
+    "postbuild": "mkdir -p .next && cp -R public/* .next/ 2>/dev/null || true",
     "start": "next start",
     "dev": "NODE_OPTIONS='--max-old-space-size=8192' next dev",
     "dev:memory": "NODE_OPTIONS='--max-old-space-size=12288' next dev",
