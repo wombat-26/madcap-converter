@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CatapultVariableSet>
+  <Variable 
+    Name="CompanyName" 
+    Definition="Uptempo GmbH"
+    Comment="Company name variable" />
+  <Variable 
+    Name="ProductName" 
+    Definition="Plan"
+    Comment="Product name variable" />
+  <Variable 
+    Name="Version" 
+    Definition="2.0"
+    Comment="Current version" />
+  <Variable 
+    Name="Year" 
+    Definition="2025"
+    Comment="Current year"
+    Type="DateTime" />
+  <Variable 
+    Name="SupportEmail" 
+    Definition="support@example.com"
+    Comment="Support contact email" />
+</CatapultVariableSet>

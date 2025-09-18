@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<CatapultGlossary>
+  <GlossaryEntry>
+    <Terms>
+      <Term>Activity</Term>
+    </Terms>
+    <Definition>A learning object that users can interact with to gain knowledge or skills.</Definition>
+  </GlossaryEntry>
+  <GlossaryEntry>
+    <Terms>
+      <Term>MadCap Converter</Term>
+    </Terms>
+    <Definition>A tool for converting MadCap Flare projects to other documentation formats like AsciiDoc and Markdown.</Definition>
+  </GlossaryEntry>
+  <GlossaryEntry>
+    <Terms>
+      <Term>Variable</Term>
+    </Terms>
+    <Definition>A placeholder that can be replaced with different values across documentation.</Definition>
+  </GlossaryEntry>
+</CatapultGlossary>

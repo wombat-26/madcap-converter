@@ -403,7 +403,7 @@ export default function MadCapConverterWebUI() {
     }
   }
 
-  const writeFilesToDirectory = async (dirHandle: FileSystemDirectoryHandle, files: { path: string; content: string }[]) => {
+  const writeFilesToDirectory = async (dirHandle: FileSystemDirectoryHandle, files: { path: string; content: string | Uint8Array; binary?: boolean }[]) => {
     const projectDirHandle = await dirHandle.getDirectoryHandle(outputFolderName, { create: true })
     
     for (const file of files) {
@@ -419,7 +419,12 @@ export default function MadCapConverterWebUI() {
       const fileName = pathParts[pathParts.length - 1]
       const fileHandle = await currentDir.getFileHandle(fileName, { create: true })
       const writable = await fileHandle.createWritable()
-      await writable.write(file.content)
+      if (file.binary) {
+        const blob = new Blob([file.content as Uint8Array])
+        await writable.write(blob)
+      } else {
+        await writable.write(file.content as string)
+      }
       await writable.close()
     }
   }
@@ -510,13 +515,34 @@ export default function MadCapConverterWebUI() {
         const zip = new JSZip()
         const zipContent = await zip.loadAsync(blob)
         
-        // Extract files and write to selected directory
-        const files: { path: string; content: string }[] = []
+        // Extract files and write to selected directory (preserve binaries)
+        const isBinaryFile = (name: string) => {
+          const lower = name.toLowerCase()
+          return (
+            lower.endsWith('.png') ||
+            lower.endsWith('.jpg') ||
+            lower.endsWith('.jpeg') ||
+            lower.endsWith('.gif') ||
+            lower.endsWith('.bmp') ||
+            lower.endsWith('.svg') ||
+            lower.endsWith('.webp') ||
+            lower.endsWith('.ico') ||
+            lower.endsWith('.pdf') ||
+            lower.endsWith('.zip')
+          )
+        }
+
+        const files: { path: string; content: string | Uint8Array; binary?: boolean }[] = []
         for (const fileName of Object.keys(zipContent.files)) {
-          const file = zipContent.files[fileName]
-          if (!file.dir) {
-            const content = await file.async('text')
-            files.push({ path: fileName, content })
+          const entry = zipContent.files[fileName]
+          if (!entry.dir) {
+            if (isBinaryFile(fileName)) {
+              const bin = await entry.async('uint8array')
+              files.push({ path: fileName, content: bin, binary: true })
+            } else {
+              const text = await entry.async('text')
+              files.push({ path: fileName, content: text, binary: false })
+            }
           }
         }
         
