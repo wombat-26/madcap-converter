@@ -152,15 +152,43 @@ export default function MadCapConverterWebUI() {
         throw new Error(errorData.error || 'Conversion failed')
       }
 
-      const blob = await response.blob()
+      // Server returns JSON with content; extract and create a blob
+      const data = await response.json()
+      const mimeType = format === 'zendesk' ? 'text/html' : 'text/plain'
+      const blob = new Blob([data.content], { type: mimeType })
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `${singleFile[0].name.replace(/\.[^/.]+$/, '')}.${getFileExtension(format)}`
+      a.download = (data.filename as string) || `${singleFile[0].name.replace(/\.[^/.]+$/, '')}.${getFileExtension(format)}`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
       URL.revokeObjectURL(url)
+
+      // Also download variables/glossary if provided
+      if (data.variablesFile) {
+        const varBlob = new Blob([data.variablesFile], { type: 'text/plain' })
+        const varUrl = URL.createObjectURL(varBlob)
+        const varA = document.createElement('a')
+        varA.href = varUrl
+        varA.download = 'variables.' + (options.variableOptions?.variableFormat === 'adoc' ? 'adoc' : 'list')
+        document.body.appendChild(varA)
+        varA.click()
+        document.body.removeChild(varA)
+        URL.revokeObjectURL(varUrl)
+      }
+
+      if (data.glossaryContent) {
+        const glossBlob = new Blob([data.glossaryContent], { type: 'text/plain' })
+        const glossUrl = URL.createObjectURL(glossBlob)
+        const glossA = document.createElement('a')
+        glossA.href = glossUrl
+        glossA.download = 'glossary.adoc'
+        document.body.appendChild(glossA)
+        glossA.click()
+        document.body.removeChild(glossA)
+        URL.revokeObjectURL(glossUrl)
+      }
 
       success('Conversion successful', `${singleFile[0].name} has been converted successfully.`)
     } catch (error) {

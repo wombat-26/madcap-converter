@@ -90,7 +90,8 @@ export class DocumentService {
     let input: string | Buffer;
     
     if (extension === 'docx' || extension === 'doc') {
-      input = await errorHandler.safeReadFile(inputPath, 'binary') as any;
+      // Read as Buffer for Word documents (required by mammoth)
+      input = await readFile(inputPath);
     } else {
       input = await errorHandler.safeReadFile(inputPath, 'utf8');
       
