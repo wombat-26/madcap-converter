@@ -33,6 +33,8 @@ import {
 } from 'lucide-react'
 import { ThemeToggle } from '@/components/theme-toggle'
 import JSZip from 'jszip'
+import NextImage from 'next/image'
+import logo from '@/public/images/logo.png'
 
 interface ConversionState {
   isConverting: boolean
@@ -1097,10 +1099,12 @@ export default function MadCapConverterWebUI() {
               <span className="text-sm text-muted-foreground">Ready</span>
             </div>
             <div className="flex items-center gap-3">
-              <img 
-                src="/images/logo.png" 
-                alt="MadCap Converter" 
-                className="w-10 h-10"
+              <NextImage
+                src={logo}
+                alt="MadCap Converter"
+                width={40}
+                height={40}
+                className="rounded"
               />
               <ThemeToggle />
             </div>
