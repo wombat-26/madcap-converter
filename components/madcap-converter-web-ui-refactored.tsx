@@ -24,7 +24,6 @@ import {
   X,
 } from 'lucide-react'
 import Image from 'next/image'
-import logo from '@/public/images/logo.png'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { FileUploadZone } from '@/components/FileUploadZone'
 import { ProgressTracker } from '@/components/ProgressTracker'
@@ -489,7 +488,7 @@ export default function MadCapConverterWebUI() {
           <div className="flex items-center justify-between mb-6">
             <div className="flex items-center gap-3">
               <Image 
-                src={logo}
+                src="/images/logo.png"
                 alt="MadCap Converter Logo" 
                 width={40} 
                 height={40}

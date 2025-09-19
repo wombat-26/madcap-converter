@@ -34,7 +34,6 @@ import {
 import { ThemeToggle } from '@/components/theme-toggle'
 import JSZip from 'jszip'
 import NextImage from 'next/image'
-import logo from '@/public/images/logo.png'
 
 interface ConversionState {
   isConverting: boolean
@@ -1100,7 +1099,7 @@ export default function MadCapConverterWebUI() {
             </div>
             <div className="flex items-center gap-3">
               <NextImage
-                src={logo}
+                src="/images/logo.png"
                 alt="MadCap Converter"
                 width={40}
                 height={40}
